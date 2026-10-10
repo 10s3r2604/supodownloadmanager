@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::runtime::Handle;
 
 use crate::category::Category;
+use crate::media::{self, AddMediaRequest, MediaControl, MediaSpec, Tools};
 use crate::settings::Settings;
 use crate::store;
 
@@ -28,7 +29,7 @@ pub enum State {
 }
 
 /// A download as stored in `downloads.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
     pub id: u64,
@@ -50,6 +51,10 @@ pub struct Record {
     /// Time spent transferring data, over all sessions.
     #[serde(default)]
     pub elapsed_ms: u64,
+    /// Set for videos from web pages, which yt-dlp downloads; `url` is the
+    /// page then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<MediaSpec>,
 }
 
 /// What the user interface shows for a download.
@@ -78,6 +83,10 @@ pub struct DownloadView {
     pub segments: Vec<SegmentProgress>,
     /// A pause or delete was requested and is being carried out.
     pub stopping: bool,
+    /// A video from a web page.
+    pub media: bool,
+    /// The data is there and is being put together (video and audio merged).
+    pub processing: bool,
 }
 
 /// A request to add a download.
@@ -121,6 +130,7 @@ pub type Notify = Box<dyn Fn(Notice) + Send + Sync>;
 pub struct Manager {
     inner: Mutex<Inner>,
     store: PathBuf,
+    tools: Arc<Tools>,
     runtime: Handle,
     notify: Notify,
 }
@@ -135,8 +145,37 @@ struct Inner {
     closing: bool,
 }
 
+/// A running download of either kind.
+enum Job {
+    File(DownloadControl),
+    Media(MediaControl),
+}
+
+impl Job {
+    fn progress(&self) -> Progress {
+        match self {
+            Job::File(control) => control.progress(),
+            Job::Media(control) => control.progress(),
+        }
+    }
+
+    fn pause(&self) {
+        match self {
+            Job::File(control) => control.pause(),
+            Job::Media(control) => control.pause(),
+        }
+    }
+
+    fn cancel(&self) {
+        match self {
+            Job::File(control) => control.cancel(),
+            Job::Media(control) => control.cancel(),
+        }
+    }
+}
+
 struct Active {
-    control: DownloadControl,
+    control: Job,
     since: Instant,
     stopping: bool,
     /// `Some(delete_file)` when the download should disappear from the list.
@@ -149,6 +188,7 @@ impl Manager {
     pub fn new(
         store: PathBuf,
         settings: Settings,
+        tools: Arc<Tools>,
         runtime: Handle,
         notify: Notify,
     ) -> anyhow::Result<Arc<Self>> {
@@ -171,6 +211,7 @@ impl Manager {
                 closing: false,
             }),
             store,
+            tools,
             runtime,
             notify,
         }))
@@ -287,6 +328,63 @@ impl Manager {
                 added_at: now_ms(),
                 completed_at: None,
                 elapsed_ms: 0,
+                media: None,
+            });
+            inner.dirty = true;
+            self.save(&mut inner);
+            id
+        };
+        self.schedule();
+        Ok(id)
+    }
+
+    /// Adds a video from a web page and returns its id.
+    pub fn add_media(self: &Arc<Self>, request: AddMediaRequest) -> Result<u64, String> {
+        let page = url::Url::parse(request.source.page_url.trim())
+            .map_err(|_| format!("invalid URL: {}", request.source.page_url))?;
+        if !matches!(page.scheme(), "http" | "https") {
+            return Err(format!("only http and https pages are supported: {page}"));
+        }
+        let settings = self.settings();
+        let title = sdm_core::sanitize_file_name(request.title.trim());
+        let title = if title.is_empty() {
+            "video".to_owned()
+        } else {
+            title
+        };
+        let file_name = format!("{title}.{}", request.option.ext);
+        let category = Category::from_file_name(&file_name);
+        let directory = request
+            .directory
+            .clone()
+            .filter(|d| !d.as_os_str().is_empty())
+            .unwrap_or_else(|| settings.directory_for(category));
+
+        let id = {
+            let mut inner = self.lock();
+            let path = inner.free_path(&directory, &file_name);
+            let id = inner.next_id;
+            inner.next_id += 1;
+            inner.records.push(Record {
+                id,
+                url: page.to_string(),
+                headers: Vec::new(),
+                file_name: file_name_of(&path),
+                path,
+                size: request.option.size,
+                downloaded: 0,
+                resumable: true,
+                category,
+                state: if request.start {
+                    State::Queued
+                } else {
+                    State::Paused
+                },
+                error: None,
+                added_at: now_ms(),
+                completed_at: None,
+                elapsed_ms: 0,
+                media: Some(request.spec()),
             });
             inner.dirty = true;
             self.save(&mut inner);
@@ -346,7 +444,7 @@ impl Manager {
             }
             if let Some(index) = inner.records.iter().position(|r| r.id == id) {
                 let record = inner.records.remove(index);
-                discard_files(&record, delete_file);
+                discard_files(&record, delete_file, &self.tools);
                 inner.dirty = true;
             }
         }
@@ -417,38 +515,72 @@ impl Manager {
         };
         record.state = State::Downloading;
         record.error = None;
-        let request = DownloadRequest {
-            url: record.url.clone(),
-            destination: Destination::File(record.path.clone()),
-            headers: record.headers.clone(),
-            options: DownloadOptions {
-                connections: inner.settings.connections.into(),
-                ..DownloadOptions::default()
-            },
-        };
-        let handle = {
-            let _runtime = self.runtime.enter();
-            inner.downloader.start(request)
+        let (url, path, headers, media) = (
+            record.url.clone(),
+            record.path.clone(),
+            record.headers.clone(),
+            record.media.clone(),
+        );
+        inner.dirty = true;
+        let this = Arc::clone(self);
+        let _runtime = self.runtime.enter();
+
+        let control = if let Some(spec) = media {
+            let Some(ytdlp) = self.tools.ytdlp() else {
+                record.state = State::Failed;
+                record.error = Some("yt-dlp is not installed".into());
+                return;
+            };
+            let config = media::JobConfig {
+                ytdlp,
+                ffmpeg: self.tools.ffmpeg(),
+                url,
+                spec,
+                directory: path.parent().map(Path::to_path_buf).unwrap_or_default(),
+                stem: path
+                    .file_stem()
+                    .map_or_else(|| "video".into(), |s| s.to_string_lossy().into_owned()),
+                work_dir: self.tools.work_dir(id),
+                speed_limit: inner.downloader.speed_limit(),
+                proxy: inner.settings.proxy.clone(),
+            };
+            let job = media::job::start(config);
+            let control = job.control();
+            self.runtime.spawn(async move {
+                let result = job.wait().await;
+                this.finished(id, result);
+            });
+            Job::Media(control)
+        } else {
+            let request = DownloadRequest {
+                url,
+                destination: Destination::File(path),
+                headers,
+                options: DownloadOptions {
+                    connections: inner.settings.connections.into(),
+                    ..DownloadOptions::default()
+                },
+            };
+            let handle = inner.downloader.start(request);
+            let control = handle.control();
+            self.runtime.spawn(async move {
+                let result = handle.wait().await.map_err(|e| e.to_string());
+                this.finished(id, result);
+            });
+            Job::File(control)
         };
         inner.active.insert(
             id,
             Active {
-                control: handle.control(),
+                control,
                 since: Instant::now(),
                 stopping: false,
                 remove: None,
             },
         );
-        inner.dirty = true;
-
-        let this = Arc::clone(self);
-        self.runtime.spawn(async move {
-            let result = handle.wait().await;
-            this.finished(id, result);
-        });
     }
 
-    fn finished(self: &Arc<Self>, id: u64, result: sdm_core::Result<Outcome>) {
+    fn finished(self: &Arc<Self>, id: u64, result: Result<Outcome, String>) {
         let notice = {
             let mut inner = self.lock();
             let Some(active) = inner.active.remove(&id) else {
@@ -459,7 +591,7 @@ impl Manager {
             let notice = match (index, active.remove) {
                 (Some(index), Some(delete_file)) => {
                     let record = inner.records.remove(index);
-                    discard_files(&record, delete_file);
+                    discard_files(&record, delete_file, &self.tools);
                     None
                 }
                 (Some(index), None) => {
@@ -549,7 +681,7 @@ impl Record {
         before != (self.size, self.downloaded, self.resumable)
     }
 
-    fn finish(&mut self, result: sdm_core::Result<Outcome>) -> Option<Notice> {
+    fn finish(&mut self, result: Result<Outcome, String>) -> Option<Notice> {
         match result {
             Ok(Outcome::Completed { path, size }) => {
                 self.state = State::Completed;
@@ -559,6 +691,9 @@ impl Record {
                 self.downloaded = size;
                 self.completed_at = Some(now_ms());
                 self.headers.clear();
+                if let Some(media) = &mut self.media {
+                    media.cookies.clear();
+                }
                 Some(Notice::Completed {
                     id: self.id,
                     file_name: self.file_name.clone(),
@@ -571,10 +706,10 @@ impl Record {
             }
             Err(error) => {
                 self.state = State::Failed;
-                self.error = Some(error.to_string());
+                self.error = Some(error.clone());
                 Some(Notice::Failed {
                     file_name: self.file_name.clone(),
-                    error: error.to_string(),
+                    error,
                 })
             }
         }
@@ -609,11 +744,16 @@ fn view(record: &Record, live: &Live) -> DownloadView {
         connections: progress.map_or(0, |p| p.connections),
         segments: progress.map(|p| p.segments.clone()).unwrap_or_default(),
         stopping: live.stopping,
+        media: record.media.is_some(),
+        processing: progress.is_some_and(|p| p.phase == Phase::Finishing),
     }
 }
 
 /// Deletes what is left of a download that leaves the list.
-fn discard_files(record: &Record, delete_file: bool) {
+fn discard_files(record: &Record, delete_file: bool, tools: &Tools) {
+    if record.media.is_some() {
+        let _ = std::fs::remove_dir_all(tools.work_dir(record.id));
+    }
     for path in [
         sdm_core::partial_data_path(&record.path),
         sdm_core::partial_state_path(&record.path),
@@ -692,6 +832,10 @@ mod tests {
         }
 
         fn manager(&self) -> Arc<Manager> {
+            self.manager_with(Tools::new(self.dir.path()))
+        }
+
+        fn manager_with(&self, tools: Tools) -> Arc<Manager> {
             let settings = Settings {
                 download_dir: self.downloads(),
                 proxy: "none".into(),
@@ -701,11 +845,153 @@ mod tests {
             Manager::new(
                 self.dir.path().join("downloads.json"),
                 settings,
+                Arc::new(tools),
                 Handle::current(),
                 Box::new(move |notice| notices.lock().unwrap().push(notice)),
             )
             .unwrap()
         }
+
+        /// A stand-in for yt-dlp: a shell script that reports progress and
+        /// writes the file, or fails when the page contains "broken", or
+        /// hangs when it contains "slow".
+        #[cfg(unix)]
+        fn fake_ytdlp(&self) -> PathBuf {
+            use std::os::unix::fs::PermissionsExt;
+            let script = self.dir.path().join("yt-dlp");
+            std::fs::write(
+                &script,
+                r#"#!/bin/sh
+home=""; out=""; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -P) case "$2" in home:*) home="${2#home:}";; esac; shift 2;;
+    -o) out="$2"; shift 2;;
+    --) url="$2"; shift 2;;
+    *) shift;;
+  esac
+done
+case "$url" in *broken*) echo "ERROR: [generic] Unsupported URL: $url" >&2; exit 1;; esac
+case "$url" in *slow*) echo "SDMP downloading 10 100 NA 5 137"; sleep 30; exit 1;; esac
+name=$(printf '%s' "$out" | sed 's/%(ext)s/mp4/; s/%%/%/g')
+echo "SDMP downloading 40 100 NA 1000 137"
+echo "SDMP finished 100 100 NA 1000 137"
+echo "SDMP downloading 10 20 NA 1000 140"
+echo "SDMP finished 20 20 NA 1000 140"
+mkdir -p "$home"
+printf 'video+audio' > "$home/$name"
+echo "SDMF $home/$name"
+"#,
+            )
+            .unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            script
+        }
+    }
+
+    #[cfg(unix)]
+    fn media_request(page: &str, title: &str) -> AddMediaRequest {
+        AddMediaRequest {
+            source: media::MediaSource {
+                page_url: page.into(),
+                cookies: vec![media::Cookie {
+                    name: "SID".into(),
+                    value: "secret".into(),
+                    domain: ".example.com".into(),
+                    path: "/".into(),
+                    secure: true,
+                    host_only: false,
+                    expires: None,
+                }],
+                ..media::MediaSource::default()
+            },
+            option: media::MediaOption {
+                id: "v1080".into(),
+                kind: media::MediaKind::Video,
+                height: Some(1080),
+                fps: Some(30),
+                ext: "mp4".into(),
+                vcodec: Some("H.264".into()),
+                acodec: Some("AAC".into()),
+                size: Some(120),
+                needs_ffmpeg: true,
+                format: "137+140".into(),
+                merge: Some("mp4".into()),
+                audio: None,
+            },
+            title: title.into(),
+            directory: None,
+            start: true,
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn downloads_videos_with_ytdlp() {
+        let fixture = Fixture::new();
+        let manager =
+            fixture.manager_with(Tools::with_ytdlp(fixture.dir.path(), fixture.fake_ytdlp()));
+
+        let id = manager
+            .add_media(media_request(
+                "https://example.com/watch?v=1",
+                "Clip: 100% <live>",
+            ))
+            .unwrap();
+        let done = wait_for(&manager, id, State::Completed).await;
+        let expected = fixture
+            .downloads()
+            .join("Video")
+            .join("Clip_ 100% _live_.mp4");
+        assert_eq!(done.path, expected);
+        assert!(done.media);
+        assert_eq!(std::fs::read(&expected).unwrap(), b"video+audio");
+        assert_eq!(done.size, Some(11));
+        // Login cookies and the unfinished files are gone.
+        let stored = std::fs::read_to_string(fixture.dir.path().join("downloads.json")).unwrap();
+        assert!(!stored.contains("secret"));
+        assert!(
+            !fixture
+                .dir
+                .path()
+                .join("media")
+                .join(id.to_string())
+                .exists()
+        );
+
+        let id = manager
+            .add_media(media_request("https://example.com/broken", "Broken"))
+            .unwrap();
+        let failed = wait_for(&manager, id, State::Failed).await;
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("[generic] Unsupported URL: https://example.com/broken")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pauses_videos_by_stopping_ytdlp() {
+        let fixture = Fixture::new();
+        let manager =
+            fixture.manager_with(Tools::with_ytdlp(fixture.dir.path(), fixture.fake_ytdlp()));
+        let id = manager
+            .add_media(media_request("https://example.com/slow", "Slow"))
+            .unwrap();
+        for _ in 0..500 {
+            if manager.get(id).unwrap().downloaded > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(manager.get(id).unwrap().downloaded, 10);
+        let started = Instant::now();
+        manager.pause(&[id]);
+        wait_for(&manager, id, State::Paused).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "yt-dlp was not stopped"
+        );
     }
 
     fn request(url: String, start: bool) -> AddRequest {

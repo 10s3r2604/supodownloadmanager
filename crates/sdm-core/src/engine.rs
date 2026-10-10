@@ -198,7 +198,7 @@ pub enum Phase {
 }
 
 /// A snapshot of a running download.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
     /// What the download is doing.
@@ -304,6 +304,61 @@ impl Downloader {
             &CancellationToken::new(),
         )
         .await
+    }
+
+    /// Downloads the bytes `range` of a file into memory, calling
+    /// `progress` with the number of bytes received so far. Fails with
+    /// [`Error::RangeIgnored`] when the server sends something else.
+    ///
+    /// Handy for taking one file out of a big archive on a server.
+    pub async fn fetch_range(
+        &self,
+        url: &str,
+        range: std::ops::Range<u64>,
+        mut progress: impl FnMut(u64),
+    ) -> Result<Vec<u8>> {
+        if range.is_empty() {
+            return Ok(Vec::new());
+        }
+        let url = parse_url(url)?;
+        let response = self
+            .client
+            .get(url)
+            .header(
+                header::RANGE,
+                format!("bytes={}-{}", range.start, range.end - 1),
+            )
+            .send()
+            .await?;
+        match response.status() {
+            StatusCode::PARTIAL_CONTENT => {}
+            StatusCode::OK => return Err(Error::RangeIgnored),
+            status => return Err(Error::Status(status)),
+        }
+        let first = response
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(probe::parse_content_range)
+            .and_then(|r| r.range)
+            .map(|(first, _)| first);
+        if first != Some(range.start) {
+            return Err(Error::BadContentRange);
+        }
+        let wanted = range.end - range.start;
+        let mut data = Vec::with_capacity(usize::try_from(wanted).unwrap_or(0));
+        let mut body = response.bytes_stream();
+        while let Some(chunk) = body.next().await {
+            let chunk = chunk?;
+            self.limiter.acquire(chunk.len()).await;
+            data.extend_from_slice(&chunk);
+            progress(data.len() as u64);
+        }
+        if (data.len() as u64) < wanted {
+            return Err(Error::UnexpectedEof);
+        }
+        data.truncate(usize::try_from(wanted).unwrap_or(usize::MAX));
+        Ok(data)
     }
 
     /// Starts a download in the background. Must be called from within a

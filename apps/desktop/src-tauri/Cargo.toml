@@ -23,6 +23,7 @@ tauri-build = { version = "2", features = [] }
 sdm-core.workspace = true
 anyhow.workspace = true
 axum = "0.8"
+flate2 = "1"
 percent-encoding.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -33,11 +34,14 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
-tokio.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trash = "5"
 url = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

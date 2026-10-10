@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use sdm_core::RemoteInfo;
 use serde::Serialize;
 use tauri::path::BaseDirectory;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -13,6 +13,7 @@ use crate::AppState;
 use crate::browsers::{self, Browser, Engine, InstallInfo};
 use crate::category::Category;
 use crate::manager::{AddRequest, DownloadView, State as DownloadState};
+use crate::media::{AddMediaRequest, MediaInfo, MediaSource, ToolStatus};
 use crate::settings::Settings;
 use crate::tray;
 use crate::windows::WhenDone;
@@ -37,6 +38,59 @@ pub fn get_download(state: State<'_, AppState>, id: u64) -> Option<DownloadView>
 #[tauri::command]
 pub async fn open_progress_window(app: AppHandle, id: u64) {
     crate::windows::open_progress(&app, id);
+}
+
+/// Which of yt-dlp and ffmpeg are ready.
+#[tauri::command]
+pub fn media_tools(state: State<'_, AppState>) -> ToolStatus {
+    state.tools.status()
+}
+
+/// Downloads yt-dlp (and ffmpeg when `ffmpeg` is set) if they are missing,
+/// reporting progress with `sdm:tool-progress` events.
+#[tauri::command]
+pub async fn media_prepare(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ffmpeg: bool,
+) -> Result<ToolStatus> {
+    let downloader = state.manager.downloader();
+    let report = |progress| {
+        let _ = app.emit(crate::TOOL_PROGRESS_EVENT, progress);
+    };
+    state.tools.install_ytdlp(&downloader, report).await?;
+    if ffmpeg && state.tools.ffmpeg().is_none() {
+        state.tools.install_ffmpeg(&downloader, report).await?;
+    }
+    Ok(state.tools.status())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaProbe {
+    #[serde(flatten)]
+    info: MediaInfo,
+    /// Where videos and audio go unless the user picks another folder.
+    video_dir: PathBuf,
+    audio_dir: PathBuf,
+}
+
+/// Asks yt-dlp which qualities a page offers.
+#[tauri::command]
+pub async fn media_probe(state: State<'_, AppState>, source: MediaSource) -> Result<MediaProbe> {
+    let settings = state.manager.settings();
+    let info = crate::media::probe(&state.tools, &source, &settings.proxy).await?;
+    Ok(MediaProbe {
+        info,
+        video_dir: settings.directory_for(Category::Video),
+        audio_dir: settings.directory_for(Category::Music),
+    })
+}
+
+/// Adds a video in the chosen quality to the download list.
+#[tauri::command]
+pub fn add_media(state: State<'_, AppState>, request: AddMediaRequest) -> Result<u64> {
+    state.manager.add_media(request)
 }
 
 /// What happens when a download finishes.

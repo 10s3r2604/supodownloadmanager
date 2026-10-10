@@ -6,6 +6,7 @@ mod category;
 mod clipboard;
 mod commands;
 mod manager;
+mod media;
 mod settings;
 mod store;
 mod texts;
@@ -31,6 +32,10 @@ use crate::settings::Settings;
 const ADD_PROMPT_EVENT: &str = "sdm:add-prompt";
 /// Tells the user interface that a download link was copied.
 const CLIPBOARD_EVENT: &str = "sdm:clipboard-link";
+/// Asks the user interface to show the video quality picker.
+const MEDIA_PROMPT_EVENT: &str = "sdm:media-prompt";
+/// Progress of downloading yt-dlp or ffmpeg.
+pub(crate) const TOOL_PROGRESS_EVENT: &str = "sdm:tool-progress";
 
 pub struct AppState {
     pub manager: Arc<Manager>,
@@ -38,6 +43,8 @@ pub struct AppState {
     pub bridge_port: u16,
     pub bridge_error: Mutex<Option<String>>,
     pub data_dir: PathBuf,
+    /// yt-dlp and ffmpeg for videos from web pages.
+    pub tools: Arc<media::Tools>,
     /// What to do when running downloads finish, chosen in their windows.
     pub when_done: windows::WhenDoneChoices,
     quitting: AtomicBool,
@@ -72,6 +79,10 @@ pub fn run() {
             commands::get_download,
             commands::open_progress_window,
             commands::get_when_done,
+            commands::media_tools,
+            commands::media_prepare,
+            commands::media_probe,
+            commands::add_media,
             commands::set_when_done,
             commands::probe_url,
             commands::add_download,
@@ -122,9 +133,11 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
     }
 
     let notify_app = app.clone();
+    let tools = Arc::new(media::Tools::new(&data_dir));
     let manager = Manager::new(
         data_dir.join("downloads.json"),
         settings.clone(),
+        tools.clone(),
         tauri::async_runtime::handle().inner().clone(),
         Box::new(move |notice| notify(&notify_app, notice)),
     )?;
@@ -138,10 +151,17 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         bridge_port: settings.bridge_port,
         bridge_error: Mutex::new(None),
         data_dir,
+        tools: tools.clone(),
         when_done: windows::WhenDoneChoices::default(),
         quitting: AtomicBool::new(false),
     });
     tray::create(app, settings.resolved_language())?;
+
+    // Sites change all the time; keep our copy of yt-dlp fresh.
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        tools.update_ytdlp().await;
+    });
 
     // Keep the stored list up to date and save it every few seconds.
     tauri::async_runtime::spawn(async move {
@@ -311,5 +331,10 @@ impl Handler for AppBridge {
                 tracing::warn!(%error, "could not add a download from the browser");
             }
         });
+    }
+
+    fn media(&self, source: media::MediaSource) {
+        show_main_window(&self.app);
+        let _ = self.app.emit(MEDIA_PROMPT_EVENT, source);
     }
 }

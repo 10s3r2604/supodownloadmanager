@@ -44,18 +44,29 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 - [x] Find installed browsers and guide the extension installation from the app
 - [ ] Publish in the Chrome Web Store and on addons.mozilla.org (one-click install)
 
-## Phase 4: Power features
+## Phase 4: Looks, progress windows and videos ✅ (v0.3)
+
+- [x] Two looks, switchable in Settings: Neon (live speed chart, segments, connections) and Minimal (light or dark)
+- [x] IDM-style progress window for every download, in three styles (speed graph, ring, classic)
+- [x] "Show a dialog when done" and "Open the file when done" per download, "Don't show this dialog again"
+- [x] Video grabber: YouTube, Facebook, X, TikTok and ~1800 other sites through yt-dlp, with a quality picker
+- [x] HLS (`.m3u8`) and DASH streams, video and sound merged with ffmpeg
+- [x] "Download this video" button on videos in the browser, with the page's cookies
+- [x] yt-dlp downloaded on first use (SHA-256 checked) and kept up to date; ffmpeg.exe fetched on Windows
+- [ ] Playlists and channels
+- [ ] Subtitles
+
+## Phase 5: Power features
 
 - [ ] **BitTorrent**: magnet links and `.torrent` files, captured from the browser too
       (planned on top of [librqbit](https://github.com/ikatson/rqbit), a Rust BitTorrent engine)
-- [ ] Video grabber for HLS (`.m3u8`) and DASH streams, merged with ffmpeg
 - [ ] Scheduler: start and stop at set times, shut down or sleep when done
 - [ ] Several queues with their own limits
 - [ ] Saved logins per site
 - [ ] Refresh expired download links without losing progress
 - [ ] "Download all links" on a page, batch downloads with numbered patterns
 
-## Phase 5: Distribution
+## Phase 6: Distribution
 
 - [x] Installers built by CI: MSI/NSIS for Windows, DMG for macOS, deb/rpm/AppImage for Linux
 - [ ] Code signing for Windows and macOS

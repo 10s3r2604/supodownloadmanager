@@ -31,11 +31,12 @@ export interface PwProps {
   };
 }
 
-export type Phase = "connecting" | "running" | "stopping" | "queued" | "paused" | "failed" | "done";
+export type Phase = "connecting" | "running" | "processing" | "stopping" | "queued" | "paused" | "failed" | "done";
 
 export function phaseOf(d: Download): Phase {
   if (d.state === "completed") return "done";
   if (d.stopping) return "stopping";
+  if (d.state === "downloading" && d.processing) return "processing";
   if (d.state === "downloading") return d.connections === 0 && d.speed === 0 ? "connecting" : "running";
   return d.state;
 }
@@ -46,6 +47,7 @@ export function usePhaseText() {
     ({
       connecting: t("connecting"),
       running: t("state.downloading"),
+      processing: t("processing"),
       stopping: t("stopping"),
       queued: t("state.queued"),
       paused: t("pwPaused"),

@@ -40,7 +40,7 @@ function ClassicProgress(p: PwProps) {
   const f = useFigures(d);
   const phaseText = usePhaseText();
   const [tab, setTab] = useState<"status" | "whenDone">("status");
-  const busy = phase === "running" || phase === "connecting" || phase === "queued";
+  const busy = phase === "running" || phase === "processing" || phase === "connecting" || phase === "queued";
   const showConnections = p.details;
   const fill = f.value ?? 0;
 

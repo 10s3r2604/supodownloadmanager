@@ -12,11 +12,25 @@ interface Props {
   settings: Settings;
   onClose: () => void;
   onError: (message: string) => void;
+  /** Switches to the video quality picker for a page. */
+  onMedia: (pageUrl: string) => void;
 }
 
 const isLink = (text: string) => /^https?:\/\/\S+$/i.test(text.trim());
 
-export function AddDialog({ prompt, initialUrl, settings, onClose, onError }: Props) {
+/** Sites whose pages hold videos rather than files. */
+const VIDEO_SITES =
+  /(^|\.)(youtube\.com|youtu\.be|facebook\.com|fb\.watch|x\.com|twitter\.com|tiktok\.com|instagram\.com|vimeo\.com|dailymotion\.com|bilibili\.com|twitch\.tv|soundcloud\.com|reddit\.com|threads\.net|zingmp3\.vn|nhaccuatui\.com)$/i;
+
+function isVideoPage(url: string) {
+  try {
+    return VIDEO_SITES.test(new URL(url.trim()).hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function AddDialog({ prompt, initialUrl, settings, onClose, onError, onMedia }: Props) {
   const { t, language } = useI18n();
   const headers = prompt?.headers ?? [];
   const [url, setUrl] = useState(prompt?.url ?? initialUrl ?? "");
@@ -119,6 +133,15 @@ export function AddDialog({ prompt, initialUrl, settings, onClose, onError }: Pr
           />
         </label>
         {url.trim() && !valid && <p className="hint warning">{t("invalidUrl")}</p>}
+        {valid && (isVideoPage(url) || probe?.contentType?.startsWith("text/html")) && (
+          <div className="video-banner">
+            <Icon name="video" size={18} />
+            <span>{isVideoPage(url) ? t("addVideoHint") : t("addPageHint")}</span>
+            <button type="button" className="button primary" onClick={() => onMedia(url.trim())}>
+              {isVideoPage(url) ? t("addVideoButton") : t("addPageButton")}
+            </button>
+          </div>
+        )}
 
         <div className="probe">
           {probing && <span className="muted">{t("checking")}</span>}

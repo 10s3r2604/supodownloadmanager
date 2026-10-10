@@ -1,7 +1,7 @@
 // A simulated backend so the interface can be developed and tested in a
 // normal browser (`npm run dev`). It is never used inside the real app.
 
-import type { Api, Browser, Category, Download, Settings, WhenDone } from "./api";
+import type { Api, Browser, Category, Download, MediaInfo, MediaOption, Settings, ToolStatus, WhenDone } from "./api";
 
 const MB = 1024 * 1024;
 const now = Date.now();
@@ -83,6 +83,8 @@ function make(
     connections: 0,
     segments: [],
     stopping: false,
+    media: false,
+    processing: false,
     ...extra,
   };
 }
@@ -160,6 +162,69 @@ const browsers: Browser[] = [
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const byIds = (ids: number[]) => downloads.filter((d) => ids.includes(d.id));
+
+const query = new URLSearchParams(location.search);
+const tools: ToolStatus = {
+  ytdlp: query.get("tools") !== "0",
+  ffmpeg: query.get("tools") !== "0" && query.get("ffmpeg") !== "0",
+  ffmpegInstallable: true,
+  ytdlpSizeMb: 18,
+  ffmpegSizeMb: 66,
+};
+
+function option(id: string, kind: MediaOption["kind"], height: number | null, ext: string, size: number, merge: boolean, extra: Partial<MediaOption> = {}): MediaOption {
+  return {
+    id,
+    kind,
+    height,
+    fps: height ? 30 : null,
+    ext,
+    vcodec: kind === "video" ? (height && height > 1080 ? "VP9" : "H.264") : null,
+    acodec: ext === "webm" ? "Opus" : "AAC",
+    size,
+    needsFfmpeg: merge,
+    format: id,
+    merge: merge ? ext : null,
+    audio: null,
+    ...extra,
+  };
+}
+
+function mediaInfo(pageUrl: string): MediaInfo {
+  const youtube = /youtu/.test(pageUrl);
+  return {
+    title: youtube ? "Sơn Tùng M-TP | Chúng Ta Của Tương Lai | Official Music Video" : "Phim thử nghiệm SDM",
+    thumbnail: null,
+    duration: youtube ? 263 : 20,
+    site: youtube ? "Youtube" : "HTML5MediaEmbed",
+    url: pageUrl,
+    options: youtube
+      ? [
+          option("v2160", "video", 2160, "webm", 412 * MB, true),
+          option("v1440", "video", 1440, "webm", 205 * MB, true),
+          option("v1080", "video", 1080, "mp4", 96 * MB, true, { fps: 60 }),
+          option("v720", "video", 720, "mp4", 48 * MB, true),
+          option("v480", "video", 480, "mp4", 22 * MB, true),
+          option("v360", "video", 360, "mp4", 14 * MB, false),
+          option("m4a", "audio", null, "m4a", 4.2 * MB, false),
+          option("mp3", "audio", null, "mp3", 6.3 * MB, true, { audio: "mp3", acodec: "MP3" }),
+        ]
+      : [option("best", "video", null, "mp4", 6.7 * MB, false), option("mp3", "audio", null, "mp3", 0.5 * MB, true, { audio: "mp3", acodec: "MP3" })],
+    default: youtube ? "v1080" : "best",
+    videoDir: `${settings.downloadDir}/Video`,
+    audioDir: `${settings.downloadDir}/Music`,
+  };
+}
+
+if (query.get("media")) {
+  setTimeout(() => {
+    window.dispatchEvent(
+      new CustomEvent("sdm:media-prompt", {
+        detail: { pageUrl: "https://www.youtube.com/watch?v=zoEtcR5EW08", title: "YouTube" },
+      }),
+    );
+  }, 800);
+}
 
 export const mockApi: Api = {
   async listDownloads() {
@@ -258,7 +323,7 @@ export const mockApi: Api = {
   },
   async openExtensionFolder() {},
   async appInfo() {
-    return { version: "0.2.0", bridgePort: 17360, bridgeError: null };
+    return { version: "0.3.0", bridgePort: 17360, bridgeError: null };
   },
   async onAddPrompt(handler) {
     const listener = (event: Event) => handler((event as CustomEvent).detail);
@@ -269,5 +334,44 @@ export const mockApi: Api = {
     const listener = (event: Event) => handler((event as CustomEvent).detail);
     window.addEventListener("sdm:clipboard-link", listener);
     return () => window.removeEventListener("sdm:clipboard-link", listener);
+  },
+  async mediaTools() {
+    return { ...tools };
+  },
+  async mediaPrepare(ffmpeg) {
+    const fetchTool = async (tool: "yt-dlp" | "ffmpeg", total: number) => {
+      for (let done = 0; done <= total; done += total / 12) {
+        window.dispatchEvent(new CustomEvent("sdm:tool-progress", { detail: { tool, downloaded: Math.round(done), total } }));
+        await wait(150);
+      }
+    };
+    if (!tools.ytdlp) await fetchTool("yt-dlp", 18 * MB);
+    tools.ytdlp = true;
+    if (ffmpeg && !tools.ffmpeg) await fetchTool("ffmpeg", 66 * MB);
+    if (ffmpeg) tools.ffmpeg = true;
+    return { ...tools };
+  },
+  async mediaProbe(source) {
+    await wait(query.get("slowprobe") ? 60_000 : 900);
+    if (/broken/.test(source.pageUrl)) throw new Error("Unsupported URL: " + source.pageUrl);
+    return mediaInfo(source.pageUrl);
+  },
+  async addMedia(request) {
+    const d = make(`${request.title}.${request.option.ext}`, new URL(request.source.pageUrl).host, request.option.size, request.start ? "downloading" : "paused", 0, 0, {
+      url: request.source.pageUrl,
+      media: true,
+    });
+    downloads.push(d);
+    return d.id;
+  },
+  async onMediaPrompt(handler) {
+    const listener = (event: Event) => handler((event as CustomEvent).detail);
+    window.addEventListener("sdm:media-prompt", listener);
+    return () => window.removeEventListener("sdm:media-prompt", listener);
+  },
+  async onToolProgress(handler) {
+    const listener = (event: Event) => handler((event as CustomEvent).detail);
+    window.addEventListener("sdm:tool-progress", listener);
+    return () => window.removeEventListener("sdm:tool-progress", listener);
   },
 };

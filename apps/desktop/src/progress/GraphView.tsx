@@ -26,7 +26,7 @@ export function GraphView(p: PwProps) {
   const f = useFigures(d);
   const phaseText = usePhaseText();
   const done = phase === "done";
-  const busy = phase === "running" || phase === "connecting" || phase === "queued";
+  const busy = phase === "running" || phase === "processing" || phase === "connecting" || phase === "queued";
 
   let left: ReactNode;
   let right: ReactNode;

@@ -23,7 +23,7 @@ export function RingView(p: PwProps) {
   const f = useFigures(d);
   const phaseText = usePhaseText();
   const done = phase === "done";
-  const busy = phase === "running" || phase === "connecting" || phase === "queued";
+  const busy = phase === "running" || phase === "processing" || phase === "connecting" || phase === "queued";
 
   const centre = done ? (
     <Icon name="tick" size={36} />

@@ -124,6 +124,7 @@ function MinimalRow({ d, selected, actions }: { d: Download } & ViewProps) {
 
   let meta: string;
   if (d.stopping) meta = t("stopping");
+  else if (running && d.processing) meta = `${t("processing")} · ${hostOf(d.url)}`;
   else if (running) meta = d.eta != null ? `${t("timeLeftShort", { t: formatDuration(d.eta) })} · ${hostOf(d.url)}` : `${t("connecting")} · ${hostOf(d.url)}`;
   else if (d.state === "queued") meta = `${t("state.queued")} · ${hostOf(d.url)}`;
   else meta = hostOf(d.url);

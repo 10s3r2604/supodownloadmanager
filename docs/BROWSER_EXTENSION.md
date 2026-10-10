@@ -13,13 +13,23 @@ Firefox.
   the browser download and sends the link to SDM, together with the page's
   cookies, the referer and the browser's user agent. Downloads that need a
   login therefore work in SDM too.
-- **Adds "Download link with SDM"** to the right-click menu of links, images,
-  videos and audio.
+- **Puts a "Download this video" button on videos.** Hover any video that is
+  at least 200 × 112 pixels and the button appears in its top right corner
+  (also in full screen). A click sends the page to SDM, which finds the video
+  with yt-dlp and asks for the quality. The button can be turned off in the
+  popup.
+
+  <img src="images/video-button-vi.png" alt="Download this video" width="416">
+
+- **Adds "Download link with SDM"** to the right-click menu of links, images
+  and audio, and **"Download the video on this page with SDM"** to the menu of
+  videos and pages. Sites such as YouTube replace the video's own menu, so
+  right-click next to the player there.
 - **Falls back gracefully.** When SDM is not running, the browser downloads as
   usual. When SDM refuses a link, the extension gives it back to the browser.
 
-The popup shows whether SDM is running and lets you turn capturing off, set a
-minimum file size and change the port.
+The popup shows whether SDM is running and lets you turn capturing and the
+video button off, set a minimum file size and change the port.
 
 ## Installing
 
@@ -70,6 +80,11 @@ downloaded without your confirmation.
 | -------------------- | -------------------------------------------------------- |
 | `GET /api/ping`      | Is SDM running? Returns its version and settings          |
 | `POST /api/download` | Hand over a download: `url`, `referrer`, `cookies`, `userAgent`, `fileName`, `fileSize` |
+| `POST /api/media`    | Hand over a page with a video: `pageUrl`, `title`, `mediaUrl`, `cookies` (list), `userAgent`, `referrer` |
+
+The cookies of a video page go only to the SDM app on your computer. SDM
+writes them into the download's private work folder for yt-dlp and deletes
+them as soon as the video is complete.
 
 ## Building
 

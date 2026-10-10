@@ -1,16 +1,62 @@
 {
-  "extName": { "message": "Supo Download Manager" },
-  "extDescription": { "message": "Tải file bằng Supo Download Manager: nhanh hơn, tạm dừng và tải tiếp được." },
-  "menuLink": { "message": "Tải link bằng SDM" },
-  "menuMedia": { "message": "Tải file này bằng SDM" },
-  "statusConnected": { "message": "Đã kết nối với SDM" },
-  "statusOffline": { "message": "SDM chưa chạy. Hãy mở ứng dụng để tải bằng SDM." },
-  "statusDisabled": { "message": "Tích hợp trình duyệt đang tắt trong SDM." },
-  "captureLabel": { "message": "Bắt link tải" },
-  "captureHint": { "message": "Các loại file đã chọn trong SDM sẽ được SDM tải thay cho trình duyệt." },
-  "permissionHint": { "message": "SDM cần quyền truy cập trang web để gửi cookie, nhờ vậy tải được các link cần đăng nhập." },
-  "grant": { "message": "Cho phép" },
-  "advanced": { "message": "Nâng cao" },
-  "minSize": { "message": "Chỉ bắt file lớn hơn (MB)" },
-  "port": { "message": "Cổng của SDM" }
+  "extName": {
+    "message": "Supo Download Manager"
+  },
+  "extDescription": {
+    "message": "Tải file bằng Supo Download Manager: nhanh hơn, tạm dừng và tải tiếp được."
+  },
+  "menuLink": {
+    "message": "Tải link bằng SDM"
+  },
+  "menuMedia": {
+    "message": "Tải file này bằng SDM"
+  },
+  "statusConnected": {
+    "message": "Đã kết nối với SDM"
+  },
+  "statusOffline": {
+    "message": "SDM chưa chạy. Hãy mở ứng dụng để tải bằng SDM."
+  },
+  "statusDisabled": {
+    "message": "Tích hợp trình duyệt đang tắt trong SDM."
+  },
+  "captureLabel": {
+    "message": "Bắt link tải"
+  },
+  "captureHint": {
+    "message": "Các loại file đã chọn trong SDM sẽ được SDM tải thay cho trình duyệt."
+  },
+  "permissionHint": {
+    "message": "SDM cần quyền truy cập trang web để gửi cookie, nhờ vậy tải được các link cần đăng nhập."
+  },
+  "grant": {
+    "message": "Cho phép"
+  },
+  "advanced": {
+    "message": "Nâng cao"
+  },
+  "minSize": {
+    "message": "Chỉ bắt file lớn hơn (MB)"
+  },
+  "port": {
+    "message": "Cổng của SDM"
+  },
+  "menuVideo": {
+    "message": "Tải video trên trang này bằng SDM"
+  },
+  "videoButton": {
+    "message": "Tải video này"
+  },
+  "videoSending": {
+    "message": "Đang gửi tới SDM…"
+  },
+  "videoSent": {
+    "message": "Đã gửi tới SDM"
+  },
+  "videoFailed": {
+    "message": "SDM chưa chạy"
+  },
+  "videoButtonLabel": {
+    "message": "Hiện nút “Tải video này” trên video"
+  }
 }

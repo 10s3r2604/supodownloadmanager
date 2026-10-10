@@ -16,6 +16,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
+use crate::media::MediaSource;
+
 pub const CLIENT_HEADER: &str = "x-sdm-client";
 pub const BROWSER_HEADER: &str = "x-sdm-browser";
 
@@ -72,6 +74,8 @@ pub struct BridgeConfig {
 pub trait Handler: Send + Sync + 'static {
     fn config(&self) -> BridgeConfig;
     fn download(&self, download: BrowserDownload);
+    /// A video on a web page, to download with yt-dlp.
+    fn media(&self, source: MediaSource);
 }
 
 pub struct Bridge {
@@ -84,6 +88,8 @@ pub struct Bridge {
 struct Ping {
     app: &'static str,
     version: &'static str,
+    /// The app downloads videos from web pages (`/api/media`).
+    media: bool,
     #[serde(flatten)]
     config: BridgeConfig,
 }
@@ -110,7 +116,8 @@ impl Bridge {
         Router::new()
             .route("/api/ping", get(ping))
             .route("/api/download", post(download))
-            .layer(DefaultBodyLimit::max(64 * 1024))
+            .route("/api/media", post(media))
+            .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self)
     }
 
@@ -161,6 +168,7 @@ async fn ping(State(bridge): State<Arc<Bridge>>, headers: HeaderMap) -> Response
     Json(Ping {
         app: "sdm",
         version: env!("CARGO_PKG_VERSION"),
+        media: true,
         config: bridge.handler.config(),
     })
     .into_response()
@@ -191,6 +199,31 @@ async fn download(
     StatusCode::ACCEPTED.into_response()
 }
 
+async fn media(
+    State(bridge): State<Arc<Bridge>>,
+    headers: HeaderMap,
+    Json(source): Json<MediaSource>,
+) -> Response {
+    if !from_extension(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    bridge.remember(&headers);
+    if !bridge.handler.config().enabled {
+        return (StatusCode::CONFLICT, "browser integration is turned off").into_response();
+    }
+    let valid =
+        url::Url::parse(&source.page_url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
+    if !valid {
+        return (
+            StatusCode::BAD_REQUEST,
+            "only http and https pages are supported",
+        )
+            .into_response();
+    }
+    bridge.handler.media(source);
+    StatusCode::ACCEPTED.into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use axum::body::Body;
@@ -203,6 +236,7 @@ mod tests {
     struct Recorder {
         enabled: bool,
         received: Arc<Mutex<Vec<BrowserDownload>>>,
+        videos: Arc<Mutex<Vec<MediaSource>>>,
     }
 
     impl Handler for Recorder {
@@ -216,6 +250,10 @@ mod tests {
         fn download(&self, download: BrowserDownload) {
             self.received.lock().unwrap().push(download);
         }
+
+        fn media(&self, source: MediaSource) {
+            self.videos.lock().unwrap().push(source);
+        }
     }
 
     fn bridge(enabled: bool) -> (Arc<Bridge>, Arc<Mutex<Vec<BrowserDownload>>>) {
@@ -223,6 +261,7 @@ mod tests {
         let bridge = Bridge::new(Recorder {
             enabled,
             received: received.clone(),
+            videos: Arc::default(),
         });
         (bridge, received)
     }
@@ -335,5 +374,42 @@ mod tests {
         assert_eq!(json["app"], "sdm");
         assert_eq!(json["enabled"], true);
         assert_eq!(json["captureExtensions"][0], "zip");
+    }
+
+    #[tokio::test]
+    async fn accepts_videos_from_extensions() {
+        let videos = Arc::new(Mutex::new(Vec::new()));
+        let bridge = Bridge::new(Recorder {
+            enabled: true,
+            received: Arc::default(),
+            videos: videos.clone(),
+        });
+        let body = r#"{"pageUrl":"https://www.youtube.com/watch?v=x","title":"Clip",
+            "cookies":[{"name":"SID","value":"1","domain":".youtube.com","secure":true}]}"#;
+        let request = |body: &str| {
+            Request::post("/api/media")
+                .header("content-type", "application/json")
+                .header(CLIENT_HEADER, "extension")
+                .body(Body::from(body.to_owned()))
+                .unwrap()
+        };
+        let response = bridge
+            .clone()
+            .router()
+            .oneshot(request(body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let response = bridge
+            .router()
+            .oneshot(request(r#"{"pageUrl":"javascript:alert(1)"}"#))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let videos = videos.lock().unwrap();
+        assert_eq!(videos.len(), 1);
+        assert_eq!(videos[0].cookies[0].path, "/");
+        assert_eq!(videos[0].title.as_deref(), Some("Clip"));
     }
 }

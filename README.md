@@ -12,18 +12,25 @@ after closing the program or restarting the computer.
 
 > 🇻🇳 [Đọc bằng tiếng Việt](#tiếng-việt)
 
-![SDM main window](docs/images/sdm-light-vi.png)
+![SDM main window, Neon look](docs/images/sdm-neon-vi.png)
 
 ## What's included
 
 - **Desktop app** with a download list, categories, a download queue, a speed
-  limiter, a tray icon and notifications, in English and Vietnamese, with
-  light and dark themes.
+  limiter, a tray icon and notifications, in English and Vietnamese. Two
+  looks to choose from: **Neon** (dark, with a live speed chart and every
+  connection) and **Minimal** (calm, light or dark).
+- **Progress windows** like IDM's: one small window per download that stays
+  until it is done, in three styles.
+- **Video downloads** from YouTube, Facebook, X, TikTok, Instagram, Vimeo and
+  [about 1800 other sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md),
+  in the quality you pick, powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp).
 - **Browser extension** for Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi and
-  Firefox. It hands downloads over to SDM, together with the cookies they need.
+  Firefox. It hands downloads over to SDM, together with the cookies they need,
+  and puts a "Download this video" button on videos.
 - **`sdm` command line tool** for scripts and servers.
 
-> **Status: early development (v0.2).** Everything above works and is tested,
+> **Status: early development (v0.3).** Everything above works and is tested,
 > but expect rough edges. See the [roadmap](docs/ROADMAP.md).
 
 ## Features
@@ -36,8 +43,9 @@ after closing the program or restarting the computer.
   so if the file changed, it starts over instead of mixing old and new data.
 - **Browser integration**: downloads of the file types you choose open in SDM
   instead of the browser, with cookies, referer and user agent, so downloads
-  that need a login work. Right-click any link, image or video and choose
-  "Download link with SDM".
+  that need a login work. Right-click any link or image and choose
+  "Download link with SDM", or right-click a page with a video and choose
+  "Download the video on this page with SDM".
 - **One-click extension setup**: SDM finds the browsers on your computer and
   opens the right page to install the extension.
 - **Clipboard monitoring**: copy a download link and SDM offers to download it.
@@ -52,7 +60,45 @@ after closing the program or restarting the computer.
 - **Speed limit**, **proxy** (HTTP, HTTPS, SOCKS5), **safe file names**,
   **SHA-256 verification** (command line).
 
-![Dark theme](docs/images/sdm-dark-en.png)
+![Minimal look, dark](docs/images/sdm-minimal-dark-en.png)
+
+### Progress windows
+
+When a download starts, a small window follows it until it is done, like in
+IDM. Pick its style in **Settings → Appearance**: a live **speed graph** (the
+default), a compact **ring**, or the **classic** IDM layout with a connection
+list. Each window has "Show a dialog when done" and "Open the file when done";
+without the dialog the window closes by itself when the file is complete.
+
+![Progress window styles](docs/images/progress-windows-vi.png)
+
+### Videos from web pages
+
+Hover a video in the browser and click **Download this video**, or paste a
+YouTube (or other video site) link into **Add URL**. SDM shows the qualities
+the site offers (4K, 1080p60, 720p, ..., audio only as M4A or MP3) with their
+sizes, then downloads and merges video and sound into one file. Video
+downloads can be paused and resumed like any other download, and appear in
+the list and in progress windows.
+
+<p>
+<img src="docs/images/video-button-vi.png" alt="Download this video button" width="416">
+</p>
+<img src="docs/images/sdm-video-vi.png" alt="Choosing the quality of a video" width="560">
+
+The first time you download a video, SDM fetches
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) (about 18 MB on Windows, 38 MB
+elsewhere) from its official GitHub releases, checks it against the published
+SHA-256 sums and keeps it up to date. Joining separate video and sound (most
+sites send them apart above 360p) needs [ffmpeg](https://ffmpeg.org): SDM
+uses the one on your computer, or on Windows downloads just `ffmpeg.exe`
+(66 MB) out of yt-dlp's ffmpeg build, checked with the archive's CRC-32. On
+Linux and macOS install it with `sudo apt install ffmpeg` or
+`brew install ffmpeg`.
+
+> Only download videos you have the right to save. Many sites' terms of
+> service forbid downloading, and most videos are protected by copyright.
+> SDM, like yt-dlp, is a tool; how you use it is up to you.
 
 ## Install
 
@@ -139,6 +185,12 @@ it must remain free under the same license.
 SDM is an independent project and is not affiliated with Internet Download
 Manager or Tonec Inc.
 
+Video downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense) and
+[ffmpeg](https://ffmpeg.org) (GPL), which SDM fetches from their official
+releases when first needed; they are separate programs and are not bundled. The
+interface uses the [Inter](https://rsms.me/inter/) typeface (SIL Open Font
+License).
+
 ---
 
 ## Tiếng Việt
@@ -155,10 +207,17 @@ dừng rồi tải tiếp được, kể cả sau khi tắt máy.
 
 - **Ứng dụng desktop**: danh sách tải, phân loại file, hàng đợi, giới hạn tốc
   độ, biểu tượng ở khay hệ thống, thông báo khi tải xong. Có tiếng Việt và
-  tiếng Anh, giao diện sáng và tối.
+  tiếng Anh, hai giao diện để chọn: **Neon** (nền tối, biểu đồ tốc độ, từng kết
+  nối) và **Tối giản** (gọn gàng, nền sáng hoặc tối).
+- **Cửa sổ tiến độ** giống IDM: mỗi file một cửa sổ nhỏ theo dõi đến khi tải
+  xong, có 3 kiểu (Biểu đồ, Vòng tròn, Cổ điển), có tùy chọn "Hiện hộp thoại khi
+  tải xong" và "Mở file khi tải xong".
+- **Tải video** từ YouTube, Facebook, X, TikTok, Instagram, Vimeo và khoảng 1800
+  trang khác, chọn chất lượng (4K, 1080p, 720p, chỉ âm thanh M4A/MP3), nhờ
+  [yt-dlp](https://github.com/yt-dlp/yt-dlp).
 - **Extension trình duyệt** cho Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi và
   Firefox: chuyển file tải từ trình duyệt sang SDM, kèm cookie để tải được cả
-  các link cần đăng nhập.
+  các link cần đăng nhập, và hiện nút **"Tải video này"** trên video.
 - **Công cụ dòng lệnh `sdm`** cho script và máy chủ.
 
 ### Tính năng chính
@@ -176,6 +235,21 @@ dừng rồi tải tiếp được, kể cả sau khi tắt máy.
   loại một thư mục.
 - **Hàng đợi**: chọn số file tải cùng lúc, các file khác chờ đến lượt.
 - **Giới hạn tốc độ, proxy (HTTP, HTTPS, SOCKS5), đặt tên file an toàn.**
+
+### Tải video
+
+Rê chuột lên video trong trình duyệt và bấm **Tải video này**, hoặc dán link
+YouTube (hay trang video khác) vào **Thêm link**. SDM hiện các chất lượng có sẵn
+kèm dung lượng, tải về rồi ghép hình và tiếng thành một file. Video cũng tạm dừng
+và tải tiếp được như file thường.
+
+Lần đầu tải video, SDM tự tải yt-dlp từ trang GitHub chính thức (kiểm tra mã
+SHA-256) và tự cập nhật. Để ghép hình và tiếng cần ffmpeg: trên Windows SDM tự
+tải `ffmpeg.exe` (66 MB); trên Linux/macOS cài bằng `sudo apt install ffmpeg`
+hoặc `brew install ffmpeg`.
+
+> Chỉ tải video bạn có quyền lưu về máy. Nhiều trang cấm tải video trong điều
+> khoản sử dụng, và phần lớn video có bản quyền.
 
 ### Cài đặt
 

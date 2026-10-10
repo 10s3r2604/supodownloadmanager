@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AddPrompt, type AppInfo, type Download, type Settings, api } from "./api";
+import { type AddPrompt, type AppInfo, type Download, type MediaSource, type Settings, api } from "./api";
 import { useAppearance } from "./appearance";
 import { AddDialog } from "./components/AddDialog";
 import { BrowsersDialog } from "./components/BrowsersDialog";
 import { ContextMenu } from "./components/ContextMenu";
 import { DeleteDialog } from "./components/DeleteDialog";
+import { MediaDialog } from "./components/MediaDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { type Toast, Toasts } from "./components/Toasts";
 import { I18nContext, copyText, errorText } from "./context";
@@ -16,6 +17,7 @@ import type { RowActions, ViewProps } from "./views";
 
 type DialogState =
   | { kind: "add"; prompt?: AddPrompt; url?: string }
+  | { kind: "media"; source: MediaSource }
   | { kind: "settings" }
   | { kind: "browsers" }
   | { kind: "delete"; ids: number[] };
@@ -40,7 +42,7 @@ export default function App() {
   const [selected, setSelected] = useState<number[]>([]);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
-  const [prompts, setPrompts] = useState<AddPrompt[]>([]);
+  const [prompts, setPrompts] = useState<(AddPrompt | MediaSource)[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const anchor = useRef<number | null>(null);
 
@@ -82,6 +84,7 @@ export default function App() {
   useEffect(() => {
     const stops = [
       api.onAddPrompt((prompt) => setPrompts((queue) => [...queue, prompt])),
+      api.onMediaPrompt((source) => setPrompts((queue) => [...queue, source])),
       api.onClipboardLink((url) => toast("clipboard", t("clipboardFound"), url)),
     ];
     return () => stops.forEach((stop) => stop.then((unlisten) => unlisten()));
@@ -90,7 +93,8 @@ export default function App() {
   // Show browser downloads one after another.
   useEffect(() => {
     if (!dialog && prompts.length > 0 && settings) {
-      setDialog({ kind: "add", prompt: prompts[0] });
+      const next = prompts[0];
+      setDialog("pageUrl" in next ? { kind: "media", source: next } : { kind: "add", prompt: next });
       setPrompts((queue) => queue.slice(1));
     }
   }, [dialog, prompts, settings]);
@@ -222,6 +226,21 @@ export default function App() {
           settings={settings}
           onClose={closeDialog}
           onError={showError}
+          onMedia={(pageUrl) => setDialog({ kind: "media", source: { pageUrl } })}
+        />
+      )}
+      {dialog?.kind === "media" && settings && (
+        <MediaDialog
+          source={dialog.source}
+          settings={settings}
+          onClose={closeDialog}
+          onError={showError}
+          onDirect={(url) =>
+            setDialog({
+              kind: "add",
+              prompt: { url, fileName: null, headers: dialog.source.referrer ? [["Referer", dialog.source.referrer]] : [] },
+            })
+          }
         />
       )}
       {dialog?.kind === "settings" && settings && (

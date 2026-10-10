@@ -471,3 +471,23 @@ async fn probe_describes_the_file() {
     assert_eq!(info.size, Some(12345));
     assert!(!info.resumable);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn fetches_a_byte_range() {
+    let data = test_data(300 * 1024);
+    let (base, _server) = start_server(data.clone(), 0).await;
+    let mut seen = 0;
+    let part = downloader()
+        .fetch_range(&format!("{base}/file/data.bin"), 1000..150_000, |n| {
+            seen = n
+        })
+        .await
+        .unwrap();
+    assert_eq!(part, &data[1000..150_000]);
+    assert_eq!(seen, part.len() as u64);
+
+    let ignored = downloader()
+        .fetch_range(&format!("{base}/norange/data.bin"), 1000..2000, |_| {})
+        .await;
+    assert!(matches!(ignored, Err(Error::RangeIgnored)), "{ignored:?}");
+}

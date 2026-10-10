@@ -6,7 +6,7 @@
 
 const DEFAULT_PORT = 17360;
 const PING_CACHE_MS = 5000;
-const DEFAULT_PREFS = { capture: true, port: DEFAULT_PORT, minSizeMb: 0 };
+const DEFAULT_PREFS = { capture: true, videoButton: true, port: DEFAULT_PORT, minSizeMb: 0 };
 
 // Used when the app does not send its own list.
 const FALLBACK_EXTENSIONS = [
@@ -143,6 +143,41 @@ async function handOver({ url, referrer, fileName, fileSize }) {
   }
 }
 
+/** The page's cookies, so videos that need a login can be downloaded. */
+async function cookieList(url) {
+  try {
+    const cookies = await chrome.cookies.getAll({ url });
+    return cookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path,
+      secure: c.secure,
+      hostOnly: c.hostOnly,
+      expires: c.expirationDate ?? null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Sends a page with a video to the app. Returns whether the app took it. */
+async function handOverVideo({ pageUrl, title, mediaUrl, referrer }) {
+  try {
+    const response = await callApp("/api/media", {
+      pageUrl,
+      title: title || undefined,
+      mediaUrl: mediaUrl || undefined,
+      referrer: referrer || undefined,
+      cookies: await cookieList(pageUrl),
+      userAgent: navigator.userAgent,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Lets the browser download a link after all. */
 function giveBack(url) {
   givenBack.add(url);
@@ -181,7 +216,12 @@ function createMenus() {
     chrome.contextMenus.create({
       id: "sdm-media",
       title: chrome.i18n.getMessage("menuMedia"),
-      contexts: ["image", "video", "audio"],
+      contexts: ["image", "audio"],
+    });
+    chrome.contextMenus.create({
+      id: "sdm-video",
+      title: chrome.i18n.getMessage("menuVideo"),
+      contexts: ["video", "page", "frame"],
     });
   });
 }
@@ -190,6 +230,16 @@ chrome.runtime.onInstalled.addListener(createMenus);
 chrome.runtime.onStartup.addListener(createMenus);
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === "sdm-video") {
+    const pageUrl = info.frameUrl || info.pageUrl || tab?.url;
+    if (!pageUrl || !/^https?:/i.test(pageUrl)) return;
+    await handOverVideo({
+      pageUrl,
+      title: tab?.title,
+      mediaUrl: /^https?:/i.test(info.srcUrl || "") ? info.srcUrl : null,
+    });
+    return;
+  }
   const url = info.menuItemId === "sdm-link" ? info.linkUrl : info.srcUrl;
   if (!url || !/^https?:/i.test(url)) return;
   const accepted = await handOver({ url, referrer: info.pageUrl || tab?.url });
@@ -203,10 +253,25 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 ping(true);
 
-chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message?.type === "status") {
     ping(true).then(reply);
     return true; // reply asynchronously
+  }
+  if (message?.type === "video-enabled") {
+    Promise.all([prefs(), ping()]).then(([settings, status]) =>
+      reply(Boolean(settings.videoButton && status?.enabled && status?.media)),
+    );
+    return true;
+  }
+  if (message?.type === "video" && /^https?:/i.test(message.pageUrl || "")) {
+    handOverVideo({
+      pageUrl: message.pageUrl,
+      title: message.title,
+      mediaUrl: message.mediaUrl,
+      referrer: sender.tab?.url !== message.pageUrl ? sender.tab?.url : undefined,
+    }).then((ok) => reply({ ok }));
+    return true;
   }
   return false;
 });

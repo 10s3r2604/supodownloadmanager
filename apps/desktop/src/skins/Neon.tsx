@@ -198,6 +198,7 @@ function RailButton(props: { icon: IconName; label: string; active?: boolean; do
 
 function statusText(d: Download, t: ReturnType<typeof useI18n>["t"]) {
   if (d.stopping) return t("stopping");
+  if (d.state === "downloading" && d.processing) return t("processing");
   if (d.state === "downloading" && d.connections === 0 && d.speed === 0) return t("connecting");
   return t(`state.${d.state}` as TextKey);
 }

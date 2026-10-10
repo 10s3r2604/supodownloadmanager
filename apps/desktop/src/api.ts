@@ -46,6 +46,10 @@ export interface Download {
   connections: number;
   segments: Segment[];
   stopping: boolean;
+  /** A video from a web page, downloaded with yt-dlp. */
+  media: boolean;
+  /** Video and audio are being merged. */
+  processing: boolean;
 }
 
 export interface Settings {
@@ -113,6 +117,76 @@ export interface InstallInfo {
   extensionsPage: string;
 }
 
+/** A cookie as the browser extension reads it. */
+export interface Cookie {
+  name: string;
+  value: string;
+  domain: string;
+  path?: string;
+  secure?: boolean;
+  hostOnly?: boolean;
+  expires?: number | null;
+}
+
+/** A page with a video. */
+export interface MediaSource {
+  pageUrl: string;
+  mediaUrl?: string | null;
+  title?: string | null;
+  cookies?: Cookie[];
+  userAgent?: string | null;
+  referrer?: string | null;
+}
+
+export interface MediaOption {
+  id: string;
+  kind: "video" | "audio";
+  height: number | null;
+  fps: number | null;
+  ext: string;
+  vcodec: string | null;
+  acodec: string | null;
+  size: number | null;
+  needsFfmpeg: boolean;
+  format: string;
+  merge: string | null;
+  audio: string | null;
+}
+
+export interface MediaInfo {
+  title: string;
+  thumbnail: string | null;
+  duration: number | null;
+  site: string;
+  url: string;
+  options: MediaOption[];
+  default: string | null;
+  videoDir: string;
+  audioDir: string;
+}
+
+export interface ToolStatus {
+  ytdlp: boolean;
+  ffmpeg: boolean;
+  ffmpegInstallable: boolean;
+  ytdlpSizeMb: number;
+  ffmpegSizeMb: number;
+}
+
+export interface ToolProgress {
+  tool: "yt-dlp" | "ffmpeg";
+  downloaded: number;
+  total: number | null;
+}
+
+export interface AddMediaRequest {
+  source: MediaSource;
+  option: MediaOption;
+  title: string;
+  directory?: string;
+  start: boolean;
+}
+
 /** What happens when a download finishes. */
 export interface WhenDone {
   showDialog: boolean;
@@ -154,6 +228,13 @@ export interface Api {
   appInfo(): Promise<AppInfo>;
   onAddPrompt(handler: (prompt: AddPrompt) => void): Promise<UnlistenFn>;
   onClipboardLink(handler: (url: string) => void): Promise<UnlistenFn>;
+  mediaTools(): Promise<ToolStatus>;
+  /** Downloads yt-dlp, and ffmpeg when asked, if they are missing. */
+  mediaPrepare(ffmpeg: boolean): Promise<ToolStatus>;
+  mediaProbe(source: MediaSource): Promise<MediaInfo>;
+  addMedia(request: AddMediaRequest): Promise<number>;
+  onMediaPrompt(handler: (source: MediaSource) => void): Promise<UnlistenFn>;
+  onToolProgress(handler: (progress: ToolProgress) => void): Promise<UnlistenFn>;
 }
 
 const tauriApi: Api = {
@@ -192,6 +273,12 @@ const tauriApi: Api = {
   appInfo: () => invoke("app_info"),
   onAddPrompt: (handler) => listen<AddPrompt>("sdm:add-prompt", (e) => handler(e.payload)),
   onClipboardLink: (handler) => listen<string>("sdm:clipboard-link", (e) => handler(e.payload)),
+  mediaTools: () => invoke("media_tools"),
+  mediaPrepare: (ffmpeg) => invoke("media_prepare", { ffmpeg }),
+  mediaProbe: (source) => invoke("media_probe", { source }),
+  addMedia: (request) => invoke("add_media", { request }),
+  onMediaPrompt: (handler) => listen<MediaSource>("sdm:media-prompt", (e) => handler(e.payload)),
+  onToolProgress: (handler) => listen<ToolProgress>("sdm:tool-progress", (e) => handler(e.payload)),
 };
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
