@@ -1,5 +1,6 @@
 //! The icon in the system tray (notification area / menu bar).
 
+use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
@@ -31,9 +32,8 @@ pub fn create(app: &AppHandle, language: &str) -> tauri::Result<()> {
                 crate::show_main_window(tray.app_handle());
             }
         });
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
-    }
+    // A simpler icon than the app icon, so it stays readable at tray size.
+    tray = tray.icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?);
     tray.build(app)?;
     Ok(())
 }

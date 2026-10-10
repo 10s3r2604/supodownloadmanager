@@ -1,6 +1,8 @@
-# Supo Download Manager (SDM)
+<p align="center"><img src="assets/logo.svg" alt="SDM" width="112"></p>
 
-**A free and open-source download accelerator for Windows, macOS and Linux.**
+<h1 align="center">Supo Download Manager (SDM)</h1>
+
+<p align="center"><b>A free and open-source download accelerator for Windows, macOS and Linux.</b></p>
 
 SDM splits a file into segments and downloads them over several connections
 at the same time. When a connection finishes its part, it takes over half of

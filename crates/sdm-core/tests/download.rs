@@ -149,10 +149,19 @@ async fn serve(
 }
 
 fn take_failure(server: &Server) -> bool {
-    server
-        .failures_left
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-        .is_ok()
+    let mut left = server.failures_left.load(Ordering::SeqCst);
+    while left > 0 {
+        match server.failures_left.compare_exchange(
+            left,
+            left - 1,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => return true,
+            Err(current) => left = current,
+        }
+    }
+    false
 }
 
 /// Deterministic pseudo-random test data.

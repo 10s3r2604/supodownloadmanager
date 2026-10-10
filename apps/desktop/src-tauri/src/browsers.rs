@@ -232,8 +232,12 @@ fn find_in_path(
     exists: &dyn Fn(&Path) -> bool,
 ) -> Option<PathBuf> {
     let paths = env("PATH")?;
-    std::env::split_paths(&paths)
-        .map(|dir| dir.join(command))
+    // Only used on Linux and other Unix systems, where `:` separates entries.
+    paths
+        .to_string_lossy()
+        .split(':')
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| Path::new(dir).join(command))
         .find(|path| exists(path))
 }
 

@@ -137,9 +137,11 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
     // Keep the stored list up to date and save it every few seconds.
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(1));
-        for tick in 1u64.. {
+        let mut tick = 0u8;
+        loop {
             ticker.tick().await;
-            manager.tick(tick % 5 == 0);
+            tick = (tick + 1) % 5;
+            manager.tick(tick == 0);
         }
     });
 
