@@ -1,0 +1,100 @@
+name: Windows smoke test
+
+# Installs a released Windows installer on a clean machine, starts SDM,
+# downloads a file through it and takes screenshots, to catch problems that
+# only show on Windows. Run it by hand (Actions → Windows smoke test).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release to test, e.g. v0.4.0
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Download the installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ inputs.version }}" -R "${{ github.repository }}" -p "*x64-setup.exe" -D installer
+
+      - name: Install, start and download a file
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force shots | Out-Null
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          Add-Type @"
+          using System; using System.Text; using System.Runtime.InteropServices;
+          public static class Win {
+            public delegate bool EnumProc(IntPtr h, IntPtr p);
+            [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr p);
+            [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+            [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+            [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+            [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+            public struct RECT { public int Left, Top, Right, Bottom; }
+          }
+          "@
+          function Shot($name) {
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("shots/$name.png")
+          }
+          function Windows($label) {
+            $ids = @(Get-Process | Where-Object { $_.ProcessName -like "*Supo*" -or $_.ProcessName -like "sdm*" } | ForEach-Object Id)
+            "== $label (processes: $ids)" | Tee-Object -Append shots/windows.txt
+            [Win]::EnumWindows({ param($h, $p)
+              $procId = 0; [Win]::GetWindowThreadProcessId($h, [ref]$procId) | Out-Null
+              if ($ids -contains $procId -and [Win]::IsWindowVisible($h)) {
+                $t = New-Object System.Text.StringBuilder 256; [Win]::GetWindowText($h, $t, 256) | Out-Null
+                $r = New-Object Win+RECT; [Win]::GetWindowRect($h, [ref]$r) | Out-Null
+                "{0} | {1}x{2} at {3},{4} | dpi {5}" -f $t, ($r.Right - $r.Left), ($r.Bottom - $r.Top), $r.Left, $r.Top, [Win]::GetDpiForWindow($h) | Tee-Object -Append shots/windows.txt
+              }
+              $true }, [IntPtr]::Zero) | Out-Null
+          }
+
+          # Downloads from the browser start without asking, in English.
+          $data = Join-Path $env:APPDATA "com.supodownloadmanager.app"
+          New-Item -ItemType Directory -Force $data | Out-Null
+          '{"confirmBrowserDownloads": false, "language": "en", "notifications": false}' | Set-Content (Join-Path $data "settings.json")
+
+          $setup = Get-ChildItem installer -Filter *.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList "/S" -Wait
+          $exe = Get-ChildItem "$env:LOCALAPPDATA", "$env:ProgramFiles" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match "^(sdm-desktop|Supo Download Manager)\.exe$" } | Select-Object -First 1
+          "installed: $($exe.FullName)" | Tee-Object shots/windows.txt
+          Start-Process $exe.FullName
+
+          $up = $false
+          for ($i = 0; $i -lt 60 -and -not $up; $i++) {
+            Start-Sleep 1
+            try { Invoke-RestMethod http://127.0.0.1:17360/api/ping -Headers @{ "X-SDM-Client" = "smoke" } | Out-Null; $up = $true } catch {}
+          }
+          "bridge up: $up" | Tee-Object -Append shots/windows.txt
+          Start-Sleep 5
+          Shot "1-started"
+          Windows "after start"
+
+          $body = '{"url":"https://github.com/10s3r2604/supodownloadmanager/archive/refs/heads/main.zip"}'
+          Invoke-RestMethod http://127.0.0.1:17360/api/download -Method Post -Body $body -ContentType "application/json" -Headers @{ "X-SDM-Client" = "smoke" }
+          Start-Sleep 3
+          Shot "2-downloading"
+          Windows "while downloading"
+          Start-Sleep 20
+          Shot "3-done"
+          Windows "after the download"
+          Get-ChildItem "$env:USERPROFILE\Downloads" -Recurse | Select-Object FullName, Length | Format-Table -AutoSize | Out-String | Tee-Object -Append shots/windows.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-smoke
+          path: shots
