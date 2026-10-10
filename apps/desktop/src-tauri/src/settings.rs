@@ -28,9 +28,9 @@ pub struct Settings {
     pub proxy: String,
     /// `auto`, `en` or `vi`.
     pub language: String,
-    /// Look of the app: `neon` or `minimal`.
+    /// `minimal`; old `neon` settings are migrated when loaded.
     pub skin: String,
-    /// `system`, `light` or `dark` (the minimal skin has both).
+    /// `system`, `light` or `dark`.
     pub theme: String,
     /// Open a progress window for every download that starts.
     pub progress_window: bool,
@@ -71,8 +71,8 @@ impl Default for Settings {
             speed_limit: 0,
             proxy: String::new(),
             language: "en".into(),
-            skin: "neon".into(),
-            theme: "system".into(),
+            skin: "minimal".into(),
+            theme: "dark".into(),
             progress_window: true,
             progress_style: "graph".into(),
             complete_dialog: true,
@@ -113,14 +113,16 @@ impl Settings {
         if !["auto", "en", "vi"].contains(&self.language.as_str()) {
             self.language = "en".into();
         }
-        if !["neon", "minimal"].contains(&self.skin.as_str()) {
-            self.skin = "neon".into();
+        // Neon always displayed dark, including when its saved theme was light.
+        if self.skin == "neon" {
+            self.theme = "dark".into();
         }
+        self.skin = "minimal".into();
         if !["graph", "ring", "classic"].contains(&self.progress_style.as_str()) {
             self.progress_style = "graph".into();
         }
         if !["system", "light", "dark"].contains(&self.theme.as_str()) {
-            self.theme = "system".into();
+            self.theme = "dark".into();
         }
         self.proxy = self.proxy.trim().to_owned();
         if self.torrent_port < 1024 {
@@ -207,7 +209,7 @@ mod tests {
         assert_eq!(settings.max_parallel, 16);
         assert_eq!(settings.bridge_port, DEFAULT_BRIDGE_PORT);
         assert_eq!(settings.language, "en");
-        assert_eq!(settings.skin, "neon");
+        assert_eq!(settings.skin, "minimal");
         assert_eq!(settings.progress_style, "graph");
         assert_eq!(settings.capture_extensions, ["zip"]);
     }
@@ -236,6 +238,40 @@ mod tests {
         assert_eq!(settings.connections, 4);
         assert_eq!(settings.max_parallel, 3);
         assert!(settings.browser_integration);
+        assert_eq!(settings.skin, "minimal");
+        assert_eq!(settings.theme, "dark");
+    }
+
+    #[test]
+    fn migrates_neon_without_changing_download_preferences() {
+        for theme in ["system", "light", "dark"] {
+            let old = Settings {
+                skin: "neon".into(),
+                theme: theme.into(),
+                download_dir: PathBuf::from("downloads"),
+                connections: 16,
+                max_parallel: 5,
+                proxy: "none".into(),
+                progress_window: false,
+                ..Settings::default()
+            };
+            let migrated = old.clone().sanitized();
+            assert_eq!(migrated.skin, "minimal");
+            assert_eq!(migrated.theme, "dark");
+            assert_eq!(migrated.download_dir, old.download_dir);
+            assert_eq!(migrated.connections, old.connections);
+            assert_eq!(migrated.max_parallel, old.max_parallel);
+            assert_eq!(migrated.proxy, old.proxy);
+            assert_eq!(migrated.progress_window, old.progress_window);
+        }
+        for theme in ["light", "system"] {
+            let settings = Settings {
+                theme: theme.into(),
+                ..Settings::default()
+            }
+            .sanitized();
+            assert_eq!(settings.theme, theme);
+        }
     }
 
     #[test]

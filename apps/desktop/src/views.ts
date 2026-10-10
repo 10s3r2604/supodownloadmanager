@@ -1,10 +1,12 @@
-// What a look (skin) receives from the app.
+// Data and actions for the download list.
 
 import type { AppInfo, Download, Settings } from "./api";
-import type { Filter, History, Totals } from "./model";
+import type { Filter, History, Totals, TypeFilter } from "./model";
 
 export interface RowActions {
   select: (id: number, mode: "single" | "toggle" | "range") => void;
+  selectAll: (ids: number[]) => void;
+  details: (download: Download) => void;
   /** The obvious thing to do: pause, resume, retry or open the file. */
   primary: (download: Download) => void;
   open: (download: Download) => void;
@@ -22,6 +24,8 @@ export interface ViewProps {
   visible: Download[];
   filter: Filter;
   setFilter: (filter: Filter) => void;
+  typeFilter: TypeFilter;
+  setTypeFilter: (filter: TypeFilter) => void;
   query: string;
   setQuery: (query: string) => void;
   selected: number[];

@@ -36,13 +36,17 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
   const [busy, setBusy] = useState(false);
   // What yt-dlp is doing, so a slow site is not a mystery.
   const [ytdlpStage, setYtdlpStage] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const probing = stage.kind === "probing";
   useEffect(() => {
     if (!probing) {
       setYtdlpStage(null);
       return;
     }
+    const started = Date.now();
+    setElapsed(0);
     const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - started) / 1000));
       api.mediaProbeStage(source.pageUrl).then(setYtdlpStage).catch(() => {});
     }, 700);
     return () => clearInterval(timer);
@@ -159,7 +163,8 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
           <div>
             <strong>{t("mediaProbing")}</strong>
             <div className="muted">{source.title || hostOf(source.pageUrl)}</div>
-            {ytdlpStage && <div className="media-stage">{ytdlpStage}</div>}
+            <div className="muted">{t("mediaElapsed", { time: formatDuration(elapsed) })}</div>
+            {ytdlpStage && <details className="media-log"><summary>{t("pwDetails")}</summary><div className="media-stage">{ytdlpStage}</div></details>}
           </div>
         </div>
       ) : stage.kind === "failed" ? (
@@ -204,7 +209,7 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
               </div>
             </div>
 
-            <div className="media-options" role="radiogroup">
+            <div className="media-options" role="radiogroup" aria-label={t("mediaTitle")}>
               {(["video", "audio"] as const).map((kind) => {
                 const list = info.options.filter((o) => o.kind === kind);
                 if (list.length === 0) return null;

@@ -1,10 +1,8 @@
-/* Minimal: calm and typographic. Colors come from the tokens in styles.css. */
-
 .minimal {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 24px 56px 0;
+  padding: 28px 44px 16px;
   font-size: 14px;
   overflow: hidden;
 }
@@ -12,7 +10,12 @@
 .mn-head {
   display: flex;
   align-items: center;
-  gap: 22px;
+  gap: 28px;
+  flex-shrink: 0;
+}
+
+.mn-head img {
+  width: auto;
 }
 
 .mn-space {
@@ -20,41 +23,29 @@
 }
 
 .mn-link {
-  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   padding: 4px 0;
   border: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 14px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-.mn-link:hover,
-.mn-link.strong {
+.mn-link:hover {
   color: var(--strong);
 }
 
-.mn-link.strong {
-  font-weight: 600;
-}
-
-.mn-link kbd {
-  padding: 1px 6px;
-  border: 1px solid var(--border-2);
-  border-bottom-width: 2px;
-  border-radius: 5px;
-  background: var(--panel);
-  color: var(--faint);
-  font: 500 11px var(--font);
+.mn-head .mn-add {
+  height: 46px;
+  padding: 0 20px;
+  font-size: 16px;
+  border-radius: 10px;
 }
 
 .mn-warn-dot {
-  position: absolute;
-  top: 2px;
-  left: 11px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -62,156 +53,189 @@
 }
 
 .mn-hero {
-  margin-top: 30px;
+  margin: 30px 0 26px;
+  flex-shrink: 0;
 }
 
 .mn-hero h1 {
-  display: flex;
-  align-items: center;
-  margin: 0 0 6px;
+  margin: 0 0 10px;
   color: var(--strong);
-  font-size: 44px;
-  font-weight: 650;
+  font-size: 38px;
+  font-weight: 700;
   letter-spacing: -0.035em;
-  line-height: 1.08;
-}
-
-.mn-live {
-  width: 12px;
-  height: 12px;
-  margin: 0 18px 0 6px;
-  border-radius: 50%;
-  background: var(--good);
-  box-shadow: 0 0 0 6px var(--good-soft);
-  animation: mn-pulse 2s ease-in-out infinite;
-}
-
-@keyframes mn-pulse {
-  50% {
-    box-shadow: 0 0 0 10px transparent;
-  }
+  line-height: 1.15;
 }
 
 .mn-lead {
   margin: 0;
   color: var(--muted);
-  font-size: 16px;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
 }
 
-.mn-lead b {
-  color: var(--strong);
-  font-weight: 600;
-}
-
-.mn-bulk {
-  display: flex;
-  gap: 18px;
-  margin-top: 6px;
-}
-
-.mn-bulk .mn-link {
-  font-size: 13px;
-  text-decoration: underline;
-  text-decoration-color: var(--border-2);
-  text-underline-offset: 4px;
+.mn-live {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--good);
 }
 
 .mn-filters {
   display: flex;
-  align-items: center;
-  gap: 22px;
-  margin: 24px 0 0;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 6px 24px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
-.mn-filters button {
-  padding: 0 0 12px;
+.mn-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.mn-tabs button {
+  padding: 12px 0;
   border: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 14px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-.mn-filters button:hover {
+.mn-tabs button:hover {
   color: var(--strong);
 }
 
-.mn-filters button.on {
+.mn-tabs button.on {
   color: var(--strong);
-  font-weight: 600;
-  box-shadow: inset 0 -2px 0 var(--strong);
+  font-weight: 650;
+  box-shadow: inset 0 -3px 0 var(--accent);
 }
 
-.mn-filters i {
-  margin-left: 5px;
-  color: var(--faint);
-  font-style: normal;
-  font-weight: 400;
+.mn-tabs button span {
+  font-size: 12px;
+  margin-left: 3px;
+}
+
+.mn-tools {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 6px auto;
+}
+
+.mn-tools select {
+  appearance: none;
+  max-width: 150px;
+  padding: 8px 22px 8px 8px;
+  border-color: transparent;
+  background-color: transparent;
+  color: var(--muted);
+}
+
+.mn-type {
+  position: relative;
+  color: var(--muted);
+}
+
+.mn-type > svg {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.mn-tools select option {
+  background: var(--panel);
+  color: var(--text);
 }
 
 .mn-search {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin: 0 0 10px auto;
-  color: var(--faint);
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.mn-search:focus-within {
+  border-color: var(--accent);
 }
 
 .mn-search input {
-  width: 150px;
-  padding: 3px 0;
+  width: 130px;
+  padding: 0;
   border: 0;
-  border-bottom: 1px solid transparent;
   outline: 0;
   background: transparent;
   color: var(--strong);
 }
 
-.mn-search input:focus {
-  border-bottom-color: var(--strong);
+.mn-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  min-height: 50px;
+  padding: 12px 0 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.mn-select-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.mn-select-all input {
+  margin: 0;
+}
+
+.mn-bulk {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.mn-bulk .mn-link {
+  font-size: 12px;
 }
 
 .mn-list {
   flex: 1;
   min-height: 0;
-  margin: 0 -12px;
-  padding: 0 12px 24px;
   overflow-y: auto;
-}
-
-.mn-list h2 {
-  margin: 22px 0 2px;
-  color: var(--faint);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.mn-empty {
-  margin-top: 28px;
-  color: var(--muted);
+  scrollbar-gutter: stable;
+  margin-right: -10px;
+  padding-right: 10px;
 }
 
 .mn-row {
   display: grid;
-  grid-template-columns: 22px 1fr 120px 150px;
-  gap: 16px;
+  grid-template-columns: 40px minmax(0, 1fr) 100px 124px;
+  gap: 20px;
   align-items: center;
-  margin: 0 -12px;
-  padding: 13px 12px;
-  border-bottom: 1px solid var(--border-soft);
-  border-radius: 8px;
+  padding: 16px 8px 14px 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.mn-row > svg {
-  color: var(--faint);
-}
-
-.mn-row:hover,
-.mn-row.sel {
+.mn-row:hover {
   background: var(--hover);
 }
 
@@ -219,26 +243,86 @@
   background: var(--selected);
 }
 
+.mn-select {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 32px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mn-select input {
+  position: absolute;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  opacity: 0;
+}
+
+.mn-select span {
+  display: flex;
+  max-width: 40px;
+  overflow: hidden;
+}
+
+.mn-row:hover .mn-select input,
+.mn-select:focus-within input,
+.mn-row.sel .mn-select input {
+  opacity: 1;
+}
+
+.mn-row:hover .mn-select span,
+.mn-select:focus-within span,
+.mn-row.sel .mn-select span {
+  opacity: 0;
+}
+
 .mn-main {
   min-width: 0;
 }
 
 .mn-name {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
   overflow: hidden;
+  background: transparent;
   color: var(--strong);
-  font-size: 15px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mn-name:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--muted);
+  text-underline-offset: 3px;
+}
+
+.mn-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  overflow: hidden;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mn-meta {
+.mn-source {
+  min-width: 0;
   overflow: hidden;
-  margin-top: 1px;
-  color: var(--muted);
-  font-size: 12.5px;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 1;
 }
 
 .mn-error {
@@ -246,90 +330,97 @@
 }
 
 .mn-line {
-  height: 2px;
-  margin-top: 9px;
+  height: 5px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 3px;
   background: var(--track);
 }
 
 .mn-line i {
   display: block;
   height: 100%;
-  background: var(--strong);
+  border-radius: inherit;
+  background: var(--good);
   transition: width 0.6s linear;
-}
-
-.mn-row.paused .mn-line i,
-.mn-row.queued .mn-line i {
-  background: var(--faint);
 }
 
 .mn-row.failed .mn-line i {
   background: var(--danger);
 }
 
+.mn-line.indeterminate i {
+  width: 25% !important;
+  animation: mn-progress 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes mn-progress {
+  to {
+    transform: translateX(300%);
+  }
+}
+
+.mn-size {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .mn-num {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
-  text-align: right;
 }
 
 .mn-num b {
   display: block;
   color: var(--strong);
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 27px;
+  font-weight: 700;
   letter-spacing: -0.02em;
-}
-
-.mn-row.paused .mn-num b,
-.mn-row.queued .mn-num b {
-  color: var(--faint);
-}
-
-.mn-row.failed .mn-num b {
-  color: var(--danger);
+  margin-bottom: 4px;
 }
 
 .mn-actions {
   display: flex;
-  align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
 }
 
 .mn-act {
-  padding: 4px 10px;
-  border: 0;
-  border-radius: 6px;
+  min-width: 74px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-2);
+  border-radius: 9px;
   background: transparent;
-  color: var(--muted);
-  font-size: 13px;
+  color: var(--strong);
   cursor: pointer;
 }
 
-.mn-act:hover {
+.mn-act:hover:not(:disabled) {
   background: var(--accent-soft);
-  color: var(--strong);
+  border-color: var(--accent);
+}
+
+.mn-act:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .mn-more {
   display: grid;
   place-items: center;
   width: 28px;
-  height: 28px;
+  height: 34px;
   padding: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--faint);
-  opacity: 0;
+  color: var(--muted);
   cursor: pointer;
-}
-
-.mn-row:hover .mn-more,
-.mn-row.sel .mn-more {
-  opacity: 1;
 }
 
 .mn-more:hover {
@@ -337,9 +428,113 @@
   color: var(--strong);
 }
 
+.mn-empty {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 44px 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.mn-empty h2 {
+  font-size: 18px;
+  font-weight: 500;
+  margin: 0 0 8px;
+}
+
+.mn-graph {
+  position: relative;
+  height: 90px;
+  margin: 12px 0 4px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.mn-graph span,
+.mn-graph small {
+  position: absolute;
+  top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.mn-graph small {
+  right: 0;
+}
+
 @media (max-width: 980px) {
   .minimal {
-    padding: 20px 28px 0;
+    padding: 22px 28px 12px;
+  }
+  .mn-head {
+    gap: 22px;
+  }
+  .mn-hero {
+    margin: 24px 0 18px;
+  }
+  .mn-hero h1 {
+    font-size: 34px;
+  }
+  .mn-tabs {
+    gap: 20px;
+  }
+  .mn-row {
+    grid-template-columns: 32px minmax(0, 1fr) 84px 112px;
+    gap: 16px;
+    padding-top: 13px;
+    padding-bottom: 12px;
+  }
+  .mn-name {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 680px) {
+  .minimal {
+    padding: 18px 20px 10px;
+  }
+  .mn-head {
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .mn-head .mn-add {
+    height: 40px;
+    padding: 0 12px;
+    font-size: 14px;
+  }
+  .mn-tools {
+    margin-left: 0;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .mn-tabs {
+    gap: 18px;
+  }
+  .mn-row {
+    grid-template-columns: 26px minmax(0, 1fr) 70px;
+    gap: 12px;
+  }
+  .mn-actions {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+  }
+  .mn-num b {
+    font-size: 23px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mn-line i {
+    transition: none;
+    animation: none;
+  }
+}
+
+@media (max-height: 760px) {
+  .mn-hero {
+    margin: 20px 0 18px;
   }
 
   .mn-hero h1 {
@@ -347,6 +542,47 @@
   }
 
   .mn-row {
-    grid-template-columns: 22px 1fr 100px 110px;
+    padding-top: 11px;
+    padding-bottom: 10px;
+  }
+
+  .mn-list-head {
+    min-height: 44px;
+    padding-top: 10px;
+  }
+}
+
+@media (max-height: 600px) {
+  .minimal {
+    padding-top: 16px;
+  }
+
+  .mn-head img {
+    height: 40px;
+  }
+
+  .mn-head .mn-add {
+    height: 40px;
+  }
+
+  .mn-hero {
+    margin: 16px 0 12px;
+  }
+
+  .mn-hero h1 {
+    font-size: 30px;
+  }
+
+  .mn-lead {
+    font-size: 14px;
+  }
+
+  .mn-row {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .mn-tabs button {
+    padding: 10px 0;
   }
 }

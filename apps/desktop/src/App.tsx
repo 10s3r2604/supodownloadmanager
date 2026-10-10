@@ -6,14 +6,14 @@ import { AddDialog } from "./components/AddDialog";
 import { BrowsersDialog } from "./components/BrowsersDialog";
 import { ContextMenu } from "./components/ContextMenu";
 import { DeleteDialog } from "./components/DeleteDialog";
+import { DownloadDetails } from "./components/DownloadDetails";
 import { MediaDialog } from "./components/MediaDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TorrentDialog } from "./components/TorrentDialog";
 import { type Toast, Toasts } from "./components/Toasts";
 import { I18nContext, copyText, errorText } from "./context";
-import { type Filter, type History, emptyHistory, matches, recordHistory, totals } from "./model";
+import { type Filter, type History, type TypeFilter, emptyHistory, matches, matchesType, recordHistory, totals } from "./model";
 import { MinimalView } from "./skins/Minimal";
-import { NeonView } from "./skins/Neon";
 import type { RowActions, ViewProps } from "./views";
 
 type DialogState =
@@ -22,7 +22,8 @@ type DialogState =
   | { kind: "torrent"; source: TorrentSource }
   | { kind: "settings" }
   | { kind: "browsers" }
-  | { kind: "delete"; ids: number[] };
+  | { kind: "delete"; ids: number[] }
+  | { kind: "details"; id: number };
 
 interface Menu {
   x: number;
@@ -47,6 +48,7 @@ export default function App() {
   const [history, setHistory] = useState<History>(emptyHistory);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<number[]>([]);
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -55,7 +57,7 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const anchor = useRef<number | null>(null);
 
-  const { i18n, skin, dark } = useAppearance(preview ?? settings);
+  const { i18n, dark } = useAppearance(preview ?? settings);
   const { t } = i18n;
 
   const toast = useCallback((kind: Toast["kind"], text: string, url?: string) => {
@@ -127,17 +129,18 @@ export default function App() {
     const q = query.trim().toLowerCase();
     return downloads
       .filter((d) => matches(filter, d))
+      .filter((d) => matchesType(typeFilter, d))
       .filter((d) => !q || d.fileName.toLowerCase().includes(q) || d.url.toLowerCase().includes(q))
       .sort((a, b) => b.addedAt - a.addedAt);
-  }, [downloads, filter, query]);
+  }, [downloads, filter, typeFilter, query]);
 
-  // Forget selected rows that are gone.
+  // Bulk actions apply only to rows the user can see in the current filter.
   useEffect(() => {
     setSelected((ids) => {
-      const kept = ids.filter((id) => downloads.some((d) => d.id === id));
+      const kept = ids.filter((id) => visible.some((d) => d.id === id));
       return kept.length === ids.length ? ids : kept;
     });
-  }, [downloads]);
+  }, [visible]);
 
   const run = useCallback(
     (action: Promise<unknown>) => action.catch((error) => showError(errorText(error))),
@@ -145,6 +148,8 @@ export default function App() {
   );
 
   const actions: RowActions = {
+    selectAll: setSelected,
+    details: (d) => setDialog({ kind: "details", id: d.id }),
     select(id, mode) {
       if (mode === "toggle") {
         setSelected((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
@@ -213,6 +218,8 @@ export default function App() {
     visible,
     filter,
     setFilter,
+    typeFilter,
+    setTypeFilter,
     query,
     setQuery,
     selected,
@@ -230,7 +237,11 @@ export default function App() {
 
   return (
     <I18nContext.Provider value={i18n}>
-      {view && (skin === "minimal" ? <MinimalView {...view} dark={dark} /> : <NeonView {...view} />)}
+      {view && <MinimalView {...view} dark={dark} />}
+
+      {dialog?.kind === "details" && view && (
+        <DownloadDetails d={downloads.find((d) => d.id === dialog.id)} history={history} actions={actions} onClose={closeDialog} />
+      )}
 
       {menu && (
         <ContextMenu
@@ -262,6 +273,7 @@ export default function App() {
           onError={showError}
           onShowExisting={(id) => {
             setFilter("all");
+            setTypeFilter("all");
             setQuery("");
             setSelected([id]);
           }}

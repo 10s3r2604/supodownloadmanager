@@ -16,9 +16,10 @@ export function useAppearance(settings: Settings | null) {
     return () => media.removeEventListener("change", update);
   }, []);
 
-  const skin = settings?.skin ?? "neon";
-  const theme = settings?.theme ?? "system";
-  const dark = skin === "neon" || theme === "dark" || (theme === "system" && systemDark);
+  const skin = "minimal";
+  // Older Neon settings were always dark, regardless of their saved theme.
+  const theme = settings?.skin === "neon" ? "dark" : settings?.theme ?? "dark";
+  const dark = theme === "dark" || (theme === "system" && systemDark);
 
   useEffect(() => {
     const root = document.documentElement;

@@ -83,8 +83,9 @@ computer you own, and the code is right here.
 **Pleasant to use**
 - A small progress window per download, in three styles (speed graph, ring or classic),
   with "open the file when done".
-- Two looks: **Neon** (dark, with a live speed chart and every connection) and
-  **Minimal** (light or dark). English and Vietnamese.
+- A minimal download list, dark by default, with light and system themes.
+  File sizes, progress, speed and actions stay visible; open a file's details
+  for its speed chart, connections and torrent files. English and Vietnamese.
 - Categories with their own folders, clipboard monitoring, tray icon and notifications.
 - An `sdm` command line tool for scripts and servers.
 
@@ -97,7 +98,7 @@ computer you own, and the code is right here.
   </tr>
   <tr>
     <td><img src="docs/images/sdm-minimal-en.png" alt="Minimal look"><br><sub><b>Minimal</b> look, light</sub></td>
-    <td><img src="docs/images/sdm-minimal-dark-en.png" alt="Minimal look, dark"><br><sub><b>Minimal</b> look, dark</sub></td>
+    <td><img src="docs/images/sdm-minimal-dark-en.png" alt="Minimal look, dark"><br><sub><b>Minimal</b> look, dark (default)</sub></td>
   </tr>
   <tr>
     <td><img src="docs/images/video-button-en.png" alt="Download this video button"><br><sub>The <b>Download this video</b> button</sub></td>
@@ -220,7 +221,8 @@ cài trên bao nhiêu máy cũng được, và mã nguồn công khai.
   chọn tệp muốn tải.
 - **Extension** cho Chrome, Edge, Firefox, Cốc Cốc, Brave, Opera, Vivaldi; tải được cả
   link cần đăng nhập.
-- Cửa sổ tiến độ cho từng file, hai giao diện Neon và Tối giản, có tiếng Việt
+- Danh sách tối giản, mặc định nền tối; tùy chọn sáng/theo hệ thống, có tiếng Việt.
+  Hiện dung lượng, tiến độ, tốc độ và thao tác; bấm tên file để xem chi tiết.
   (vào **Cài đặt → Giao diện → Ngôn ngữ**).
 
 **Cài đặt:** tải bộ cài ở trang [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)

@@ -1,0 +1,43 @@
+.area-chart {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.area-chart .grid-line {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.segment-blocks {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+}
+
+.segment-blocks i {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--track);
+}
+
+.segment-blocks b {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--good);
+}
+
+.segment-blocks.failed b {
+  background: var(--danger);
+}
+
+.segment-blocks.big {
+  height: 20px;
+  gap: 3px;
+}

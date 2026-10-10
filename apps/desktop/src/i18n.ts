@@ -1,7 +1,18 @@
 // Interface texts in English and Vietnamese.
 
 const en = {
-  add: "Add URL",
+  add: "New download",
+  "tab.attention": "Needs attention",
+  yourDownloads: "Your downloads",
+  downloadingCount: "{n} downloading",
+  aboutRemaining: "About {time} remaining",
+  selectAllVisible: "Select all visible downloads",
+  selectDownload: "Select {name}",
+  selectedCount: "{n} selected",
+  clearSelection: "Clear selection",
+  showSpeedGraph: "Speed graph",
+  hideSpeedGraph: "Hide graph",
+  mediaElapsed: "{time} elapsed",
   resume: "Resume",
   pause: "Pause",
   delete: "Delete",
@@ -57,7 +68,7 @@ const en = {
   segmentN: "#{n}",
 
   emptyTitle: "No downloads yet",
-  emptyBody: "Click “Add URL” or paste a link (Ctrl+V). Downloads from your browser appear here once the SDM extension is installed.",
+  emptyBody: "Add a link or paste one (Ctrl+V). You can also download from your browser with the SDM extension.",
   noMatch: "Nothing matches.",
 
   headingActive: "Downloading {n} file(s)",
@@ -120,11 +131,7 @@ const en = {
   tabConnection: "Connection",
   tabBrowser: "Browser & clipboard",
   appearance: "Appearance",
-  skinNeon: "Neon",
-  skinNeonHint: "Dark and detailed: live speed chart, segments, connections",
-  skinMinimal: "Minimal",
-  skinMinimalHint: "Calm and simple, light or dark",
-  colorMode: "Colors of the Minimal look",
+  colorMode: "Color theme",
   downloadFolder: "Download folder",
   categoryFolders: "Sort files into folders by type (Video, Music, …)",
   language: "Language",
@@ -283,7 +290,18 @@ const en = {
 export type TextKey = keyof typeof en;
 
 const vi: Record<TextKey, string> = {
-  add: "Thêm link",
+  add: "Thêm tải mới",
+  "tab.attention": "Cần xử lý",
+  yourDownloads: "File của bạn",
+  downloadingCount: "{n} file đang tải",
+  aboutRemaining: "Còn khoảng {time}",
+  selectAllVisible: "Chọn tất cả file đang hiển thị",
+  selectDownload: "Chọn {name}",
+  selectedCount: "Đã chọn {n} file",
+  clearSelection: "Bỏ chọn",
+  showSpeedGraph: "Biểu đồ tốc độ",
+  hideSpeedGraph: "Ẩn biểu đồ",
+  mediaElapsed: "Đã chờ {time}",
   resume: "Tiếp tục",
   pause: "Tạm dừng",
   delete: "Xóa",
@@ -339,7 +357,7 @@ const vi: Record<TextKey, string> = {
   segmentN: "#{n}",
 
   emptyTitle: "Chưa có file nào",
-  emptyBody: "Bấm “Thêm link” hoặc dán link vào (Ctrl+V). File tải từ trình duyệt sẽ hiện ở đây sau khi cài extension SDM.",
+  emptyBody: "Thêm link hoặc dán link (Ctrl+V). Bạn cũng có thể tải từ trình duyệt với extension SDM.",
   noMatch: "Không tìm thấy file nào.",
 
   headingActive: "Đang tải {n} file",
@@ -402,11 +420,7 @@ const vi: Record<TextKey, string> = {
   tabConnection: "Kết nối",
   tabBrowser: "Trình duyệt & clipboard",
   appearance: "Giao diện",
-  skinNeon: "Neon",
-  skinNeonHint: "Nền tối, nhiều thông số: biểu đồ tốc độ, các đoạn, từng kết nối",
-  skinMinimal: "Tối giản",
-  skinMinimalHint: "Gọn gàng, dễ nhìn, có nền sáng và tối",
-  colorMode: "Màu nền của giao diện Tối giản",
+  colorMode: "Màu giao diện",
   downloadFolder: "Thư mục tải về",
   categoryFolders: "Xếp file vào thư mục theo loại (Video, Nhạc, …)",
   language: "Ngôn ngữ",
