@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="icons/48.png" alt="" width="36" height="36" />
+      <div>
+        <h1 data-i18n="extName"></h1>
+        <p id="status" class="status checking">…</p>
+      </div>
+    </header>
+
+    <label class="row">
+      <span data-i18n="captureLabel"></span>
+      <input type="checkbox" id="capture" class="switch" />
+    </label>
+    <p class="hint" data-i18n="captureHint"></p>
+
+    <div id="permission" class="callout" hidden>
+      <p data-i18n="permissionHint"></p>
+      <button id="grant" type="button" data-i18n="grant"></button>
+    </div>
+
+    <details>
+      <summary data-i18n="advanced"></summary>
+      <label class="row">
+        <span data-i18n="minSize"></span>
+        <input type="number" id="minSize" min="0" step="1" />
+      </label>
+      <label class="row">
+        <span data-i18n="port"></span>
+        <input type="number" id="port" min="1024" max="65535" />
+      </label>
+    </details>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -199,6 +199,7 @@ pub enum Phase {
 
 /// A snapshot of a running download.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Progress {
     /// What the download is doing.
     pub phase: Phase,

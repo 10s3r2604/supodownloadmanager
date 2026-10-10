@@ -1,4 +1,6 @@
 /target
+node_modules/
+extension/dist/
 
 # Partial downloads created while testing
 *.sdm-part

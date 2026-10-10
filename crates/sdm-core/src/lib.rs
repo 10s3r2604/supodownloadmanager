@@ -43,5 +43,6 @@ pub use engine::{
     Downloader, Outcome, Phase, Progress, ProxyConfig, SegmentProgress,
 };
 pub use error::{Error, Result};
-pub use filename::sanitize as sanitize_file_name;
+pub use filename::{candidates as path_candidates, sanitize as sanitize_file_name};
 pub use probe::RemoteInfo;
+pub use state::{part_path as partial_data_path, state_path as partial_state_path};

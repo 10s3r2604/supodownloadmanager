@@ -14,46 +14,52 @@ SDM is built in phases. Each phase ends with something people can use.
 - [x] SHA-256 verification
 - [x] Custom headers, cookies, referer, user agent, HTTP/SOCKS5 proxy
 - [x] `sdm` command line tool: parallel downloads, URL lists, progress bars, Ctrl+C to pause
-- [x] Integration tests against a misbehaving local server
 - [x] CI on Windows, macOS and Linux; release builds for all three
 
-## Phase 2: Desktop app
+## Phase 2: Desktop app ✅ (v0.2)
 
-Built with [Tauri](https://tauri.app) (Rust + web UI), so it stays small (around 10 MB) and fast.
+Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small and fast.
 
-- [ ] Download list with progress, speed, time left and a segment map
-- [ ] "Add URL" dialog that shows the file name, size and resume support before starting
-- [ ] Pause, resume, cancel, restart, open file, open folder
-- [ ] Categories (Video, Music, Documents, Compressed, Programs) with their own folders
-- [ ] Settings: default folder, connections, speed limit, proxy, parallel downloads
-- [ ] Download list saved between sessions
-- [ ] System tray icon and notifications
-- [ ] Clipboard monitoring: offer to download copied links
-- [ ] Dark and light themes
+- [x] Download list with progress, speed, time left and a segment map
+- [x] "Add download" dialog that shows the file name, size and resume support before starting
+- [x] Pause, resume, delete (optionally moving files to the Trash), open file, show in folder
+- [x] Categories (Video, Music, Documents, Compressed, Programs, Images) with their own folders
+- [x] Download queue with a limit on parallel downloads
+- [x] Settings: folder, connections, speed limit, proxy, language, theme
+- [x] Download list saved between sessions; quitting pauses and saves everything
+- [x] System tray icon and notifications
+- [x] Clipboard monitoring: offer to download copied links
+- [x] English and Vietnamese, light and dark themes
 - [ ] Sparse files on Windows, so pre-allocating multi-gigabyte downloads is instant on NTFS
+- [ ] Start with the computer (optional)
+- [ ] Automatic updates
 
-## Phase 3: Browser integration
+## Phase 3: Browser integration ✅ (v0.2)
 
-- [ ] Extension for Chrome, Edge and Firefox (Manifest V3)
-- [ ] Take over browser downloads by file type and size
-- [ ] "Download with SDM" in the context menu for links, images and videos
-- [ ] Forward cookies, referer and user agent so downloads that need a login work
-- [ ] Talk to the desktop app through native messaging
+- [x] Extension for Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi and Firefox (Manifest V3)
+- [x] Take over browser downloads by file type and size
+- [x] "Download with SDM" in the context menu for links, images, videos and audio
+- [x] Forward cookies, referer and user agent so downloads that need a login work
+- [x] Local bridge that only browser extensions can use
+- [x] Find installed browsers and guide the extension installation from the app
+- [ ] Publish in the Chrome Web Store and on addons.mozilla.org (one-click install)
 
 ## Phase 4: Power features
 
+- [ ] **BitTorrent**: magnet links and `.torrent` files, captured from the browser too
+      (planned on top of [librqbit](https://github.com/ikatson/rqbit), a Rust BitTorrent engine)
 - [ ] Video grabber for HLS (`.m3u8`) and DASH streams, merged with ffmpeg
 - [ ] Scheduler: start and stop at set times, shut down or sleep when done
 - [ ] Several queues with their own limits
 - [ ] Saved logins per site
 - [ ] Refresh expired download links without losing progress
-- [ ] Batch downloads with numbered patterns (`file[001-100].jpg`)
+- [ ] "Download all links" on a page, batch downloads with numbered patterns
 
 ## Phase 5: Distribution
 
-- [ ] Installers: MSI/NSIS for Windows, DMG for macOS, AppImage/deb/rpm for Linux
-- [ ] Automatic updates
+- [x] Installers built by CI: MSI/NSIS for Windows, DMG for macOS, deb/rpm/AppImage for Linux
+- [ ] Code signing for Windows and macOS
 - [ ] Packages for winget, Scoop, Homebrew and Flathub
-- [ ] Translations, starting with English and Vietnamese
+- [ ] More languages
 
 Ideas and help are welcome. Open an issue to discuss before starting on a large change.

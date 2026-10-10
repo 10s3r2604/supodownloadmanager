@@ -109,11 +109,13 @@ pub(crate) fn split_extension(name: &str) -> (&str, &str) {
 }
 
 /// Yields `dir/name`, `dir/name (1)`, `dir/name (2)`, ... keeping the
-/// extension at the end.
-pub(crate) fn candidates<'a>(dir: &'a Path, name: &'a str) -> impl Iterator<Item = PathBuf> + 'a {
+/// extension at the end. Useful for picking a name that is not taken yet.
+pub fn candidates(dir: &Path, name: &str) -> impl Iterator<Item = PathBuf> + use<> {
+    let dir = dir.to_owned();
     let (stem, ext) = split_extension(name);
+    let (name, stem, ext) = (name.to_owned(), stem.to_owned(), ext.to_owned());
     (0..10_000).map(move |i| match i {
-        0 => dir.join(name),
+        0 => dir.join(&name),
         i => dir.join(format!("{stem} ({i}){ext}")),
     })
 }

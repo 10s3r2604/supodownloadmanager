@@ -1,7 +1,8 @@
 name: Release
 
-# Push a tag such as `v0.1.0` to build the `sdm` binaries and publish them as
-# a GitHub release.
+# Push a tag such as `v0.2.0` to build the desktop app installers, the `sdm`
+# command line tool and the browser extension, and publish them as a GitHub
+# release.
 on:
   push:
     tags: ["v*"]
@@ -13,8 +14,55 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }}
+  desktop:
+    name: Desktop app (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            args: ""
+          - name: Linux
+            os: ubuntu-22.04
+            args: ""
+          - name: macOS Apple Silicon
+            os: macos-latest
+            args: --target aarch64-apple-darwin
+          - name: macOS Intel
+            os: macos-latest
+            args: --target x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - working-directory: apps/desktop
+        run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: Supo Download Manager ${{ github.ref_name }}
+          releaseBody: See the assets below to download SDM for your system.
+          args: ${{ matrix.args }}
+
+  cli:
+    name: CLI ${{ matrix.target }}
     strategy:
       fail-fast: false
       matrix:
@@ -37,7 +85,7 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name="sdm-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          name="sdm-cli-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir "$name"
           cp README.md LICENSE "$name"/
           if [[ "${{ matrix.target }}" == *windows* ]]; then
@@ -49,21 +97,31 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: sdm-${{ matrix.target }}
+          name: sdm-cli-${{ matrix.target }}
           path: |
-            sdm-*.zip
-            sdm-*.tar.gz
+            sdm-cli-*.zip
+            sdm-cli-*.tar.gz
 
   publish:
-    name: Publish release
-    needs: build
+    name: Publish CLI and extension
+    needs: [desktop, cli]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Package the browser extension
+        run: |
+          node extension/build.mjs
+          (cd extension/dist/chromium && zip -r "../../../sdm-extension-chromium-${GITHUB_REF_NAME}.zip" .)
+          (cd extension/dist/firefox && zip -r "../../../sdm-extension-firefox-${GITHUB_REF_NAME}.zip" .)
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
-          generate_release_notes: true
+          files: |
+            dist/*
+            sdm-extension-*.zip

@@ -1,0 +1,45 @@
+[package]
+name = "sdm-desktop"
+description = "Supo Download Manager desktop app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lib]
+name = "sdm_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sdm-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+sdm-core.workspace = true
+anyhow.workspace = true
+axum = "0.8"
+percent-encoding.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sys-locale = "0.3"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+trash = "5"
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["full"] }
+tower = { version = "0.5", features = ["util"] }

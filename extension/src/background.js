@@ -1,0 +1,212 @@
+// Supo Download Manager browser extension.
+//
+// Hands downloads over to the SDM desktop app, which listens on
+// http://127.0.0.1:<port>. When the app is not running, the browser keeps
+// downloading as usual.
+
+const DEFAULT_PORT = 17360;
+const PING_CACHE_MS = 5000;
+const DEFAULT_PREFS = { capture: true, port: DEFAULT_PORT, minSizeMb: 0 };
+
+// Used when the app does not send its own list.
+const FALLBACK_EXTENSIONS = [
+  "7z", "aac", "apk", "avi", "bz2", "deb", "dmg", "exe", "flac", "flv", "gz", "iso", "m4a",
+  "m4v", "mkv", "mov", "mp3", "mp4", "msi", "ogg", "pdf", "pkg", "rar", "rpm", "tar", "tgz",
+  "wav", "webm", "wmv", "xz", "zip",
+];
+
+// Content types worth handing over when the file name has no known extension.
+const CAPTURE_MIME =
+  /^(video|audio)\/|^application\/(zip|x-zip-compressed|x-rar-compressed|vnd\.rar|x-7z-compressed|x-msdownload|x-msi|x-apple-diskimage|vnd\.android\.package-archive|x-iso9660-image|x-tar|gzip|x-gzip|x-bzip2|x-xz)$/i;
+
+let lastPing = { at: 0, status: null };
+let cachedBrowser = null;
+// Links given back to the browser because SDM could not take them.
+const givenBack = new Set();
+
+async function prefs() {
+  return chrome.storage.local.get(DEFAULT_PREFS);
+}
+
+async function browserId() {
+  if (cachedBrowser) return cachedBrowser;
+  const ua = navigator.userAgent;
+  const brands = (navigator.userAgentData?.brands ?? []).map((b) => b.brand);
+  let id = "chromium";
+  if (/firefox\//i.test(ua)) id = "firefox";
+  else if (/edg\//i.test(ua)) id = "edge";
+  else if (/opr\//i.test(ua)) id = "opera";
+  else if (/coc_coc_browser/i.test(ua) || brands.some((b) => /coc ?coc/i.test(b))) id = "coccoc";
+  else if (/vivaldi/i.test(ua) || brands.some((b) => /vivaldi/i.test(b))) id = "vivaldi";
+  else if (await isBrave()) id = "brave";
+  else if (brands.includes("Google Chrome")) id = "chrome";
+  cachedBrowser = id;
+  return id;
+}
+
+async function isBrave() {
+  try {
+    return Boolean(navigator.brave && (await navigator.brave.isBrave()));
+  } catch {
+    return false;
+  }
+}
+
+async function callApp(path, body) {
+  const { port } = await prefs();
+  return fetch(`http://127.0.0.1:${port}${path}`, {
+    method: body ? "POST" : "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "X-SDM-Client": "extension",
+      "X-SDM-Browser": await browserId(),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(2500),
+  });
+}
+
+/** Asks the app whether it is running. Returns its status or `null`. */
+async function ping(fresh = false) {
+  if (!fresh && Date.now() - lastPing.at < PING_CACHE_MS) return lastPing.status;
+  let status = null;
+  try {
+    const response = await callApp("/api/ping");
+    if (response.ok) status = await response.json();
+  } catch {
+    // The app is not running.
+  }
+  lastPing = { at: Date.now(), status };
+  chrome.action.setTitle({
+    title: status
+      ? `${chrome.i18n.getMessage("extName")} ${status.version}`
+      : chrome.i18n.getMessage("statusOffline"),
+  });
+  return status;
+}
+
+function extensionOf(name) {
+  const last = (name || "").split(/[?#]/)[0].split(/[\\/]/).pop() || "";
+  const dot = last.lastIndexOf(".");
+  return dot > 0 ? last.slice(dot + 1).toLowerCase() : "";
+}
+
+function baseName(path) {
+  return (path || "").split(/[\\/]/).pop() || undefined;
+}
+
+function sizeOf(item) {
+  if (item.totalBytes > 0) return item.totalBytes;
+  if (item.fileSize > 0) return item.fileSize;
+  return 0;
+}
+
+/** Whether a browser download should go to SDM instead. */
+function wanted(item, status, settings) {
+  const url = item.finalUrl || item.url;
+  if (!/^https?:/i.test(url)) return false; // blob:, data: and file: stay in the browser
+  if (givenBack.has(item.url) || givenBack.has(url)) return false;
+  if (item.byExtensionId && item.byExtensionId === chrome.runtime.id) return false;
+
+  const size = sizeOf(item);
+  if (settings.minSizeMb > 0 && size > 0 && size < settings.minSizeMb * 1024 * 1024) return false;
+
+  const extensions = status.captureExtensions?.length ? status.captureExtensions : FALLBACK_EXTENSIONS;
+  const ext = extensionOf(item.filename) || extensionOf(url);
+  if (ext && extensions.includes(ext)) return true;
+  return CAPTURE_MIME.test(item.mime || "");
+}
+
+async function cookieHeader(url) {
+  try {
+    const cookies = await chrome.cookies.getAll({ url });
+    return cookies.map((c) => `${c.name}=${c.value}`).join("; ") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Sends a link to the app. Returns whether the app accepted it. */
+async function handOver({ url, referrer, fileName, fileSize }) {
+  try {
+    const response = await callApp("/api/download", {
+      url,
+      referrer: referrer || undefined,
+      cookies: await cookieHeader(url),
+      userAgent: navigator.userAgent,
+      fileName: fileName || undefined,
+      fileSize: fileSize || undefined,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Lets the browser download a link after all. */
+function giveBack(url) {
+  givenBack.add(url);
+  setTimeout(() => givenBack.delete(url), 60_000);
+  chrome.downloads.download({ url }).catch(() => {});
+}
+
+chrome.downloads.onCreated.addListener(async (item) => {
+  const settings = await prefs();
+  if (!settings.capture || item.state !== "in_progress") return;
+  const status = await ping();
+  if (!status?.enabled || !wanted(item, status, settings)) return;
+
+  try {
+    await chrome.downloads.cancel(item.id);
+    await chrome.downloads.erase({ id: item.id });
+  } catch {
+    // The download may already be gone.
+  }
+  const accepted = await handOver({
+    url: item.finalUrl || item.url,
+    referrer: item.referrer,
+    fileName: baseName(item.filename),
+    fileSize: sizeOf(item),
+  });
+  if (!accepted) giveBack(item.url);
+});
+
+function createMenus() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: "sdm-link",
+      title: chrome.i18n.getMessage("menuLink"),
+      contexts: ["link"],
+    });
+    chrome.contextMenus.create({
+      id: "sdm-media",
+      title: chrome.i18n.getMessage("menuMedia"),
+      contexts: ["image", "video", "audio"],
+    });
+  });
+}
+
+chrome.runtime.onInstalled.addListener(createMenus);
+chrome.runtime.onStartup.addListener(createMenus);
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const url = info.menuItemId === "sdm-link" ? info.linkUrl : info.srcUrl;
+  if (!url || !/^https?:/i.test(url)) return;
+  const accepted = await handOver({ url, referrer: info.pageUrl || tab?.url });
+  if (!accepted) giveBack(url);
+});
+
+// Tell the app every minute that the extension is installed and working.
+chrome.alarms.create("ping", { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "ping") ping(true);
+});
+ping(true);
+
+chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+  if (message?.type === "status") {
+    ping(true).then(reply);
+    return true; // reply asynchronously
+  }
+  return false;
+});

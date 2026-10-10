@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Supo Download Manager",
+  "mainBinaryName": "sdm-desktop",
+  "version": "0.2.0",
+  "identifier": "com.supodownloadmanager.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Supo Download Manager",
+        "width": 1120,
+        "height": 720,
+        "minWidth": 860,
+        "minHeight": 540,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Utility",
+    "shortDescription": "Fast, resumable, multi-connection downloads",
+    "longDescription": "Supo Download Manager is a free and open-source download accelerator with pause and resume, a download queue, browser integration and a speed limiter.",
+    "copyright": "Supo Download Manager contributors, GPL-3.0-or-later",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../../extension/dist/chromium/": "extension/chromium/",
+      "../../../extension/dist/firefox/": "extension/firefox/"
+    }
+  }
+}

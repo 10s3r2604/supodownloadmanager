@@ -1,0 +1,942 @@
+//! The download list: a queue of downloads that survives restarts.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use percent_encoding::percent_decode_str;
+use sdm_core::{
+    Destination, DownloadControl, DownloadOptions, DownloadRequest, Downloader, Outcome, Phase,
+    Progress, SegmentProgress,
+};
+use serde::{Deserialize, Serialize};
+use tokio::runtime::Handle;
+
+use crate::category::Category;
+use crate::settings::Settings;
+use crate::store;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum State {
+    Queued,
+    Downloading,
+    Paused,
+    Completed,
+    Failed,
+}
+
+/// A download as stored in `downloads.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Record {
+    pub id: u64,
+    pub url: String,
+    /// Request headers such as cookies and referer. Cleared once the file
+    /// is complete because they may contain login data.
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    pub file_name: String,
+    pub path: PathBuf,
+    pub size: Option<u64>,
+    pub downloaded: u64,
+    pub resumable: bool,
+    pub category: Category,
+    pub state: State,
+    pub error: Option<String>,
+    pub added_at: u64,
+    pub completed_at: Option<u64>,
+}
+
+/// What the user interface shows for a download.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadView {
+    pub id: u64,
+    pub url: String,
+    pub file_name: String,
+    pub path: PathBuf,
+    pub size: Option<u64>,
+    pub downloaded: u64,
+    pub resumable: bool,
+    pub category: Category,
+    pub state: State,
+    pub error: Option<String>,
+    pub added_at: u64,
+    pub completed_at: Option<u64>,
+    /// Bytes per second.
+    pub speed: u64,
+    /// Seconds left.
+    pub eta: Option<u64>,
+    pub connections: usize,
+    pub segments: Vec<SegmentProgress>,
+    /// A pause or delete was requested and is being carried out.
+    pub stopping: bool,
+}
+
+/// A request to add a download.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddRequest {
+    pub url: String,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    /// File name chosen by the user; asked from the server when missing.
+    #[serde(default)]
+    pub file_name: Option<String>,
+    /// Folder chosen by the user; the category folder when missing.
+    #[serde(default)]
+    pub directory: Option<PathBuf>,
+    /// `true` to queue the download now, `false` to add it paused.
+    #[serde(default)]
+    pub start: bool,
+}
+
+/// Something worth telling the user about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Notice {
+    Completed { file_name: String, path: PathBuf },
+    Failed { file_name: String, error: String },
+}
+
+pub type Notify = Box<dyn Fn(Notice) + Send + Sync>;
+
+pub struct Manager {
+    inner: Mutex<Inner>,
+    store: PathBuf,
+    runtime: Handle,
+    notify: Notify,
+}
+
+struct Inner {
+    records: Vec<Record>,
+    active: HashMap<u64, Active>,
+    downloader: Downloader,
+    settings: Settings,
+    next_id: u64,
+    dirty: bool,
+    closing: bool,
+}
+
+struct Active {
+    control: DownloadControl,
+    stopping: bool,
+    /// `Some(delete_file)` when the download should disappear from the list.
+    remove: Option<bool>,
+}
+
+impl Manager {
+    /// Loads the download list from `store`. Downloads that were running
+    /// when the app closed come back paused.
+    pub fn new(
+        store: PathBuf,
+        settings: Settings,
+        runtime: Handle,
+        notify: Notify,
+    ) -> anyhow::Result<Arc<Self>> {
+        let downloader = Downloader::new(settings.client_config())?;
+        let mut records: Vec<Record> = store::load_json(&store).unwrap_or_default();
+        for record in &mut records {
+            if matches!(record.state, State::Queued | State::Downloading) {
+                record.state = State::Paused;
+            }
+        }
+        let next_id = records.iter().map(|r| r.id).max().unwrap_or(0) + 1;
+        Ok(Arc::new(Self {
+            inner: Mutex::new(Inner {
+                records,
+                active: HashMap::new(),
+                downloader,
+                settings,
+                next_id,
+                dirty: false,
+                closing: false,
+            }),
+            store,
+            runtime,
+            notify,
+        }))
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn settings(&self) -> Settings {
+        self.lock().settings.clone()
+    }
+
+    pub fn downloader(&self) -> Downloader {
+        self.lock().downloader.clone()
+    }
+
+    /// Applies new settings to running and future downloads.
+    pub fn update_settings(self: &Arc<Self>, settings: Settings) -> anyhow::Result<()> {
+        {
+            let mut inner = self.lock();
+            if settings.proxy != inner.settings.proxy {
+                inner.downloader = Downloader::new(settings.client_config())?;
+            }
+            inner.downloader.set_speed_limit(settings.speed_limit());
+            inner.settings = settings;
+        }
+        self.schedule();
+        Ok(())
+    }
+
+    /// All downloads, oldest first, with live progress.
+    pub fn list(&self) -> Vec<DownloadView> {
+        let mut inner = self.lock();
+        let progress = inner.sync_progress();
+        inner
+            .records
+            .iter()
+            .map(|record| {
+                let stopping = inner.active.get(&record.id).is_some_and(|a| a.stopping);
+                view(record, progress.get(&record.id), stopping)
+            })
+            .collect()
+    }
+
+    /// Where a download is (or will be) saved.
+    pub fn path_of(&self, id: u64) -> Option<(PathBuf, State)> {
+        self.lock()
+            .records
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| (r.path.clone(), r.state))
+    }
+
+    /// Adds a download and returns its id.
+    pub async fn add(self: &Arc<Self>, request: AddRequest) -> Result<u64, String> {
+        let url = request.url.trim().to_owned();
+        let parsed = url::Url::parse(&url).map_err(|_| format!("invalid URL: {url}"))?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(format!("only http and https links are supported: {url}"));
+        }
+
+        let (downloader, settings) = {
+            let inner = self.lock();
+            (inner.downloader.clone(), inner.settings.clone())
+        };
+        let file_name = match request.file_name.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => sdm_core::sanitize_file_name(name),
+            _ => match downloader.probe(&url, &request.headers).await {
+                Ok(info) => info.file_name,
+                Err(error) => {
+                    tracing::warn!(%error, %url, "could not ask the server for a file name");
+                    name_from_url(&parsed)
+                }
+            },
+        };
+        let category = Category::from_file_name(&file_name);
+        let directory = request
+            .directory
+            .filter(|d| !d.as_os_str().is_empty())
+            .unwrap_or_else(|| settings.directory_for(category));
+
+        let id = {
+            let mut inner = self.lock();
+            let path = inner.free_path(&directory, &file_name);
+            let id = inner.next_id;
+            inner.next_id += 1;
+            inner.records.push(Record {
+                id,
+                url,
+                headers: request.headers,
+                file_name: file_name_of(&path),
+                path,
+                size: None,
+                downloaded: 0,
+                resumable: false,
+                category,
+                state: if request.start {
+                    State::Queued
+                } else {
+                    State::Paused
+                },
+                error: None,
+                added_at: now_ms(),
+                completed_at: None,
+            });
+            inner.dirty = true;
+            self.save(&mut inner);
+            id
+        };
+        self.schedule();
+        Ok(id)
+    }
+
+    pub fn pause(&self, ids: &[u64]) {
+        let mut inner = self.lock();
+        for &id in ids {
+            inner.pause_one(id);
+        }
+        self.save(&mut inner);
+    }
+
+    pub fn pause_all(&self) {
+        let mut inner = self.lock();
+        let ids: Vec<u64> = inner.records.iter().map(|r| r.id).collect();
+        for id in ids {
+            inner.pause_one(id);
+        }
+        self.save(&mut inner);
+    }
+
+    pub fn resume(self: &Arc<Self>, ids: &[u64]) {
+        {
+            let mut inner = self.lock();
+            for record in inner.records.iter_mut().filter(|r| ids.contains(&r.id)) {
+                if matches!(record.state, State::Paused | State::Failed) {
+                    record.state = State::Queued;
+                    record.error = None;
+                }
+            }
+            inner.dirty = true;
+            self.save(&mut inner);
+        }
+        self.schedule();
+    }
+
+    pub fn resume_all(self: &Arc<Self>) {
+        let ids: Vec<u64> = self.lock().records.iter().map(|r| r.id).collect();
+        self.resume(&ids);
+    }
+
+    /// Removes downloads from the list. Unfinished data is always deleted;
+    /// finished files are moved to the trash only when `delete_file` is set.
+    pub fn remove(&self, ids: &[u64], delete_file: bool) {
+        let mut inner = self.lock();
+        for &id in ids {
+            if let Some(active) = inner.active.get_mut(&id) {
+                active.remove = Some(delete_file);
+                active.stopping = true;
+                active.control.cancel();
+                continue;
+            }
+            if let Some(index) = inner.records.iter().position(|r| r.id == id) {
+                let record = inner.records.remove(index);
+                discard_files(&record, delete_file);
+                inner.dirty = true;
+            }
+        }
+        self.save(&mut inner);
+    }
+
+    /// Copies live progress into the stored records and saves them now and
+    /// then. Call this regularly.
+    pub fn tick(&self, save: bool) {
+        let mut inner = self.lock();
+        inner.sync_progress();
+        if save {
+            self.save(&mut inner);
+        }
+    }
+
+    /// Pauses everything and waits (up to a few seconds) until all progress
+    /// is safely on disk. Used when the app quits.
+    pub async fn shutdown(&self) {
+        {
+            let mut inner = self.lock();
+            inner.closing = true;
+            for active in inner.active.values_mut() {
+                active.stopping = true;
+                active.control.pause();
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !self.lock().active.is_empty() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let mut inner = self.lock();
+        inner.sync_progress();
+        inner.dirty = true;
+        self.save(&mut inner);
+    }
+
+    /// Starts queued downloads while there are free slots.
+    fn schedule(self: &Arc<Self>) {
+        let mut inner = self.lock();
+        if inner.closing {
+            return;
+        }
+        let free = usize::from(inner.settings.max_parallel).saturating_sub(inner.active.len());
+        let next: Vec<u64> = inner
+            .records
+            .iter()
+            .filter(|r| r.state == State::Queued && !inner.active.contains_key(&r.id))
+            .take(free)
+            .map(|r| r.id)
+            .collect();
+        for id in next {
+            self.start(&mut inner, id);
+        }
+        self.save(&mut inner);
+    }
+
+    fn start(self: &Arc<Self>, inner: &mut Inner, id: u64) {
+        let Some(record) = inner.records.iter_mut().find(|r| r.id == id) else {
+            return;
+        };
+        record.state = State::Downloading;
+        record.error = None;
+        let request = DownloadRequest {
+            url: record.url.clone(),
+            destination: Destination::File(record.path.clone()),
+            headers: record.headers.clone(),
+            options: DownloadOptions {
+                connections: inner.settings.connections.into(),
+                ..DownloadOptions::default()
+            },
+        };
+        let handle = {
+            let _runtime = self.runtime.enter();
+            inner.downloader.start(request)
+        };
+        inner.active.insert(
+            id,
+            Active {
+                control: handle.control(),
+                stopping: false,
+                remove: None,
+            },
+        );
+        inner.dirty = true;
+
+        let this = Arc::clone(self);
+        self.runtime.spawn(async move {
+            let result = handle.wait().await;
+            this.finished(id, result);
+        });
+    }
+
+    fn finished(self: &Arc<Self>, id: u64, result: sdm_core::Result<Outcome>) {
+        let notice = {
+            let mut inner = self.lock();
+            let Some(active) = inner.active.remove(&id) else {
+                return;
+            };
+            let progress = active.control.progress();
+            let index = inner.records.iter().position(|r| r.id == id);
+            let notice = match (index, active.remove) {
+                (Some(index), Some(delete_file)) => {
+                    let record = inner.records.remove(index);
+                    discard_files(&record, delete_file);
+                    None
+                }
+                (Some(index), None) => {
+                    let record = &mut inner.records[index];
+                    record.apply(&progress);
+                    record.finish(result)
+                }
+                (None, _) => None,
+            };
+            inner.dirty = true;
+            self.save(&mut inner);
+            notice
+        };
+        if let Some(notice) = notice {
+            (self.notify)(notice);
+        }
+        self.schedule();
+    }
+
+    fn save(&self, inner: &mut Inner) {
+        if !inner.dirty {
+            return;
+        }
+        match store::save_json(&self.store, &inner.records) {
+            Ok(()) => inner.dirty = false,
+            Err(error) => tracing::warn!(%error, "could not save the download list"),
+        }
+    }
+}
+
+impl Inner {
+    /// Copies live progress into the records and returns it.
+    fn sync_progress(&mut self) -> HashMap<u64, Progress> {
+        let progress: HashMap<u64, Progress> = self
+            .active
+            .iter()
+            .map(|(id, active)| (*id, active.control.progress()))
+            .collect();
+        for record in &mut self.records {
+            if let Some(p) = progress.get(&record.id)
+                && record.apply(p)
+            {
+                self.dirty = true;
+            }
+        }
+        progress
+    }
+
+    fn pause_one(&mut self, id: u64) {
+        if let Some(active) = self.active.get_mut(&id) {
+            active.stopping = true;
+            active.control.pause();
+        } else if let Some(record) = self.records.iter_mut().find(|r| r.id == id)
+            && record.state == State::Queued
+        {
+            record.state = State::Paused;
+            self.dirty = true;
+        }
+    }
+
+    /// A path in `directory` that no file, partial download or other list
+    /// entry uses yet.
+    fn free_path(&self, directory: &Path, file_name: &str) -> PathBuf {
+        sdm_core::path_candidates(directory, file_name)
+            .find(|path| {
+                !path.exists()
+                    && !sdm_core::partial_data_path(path).exists()
+                    && !self.records.iter().any(|r| r.path == *path)
+            })
+            .unwrap_or_else(|| directory.join(file_name))
+    }
+}
+
+impl Record {
+    /// Takes over live progress. Returns whether anything changed.
+    fn apply(&mut self, progress: &Progress) -> bool {
+        if progress.phase == Phase::Connecting {
+            return false;
+        }
+        let before = (self.size, self.downloaded, self.resumable);
+        if progress.total.is_some() {
+            self.size = progress.total;
+        }
+        self.downloaded = progress.downloaded;
+        self.resumable = progress.resumable;
+        before != (self.size, self.downloaded, self.resumable)
+    }
+
+    fn finish(&mut self, result: sdm_core::Result<Outcome>) -> Option<Notice> {
+        match result {
+            Ok(Outcome::Completed { path, size }) => {
+                self.state = State::Completed;
+                self.file_name = file_name_of(&path);
+                self.path = path.clone();
+                self.size = Some(size);
+                self.downloaded = size;
+                self.completed_at = Some(now_ms());
+                self.headers.clear();
+                Some(Notice::Completed {
+                    file_name: self.file_name.clone(),
+                    path,
+                })
+            }
+            Ok(Outcome::Paused { .. } | Outcome::Cancelled) => {
+                self.state = State::Paused;
+                None
+            }
+            Err(error) => {
+                self.state = State::Failed;
+                self.error = Some(error.to_string());
+                Some(Notice::Failed {
+                    file_name: self.file_name.clone(),
+                    error: error.to_string(),
+                })
+            }
+        }
+    }
+}
+
+fn view(record: &Record, progress: Option<&Progress>, stopping: bool) -> DownloadView {
+    DownloadView {
+        id: record.id,
+        url: record.url.clone(),
+        file_name: record.file_name.clone(),
+        path: record.path.clone(),
+        size: record.size,
+        downloaded: record.downloaded,
+        resumable: record.resumable,
+        category: record.category,
+        state: record.state,
+        error: record.error.clone(),
+        added_at: record.added_at,
+        completed_at: record.completed_at,
+        speed: progress.map_or(0, |p| p.speed),
+        eta: progress.and_then(Progress::eta).map(|eta| eta.as_secs()),
+        connections: progress.map_or(0, |p| p.connections),
+        segments: progress.map(|p| p.segments.clone()).unwrap_or_default(),
+        stopping,
+    }
+}
+
+/// Deletes what is left of a download that leaves the list.
+fn discard_files(record: &Record, delete_file: bool) {
+    for path in [
+        sdm_core::partial_data_path(&record.path),
+        sdm_core::partial_state_path(&record.path),
+    ] {
+        let _ = std::fs::remove_file(path);
+    }
+    if delete_file
+        && record.state == State::Completed
+        && record.path.exists()
+        && let Err(error) = trash::delete(&record.path)
+    {
+        tracing::warn!(%error, path = %record.path.display(), "could not move the file to the trash");
+    }
+}
+
+fn name_from_url(url: &url::Url) -> String {
+    let segment = url
+        .path_segments()
+        .and_then(|mut segments| segments.rfind(|s| !s.is_empty()))
+        .unwrap_or_default();
+    sdm_core::sanitize_file_name(&percent_decode_str(segment).decode_utf8_lossy())
+}
+
+fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex as StdMutex;
+
+    use axum::Router;
+    use axum::routing::get;
+
+    use super::*;
+
+    const DATA: &[u8] = b"pretend this is a video file";
+
+    /// Serves `DATA` for `/<name>` and 404 for everything else.
+    async fn server() -> String {
+        let app = Router::new().route("/{name}", get(|| async { DATA }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    struct Fixture {
+        dir: tempfile::TempDir,
+        notices: Arc<StdMutex<Vec<Notice>>>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                dir: tempfile::tempdir().unwrap(),
+                notices: Arc::default(),
+            }
+        }
+
+        fn downloads(&self) -> PathBuf {
+            self.dir.path().join("Downloads")
+        }
+
+        fn manager(&self) -> Arc<Manager> {
+            let settings = Settings {
+                download_dir: self.downloads(),
+                proxy: "none".into(),
+                ..Settings::default()
+            };
+            let notices = self.notices.clone();
+            Manager::new(
+                self.dir.path().join("downloads.json"),
+                settings,
+                Handle::current(),
+                Box::new(move |notice| notices.lock().unwrap().push(notice)),
+            )
+            .unwrap()
+        }
+    }
+
+    fn request(url: String, start: bool) -> AddRequest {
+        AddRequest {
+            url,
+            start,
+            ..AddRequest::default()
+        }
+    }
+
+    async fn wait_for(manager: &Manager, id: u64, state: State) -> DownloadView {
+        for _ in 0..1000 {
+            let view = manager.list().into_iter().find(|d| d.id == id).unwrap();
+            if view.state == state {
+                return view;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("download {id} never reached {state:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn downloads_into_category_folder_and_notifies() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let manager = fixture.manager();
+
+        let id = manager
+            .add(request(format!("{base}/clip.mp4"), true))
+            .await
+            .unwrap();
+        let done = wait_for(&manager, id, State::Completed).await;
+
+        let expected = fixture.downloads().join("Video").join("clip.mp4");
+        assert_eq!(done.path, expected);
+        assert_eq!(done.category, Category::Video);
+        assert_eq!(done.size, Some(DATA.len() as u64));
+        assert_eq!(std::fs::read(&expected).unwrap(), DATA);
+        assert_eq!(
+            fixture.notices.lock().unwrap().as_slice(),
+            [Notice::Completed {
+                file_name: "clip.mp4".into(),
+                path: expected
+            }]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn download_later_then_resume() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let manager = fixture.manager();
+
+        let id = manager
+            .add(request(format!("{base}/notes.txt"), false))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(manager.list()[0].state, State::Paused);
+
+        manager.resume(&[id]);
+        let done = wait_for(&manager, id, State::Completed).await;
+        assert_eq!(std::fs::read(done.path).unwrap(), DATA);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gives_duplicates_their_own_names() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let manager = fixture.manager();
+
+        let url = format!("{base}/setup.zip");
+        manager.add(request(url.clone(), false)).await.unwrap();
+        manager.add(request(url, false)).await.unwrap();
+        let names: Vec<String> = manager.list().into_iter().map(|d| d.file_name).collect();
+        assert_eq!(names, ["setup.zip", "setup (1).zip"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn uses_the_chosen_name_and_folder() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let manager = fixture.manager();
+        let folder = fixture.dir.path().join("Chosen");
+
+        let id = manager
+            .add(AddRequest {
+                url: format!("{base}/x.bin"),
+                file_name: Some("my: file.bin".into()),
+                directory: Some(folder.clone()),
+                start: true,
+                ..AddRequest::default()
+            })
+            .await
+            .unwrap();
+        let done = wait_for(&manager, id, State::Completed).await;
+        assert_eq!(done.path, folder.join("my_ file.bin"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reports_failures() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let manager = fixture.manager();
+
+        let id = manager
+            .add(request(format!("{base}/missing/file.zip"), true))
+            .await
+            .unwrap();
+        let failed = wait_for(&manager, id, State::Failed).await;
+        assert_eq!(failed.file_name, "file.zip");
+        assert!(failed.error.unwrap().contains("404"));
+        assert!(matches!(
+            fixture.notices.lock().unwrap().as_slice(),
+            [Notice::Failed { .. }]
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rejects_unsupported_links() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        assert!(
+            manager
+                .add(request("ftp://example.com/a.zip".into(), true))
+                .await
+                .is_err()
+        );
+        assert!(
+            manager
+                .add(request("not a link".into(), true))
+                .await
+                .is_err()
+        );
+        assert!(manager.list().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remembers_downloads_across_restarts() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let id = {
+            let manager = fixture.manager();
+            manager
+                .add(request(format!("{base}/movie.mkv"), false))
+                .await
+                .unwrap()
+        };
+
+        // Pretend the app was closed while the download was running.
+        let store = fixture.dir.path().join("downloads.json");
+        let mut records: Vec<Record> = store::load_json(&store).unwrap();
+        records[0].state = State::Downloading;
+        records[0].headers = vec![("Cookie".into(), "s=1".into())];
+        store::save_json(&store, &records).unwrap();
+
+        let manager = fixture.manager();
+        let list = manager.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, id);
+        assert_eq!(list[0].state, State::Paused);
+
+        // New downloads continue the numbering.
+        let next = manager
+            .add(request(format!("{base}/other.mkv"), false))
+            .await
+            .unwrap();
+        assert_eq!(next, id + 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn removing_deletes_unfinished_data_but_keeps_files() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let manager = fixture.manager();
+
+        let paused = manager
+            .add(request(format!("{base}/big.iso"), false))
+            .await
+            .unwrap();
+        let path = manager.path_of(paused).unwrap().0;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(sdm_core::partial_data_path(&path), b"partial").unwrap();
+        std::fs::write(sdm_core::partial_state_path(&path), b"{}").unwrap();
+
+        let finished = manager
+            .add(request(format!("{base}/done.txt"), true))
+            .await
+            .unwrap();
+        let done = wait_for(&manager, finished, State::Completed).await;
+
+        manager.remove(&[paused, finished], false);
+        assert!(manager.list().is_empty());
+        assert!(!sdm_core::partial_data_path(&path).exists());
+        assert!(!sdm_core::partial_state_path(&path).exists());
+        assert!(done.path.exists(), "finished files stay unless asked");
+    }
+
+    /// Serves 2 MiB with byte range support, so downloads can be resumed.
+    async fn big_file_server() -> (String, Vec<u8>) {
+        use axum::http::{HeaderMap, StatusCode, header};
+        let data: Vec<u8> = (0..2 * 1024 * 1024u32).map(|i| (i % 251) as u8).collect();
+        let body = data.clone();
+        let app = Router::new().route(
+            "/{name}",
+            get(move |headers: HeaderMap| {
+                let data = body.clone();
+                async move {
+                    let start: usize = headers
+                        .get(header::RANGE)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.strip_prefix("bytes="))
+                        .and_then(|v| v.split('-').next())
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0);
+                    let end = headers
+                        .get(header::RANGE)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.split('-').nth(1))
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .map_or(data.len(), |e| e + 1);
+                    let range = format!("bytes {start}-{}/{}", end - 1, data.len());
+                    (
+                        StatusCode::PARTIAL_CONTENT,
+                        [(header::CONTENT_RANGE, range)],
+                        data[start..end].to_vec(),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), data)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn quitting_keeps_progress_for_the_next_start() {
+        let fixture = Fixture::new();
+        let (base, data) = big_file_server().await;
+        let manager = fixture.manager();
+        let mut slow = manager.settings();
+        slow.speed_limit = 256 * 1024;
+        manager.update_settings(slow).unwrap();
+
+        let id = manager
+            .add(request(format!("{base}/backup.iso"), true))
+            .await
+            .unwrap();
+        for _ in 0..500 {
+            if manager.list()[0].downloaded > 100 * 1024 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        manager.shutdown().await;
+
+        let path = manager.path_of(id).unwrap().0;
+        assert!(
+            sdm_core::partial_state_path(&path).exists(),
+            "progress was saved"
+        );
+        let saved = manager.list()[0].downloaded;
+        assert!(saved > 0);
+        drop(manager);
+
+        // The next start shows the download paused and finishes it.
+        let manager = fixture.manager();
+        let view = &manager.list()[0];
+        assert_eq!(view.state, State::Paused);
+        assert_eq!(view.downloaded, saved);
+        manager.resume(&[id]);
+        let done = wait_for(&manager, id, State::Completed).await;
+        assert_eq!(std::fs::read(done.path).unwrap(), data);
+    }
+
+    #[test]
+    fn names_from_urls() {
+        let url =
+            url::Url::parse("https://example.com/a/T%E1%BA%A3i%20v%E1%BB%81.zip?x=1").unwrap();
+        assert_eq!(name_from_url(&url), "Tải về.zip");
+        let url = url::Url::parse("https://example.com/").unwrap();
+        assert_eq!(name_from_url(&url), "download");
+    }
+}

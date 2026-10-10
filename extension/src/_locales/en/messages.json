@@ -1,0 +1,16 @@
+{
+  "extName": { "message": "Supo Download Manager" },
+  "extDescription": { "message": "Download files with Supo Download Manager: faster downloads that you can pause and resume." },
+  "menuLink": { "message": "Download link with SDM" },
+  "menuMedia": { "message": "Download this file with SDM" },
+  "statusConnected": { "message": "Connected to SDM" },
+  "statusOffline": { "message": "SDM is not running. Open the app to download with it." },
+  "statusDisabled": { "message": "Browser integration is turned off in SDM." },
+  "captureLabel": { "message": "Take over downloads" },
+  "captureHint": { "message": "Files of the types chosen in SDM are downloaded by SDM instead of the browser." },
+  "permissionHint": { "message": "SDM needs access to websites to send their cookies, so downloads that need a login work." },
+  "grant": { "message": "Allow access" },
+  "advanced": { "message": "Advanced" },
+  "minSize": { "message": "Only take files larger than (MB)" },
+  "port": { "message": "SDM port" }
+}

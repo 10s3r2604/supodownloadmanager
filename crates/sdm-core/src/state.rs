@@ -15,11 +15,13 @@ use crate::probe::RemoteInfo;
 
 const STATE_VERSION: u32 = 1;
 
-pub(crate) fn part_path(path: &Path) -> PathBuf {
+/// The file that holds the data of an unfinished download of `path`.
+pub fn part_path(path: &Path) -> PathBuf {
     with_suffix(path, ".sdm-part")
 }
 
-pub(crate) fn state_path(path: &Path) -> PathBuf {
+/// The file that holds the progress of an unfinished download of `path`.
+pub fn state_path(path: &Path) -> PathBuf {
     with_suffix(path, ".sdm-state")
 }
 

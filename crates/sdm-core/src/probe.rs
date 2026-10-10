@@ -9,6 +9,7 @@ use crate::filename;
 
 /// What the server told us about a file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteInfo {
     /// The URL that was requested.
     pub url: String,
@@ -147,5 +148,29 @@ mod tests {
         assert_eq!(parse_content_range("bytes 5-1/10"), None);
         assert_eq!(parse_content_range("items 0-1/2"), None);
         assert_eq!(parse_content_range("bytes 0-x/2"), None);
+    }
+}
+
+#[cfg(test)]
+mod serialization_tests {
+    use super::*;
+
+    /// User interfaces written in JavaScript expect camelCase names.
+    #[test]
+    fn serializes_camel_case() {
+        let info = RemoteInfo {
+            url: "u".into(),
+            final_url: "f".into(),
+            size: Some(1),
+            resumable: true,
+            file_name: "a.zip".into(),
+            content_type: None,
+            etag: None,
+            last_modified: None,
+        };
+        let json = serde_json::to_value(info).unwrap();
+        assert_eq!(json["fileName"], "a.zip");
+        assert_eq!(json["finalUrl"], "f");
+        assert!(json.get("file_name").is_none());
     }
 }

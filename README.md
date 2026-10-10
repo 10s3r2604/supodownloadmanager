@@ -8,79 +8,81 @@ the largest part that is still left, so every connection stays busy until the
 very end. Downloads survive network errors and can be paused and resumed, even
 after closing the program or restarting the computer.
 
-> **Status: early development (v0.1).** The download engine and the `sdm`
-> command line tool work today. The desktop app and the browser extension are
-> next, see the [roadmap](docs/ROADMAP.md).
->
 > 🇻🇳 [Đọc bằng tiếng Việt](#tiếng-việt)
+
+![SDM main window](docs/images/sdm-light-vi.png)
+
+## What's included
+
+- **Desktop app** with a download list, categories, a download queue, a speed
+  limiter, a tray icon and notifications, in English and Vietnamese, with
+  light and dark themes.
+- **Browser extension** for Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi and
+  Firefox. It hands downloads over to SDM, together with the cookies they need.
+- **`sdm` command line tool** for scripts and servers.
+
+> **Status: early development (v0.2).** Everything above works and is tested,
+> but expect rough edges. See the [roadmap](docs/ROADMAP.md).
 
 ## Features
 
 - **Multi-connection downloads**: up to 32 connections per file, with
   dynamic segment splitting.
-- **Pause and resume**: press `Ctrl+C` to pause, then run the same command
-  again to continue. Before resuming, SDM checks the file's size, `ETag` and
-  `Last-Modified` date with the server, so if the file changed, it starts
-  over instead of mixing old and new data.
+- **Pause and resume**: progress is saved continuously. Quitting the app
+  pauses all downloads and they continue where they stopped. Before resuming,
+  SDM checks the file's size, `ETag` and `Last-Modified` date with the server,
+  so if the file changed, it starts over instead of mixing old and new data.
+- **Browser integration**: downloads of the file types you choose open in SDM
+  instead of the browser, with cookies, referer and user agent, so downloads
+  that need a login work. Right-click any link, image or video and choose
+  "Download link with SDM".
+- **One-click extension setup**: SDM finds the browsers on your computer and
+  opens the right page to install the extension.
+- **Clipboard monitoring**: copy a download link and SDM offers to download it.
+- **Categories**: files are sorted into Video, Music, Documents, Compressed,
+  Programs and Images, each with its own folder if you like.
+- **Queue**: choose how many files download at the same time; the rest wait.
 - **Robust**: automatic retries with exponential backoff. A connection that
   keeps failing hands its work to the others, which helps with servers that
   limit connections per user.
 - **Works with any server**: if the server does not support resuming, SDM
-  uses a single connection. It also handles files whose size the server does
-  not report.
-- **Speed limit** for all downloads together or per download.
-- **Download queue**: several files in parallel (`-j`) and URL lists from a
-  file (`-i`).
-- **Smart file names**: taken from `Content-Disposition` or the URL, made
-  safe for every operating system. Existing files are never overwritten
-  unless you ask (`name (1).ext` is used instead).
-- **SHA-256 verification** of finished files.
-- **Custom headers, cookies, referer, user agent, HTTP and SOCKS5 proxies.**
-- **One small self-contained program**: no runtime to install.
+  uses a single connection. It also handles files whose size is unknown.
+- **Speed limit**, **proxy** (HTTP, HTTPS, SOCKS5), **safe file names**,
+  **SHA-256 verification** (command line).
+
+![Dark theme](docs/images/sdm-dark-en.png)
 
 ## Install
 
-**Pre-built binaries** for Windows, macOS and Linux will be on the
-[Releases](https://github.com/10s3r2604/supodownloadmanager/releases) page from
-the first tagged version.
+Installers for Windows (`.msi`, `.exe`), macOS (`.dmg`) and Linux (`.deb`,
+`.rpm`, `.AppImage`) are published on the
+[Releases](https://github.com/10s3r2604/supodownloadmanager/releases) page
+from the first tagged version.
 
-**From source** (needs [Rust](https://rustup.rs)):
+### Browser extension
+
+Open SDM, click **Browsers**, pick your browser and click **Install
+extension**. SDM opens the browser's extension page and shows what to do.
+Details are in [docs/BROWSER_EXTENSION.md](docs/BROWSER_EXTENSION.md).
+
+<img src="docs/images/sdm-browsers-vi.png" alt="Browser integration" width="560">
+
+### Command line tool
 
 ```sh
 cargo install --git https://github.com/10s3r2604/supodownloadmanager sdm-cli
 ```
 
-or clone the repository and run `cargo build --release`. The program ends up
-in `target/release/sdm` (`sdm.exe` on Windows).
-
-## Usage
-
 ```sh
-# Download into the current directory with 8 connections
-sdm get https://example.com/big.iso
-
-# 16 connections, save into ~/Downloads
+sdm get https://example.com/big.iso                 # download with 8 connections
 sdm get -c 16 -d ~/Downloads https://example.com/big.iso
-
-# Limit the speed to 2 MB/s
-sdm get -l 2M https://example.com/big.iso
-
-# Download every URL in urls.txt, 4 files at a time
-sdm get -j 4 -i urls.txt
-
-# Choose the file name and verify the checksum
-sdm get -o ubuntu.iso --sha256 <checksum> https://example.com/ubuntu.iso
-
-# Downloads that need a login: pass cookies, referer or other headers
-sdm get --cookie "session=abc" --referer https://example.com/page https://example.com/file.zip
-sdm get -H "Authorization: Bearer TOKEN" https://example.com/file.zip
-
-# Ask the server about a file without downloading it
-sdm info https://example.com/big.iso
+sdm get -l 2M https://example.com/big.iso           # limit to 2 MB/s
+sdm get -j 4 -i urls.txt                            # a list of links, 4 at a time
+sdm get --cookie "session=abc" https://example.com/file.zip
+sdm info https://example.com/big.iso                # ask the server about a file
 ```
 
-Press `Ctrl+C` to pause and run the same command again to resume. Run
-`sdm get --help` for all options.
+Press `Ctrl+C` to pause and run the same command again to resume.
 
 ## How it works
 
@@ -93,27 +95,33 @@ Press `Ctrl+C` to pause and run the same command again to resume. Run
    and takes over the back half.
 4. **Save progress**: data goes into `name.sdm-part`, and progress is saved to
    `name.sdm-state` every two seconds and whenever the download is paused.
-   Only bytes that have reached the disk are recorded.
-5. **Finish**: the part file is renamed to the final name and the state file
-   is deleted.
+5. **Finish**: the part file is renamed to the final name.
+
+The browser extension talks to the app through a small server on
+`127.0.0.1` that only accepts requests from browser extensions.
 
 ## Project layout
 
-| Path               | What it is                                                         |
-| ------------------ | ------------------------------------------------------------------ |
-| `crates/sdm-core`  | The download engine as a Rust library, shared by all front-ends    |
-| `crates/sdm-cli`   | The `sdm` command line program                                      |
-| `docs/ROADMAP.md`  | What is planned next                                                |
+| Path                     | What it is                                                      |
+| ------------------------ | --------------------------------------------------------------- |
+| `crates/sdm-core`        | The download engine (Rust library), shared by all front-ends    |
+| `crates/sdm-cli`         | The `sdm` command line tool                                      |
+| `apps/desktop`           | The desktop app: Tauri (Rust) backend and React interface        |
+| `extension`              | The browser extension (Chromium and Firefox builds)              |
+| `docs`                   | Roadmap and guides                                               |
 
-## Roadmap
+## Building from source
 
-1. ✅ Download engine and command line tool
-2. 🔜 Desktop app (Tauri): download list, categories, tray icon, clipboard monitoring
-3. Browser extension for Chrome, Edge and Firefox to capture downloads
-4. Video grabber (HLS/DASH), scheduler, queues
-5. Installers, auto-update, translations
+You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 20 or
+newer. On Linux, also install the WebKitGTK libraries listed in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-Details in [docs/ROADMAP.md](docs/ROADMAP.md).
+```sh
+cd apps/desktop
+npm install
+npm run tauri dev      # run the app
+npm run tauri build    # build an installer
+```
 
 ## Contributing
 
@@ -136,62 +144,45 @@ Manager or Tonec Inc.
 **Supo Download Manager (SDM)** là trình tăng tốc tải xuống miễn phí, mã nguồn
 mở, chạy trên Windows, macOS và Linux.
 
-SDM chia file thành nhiều đoạn và tải chúng cùng lúc qua nhiều kết nối. Khi
-một kết nối tải xong phần của mình, nó lấy một nửa của đoạn còn lại lớn nhất để
-tải tiếp, nhờ vậy mọi kết nối đều bận đến tận cuối. Khi mất mạng, SDM tự kết
-nối lại. Bạn có thể tạm dừng và tải tiếp, kể cả sau khi tắt chương trình hay
-khởi động lại máy.
+SDM chia file thành nhiều đoạn và tải cùng lúc qua nhiều kết nối. Khi một kết
+nối tải xong phần của mình, nó lấy một nửa của đoạn còn lại lớn nhất để tải
+tiếp, nhờ vậy mọi kết nối đều bận đến tận cuối. Mất mạng thì tự kết nối lại, tạm
+dừng rồi tải tiếp được, kể cả sau khi tắt máy.
 
-> **Trạng thái: đang phát triển (v0.1).** Engine tải và công cụ dòng lệnh `sdm`
-> đã dùng được. Ứng dụng có giao diện và extension cho trình duyệt là các bước
-> tiếp theo, xem [lộ trình](docs/ROADMAP.md).
+### Gồm những gì
 
-### Tính năng
+- **Ứng dụng desktop**: danh sách tải, phân loại file, hàng đợi, giới hạn tốc
+  độ, biểu tượng ở khay hệ thống, thông báo khi tải xong. Có tiếng Việt và
+  tiếng Anh, giao diện sáng và tối.
+- **Extension trình duyệt** cho Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi và
+  Firefox: chuyển file tải từ trình duyệt sang SDM, kèm cookie để tải được cả
+  các link cần đăng nhập.
+- **Công cụ dòng lệnh `sdm`** cho script và máy chủ.
 
-- **Tải đa luồng**: tối đa 32 kết nối cho mỗi file, tự chia lại các đoạn khi
-  đang tải.
-- **Tạm dừng / tải tiếp**: nhấn `Ctrl+C` để tạm dừng, chạy lại đúng lệnh cũ để
-  tải tiếp. Trước khi tải tiếp, SDM kiểm tra lại kích thước, `ETag` và ngày sửa
-  đổi với server. Nếu file trên server đã thay đổi, SDM tải lại từ đầu thay vì
-  ghép lẫn dữ liệu cũ và mới.
-- **Ổn định**: tự thử lại khi lỗi mạng, thời gian chờ tăng dần. Kết nối nào lỗi
-  liên tục sẽ nhường phần việc cho các kết nối khác.
-- **Tương thích mọi server**: dùng một kết nối nếu server không hỗ trợ tải
-  tiếp. Tải được cả file mà server không báo kích thước.
-- **Giới hạn tốc độ** cho tất cả các file hoặc từng file.
-- **Hàng đợi**: tải nhiều file song song (`-j`), đọc danh sách link từ file
-  (`-i`).
-- **Đặt tên file thông minh**: lấy tên từ server hoặc từ link, an toàn trên mọi
-  hệ điều hành. Không bao giờ ghi đè file có sẵn trừ khi bạn yêu cầu; SDM sẽ đặt
-  tên `ten (1).ext`.
-- **Kiểm tra SHA-256** sau khi tải xong.
-- **Tùy chỉnh header, cookie, referer, user agent, proxy HTTP và SOCKS5.**
-- **Chỉ một file chạy nhỏ gọn**, không cần cài thêm gì.
+### Tính năng chính
+
+- **Tải đa luồng**: tối đa 32 kết nối mỗi file, tự chia lại đoạn khi đang tải.
+- **Tạm dừng / tải tiếp**: tiến độ được lưu liên tục; tắt ứng dụng thì mọi file
+  được tạm dừng và lần sau tải tiếp. Nếu file trên server đã đổi, SDM tải lại từ
+  đầu chứ không ghép lẫn dữ liệu.
+- **Bắt link từ trình duyệt**: các loại file bạn chọn sẽ được SDM tải thay
+  trình duyệt. Chuột phải vào link, ảnh hay video và chọn "Tải link bằng SDM".
+- **Cài extension bằng một nút bấm**: SDM tự tìm các trình duyệt trên máy và mở
+  đúng trang để cài.
+- **Theo dõi clipboard**: copy một link tải là SDM gợi ý tải ngay.
+- **Phân loại**: Video, Nhạc, Tài liệu, File nén, Chương trình, Hình ảnh, mỗi
+  loại một thư mục.
+- **Hàng đợi**: chọn số file tải cùng lúc, các file khác chờ đến lượt.
+- **Giới hạn tốc độ, proxy (HTTP, HTTPS, SOCKS5), đặt tên file an toàn.**
 
 ### Cài đặt
 
-- **Bản dựng sẵn**: sẽ có ở trang
-  [Releases](https://github.com/10s3r2604/supodownloadmanager/releases) từ phiên
-  bản đầu tiên.
-- **Từ mã nguồn** (cần cài [Rust](https://rustup.rs)):
-
-  ```sh
-  cargo install --git https://github.com/10s3r2604/supodownloadmanager sdm-cli
-  ```
-
-### Cách dùng
-
-```sh
-sdm get https://example.com/file.iso              # tải vào thư mục hiện tại
-sdm get -c 16 -d ~/Downloads https://...          # 16 kết nối, lưu vào ~/Downloads
-sdm get -l 2M https://...                         # giới hạn 2 MB/s
-sdm get -j 4 -i danh-sach.txt                     # tải danh sách link, 4 file cùng lúc
-sdm get --cookie "session=abc" https://...        # link cần đăng nhập
-sdm info https://...                              # xem thông tin file, không tải
-```
-
-Nhấn `Ctrl+C` để tạm dừng, chạy lại lệnh cũ để tải tiếp. Xem mọi tùy chọn bằng
-`sdm get --help`.
+- **Ứng dụng**: tải bộ cài cho Windows, macOS, Linux ở trang
+  [Releases](https://github.com/10s3r2604/supodownloadmanager/releases).
+- **Extension**: mở SDM, bấm **Trình duyệt**, chọn trình duyệt rồi bấm **Cài
+  extension**, sau đó làm theo hướng dẫn hiện ra. Chi tiết xem
+  [docs/BROWSER_EXTENSION.md](docs/BROWSER_EXTENSION.md).
+- **Dòng lệnh**: `cargo install --git https://github.com/10s3r2604/supodownloadmanager sdm-cli`
 
 ### Đóng góp
 
