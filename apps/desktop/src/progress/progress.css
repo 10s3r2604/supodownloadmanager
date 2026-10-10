@@ -1,0 +1,226 @@
+/* The per-download progress window. Colors come from the skin tokens. */
+
+.pw {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  padding: 18px 20px 16px;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.pw-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pw-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.pw-icon.done {
+  background: var(--good-soft);
+  color: var(--good);
+}
+
+.pw-title {
+  min-width: 0;
+}
+
+.pw-name {
+  overflow: hidden;
+  color: var(--strong);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pw-url {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pw-progress {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: -6px;
+}
+
+.pw-pct {
+  color: var(--accent-ink);
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+:root[data-skin="neon"] .pw-pct {
+  text-shadow: 0 0 16px rgb(46 229 157 / 0.35);
+}
+
+.pw-status {
+  color: var(--muted);
+}
+
+.pw-status.failed {
+  color: var(--danger);
+}
+
+.pw .segment-map,
+.pw .segment-blocks.big {
+  height: 14px;
+}
+
+.pw .segment-map i {
+  border-right-color: var(--bg);
+}
+
+.pw-stats {
+  display: grid;
+  grid-template-columns: repeat(5, auto);
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.pw-stats dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.pw-stats dd {
+  margin: 1px 0 0;
+  color: var(--strong);
+  font-weight: 600;
+}
+
+.pw-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.pw-conns {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.pw-conns-title {
+  margin-bottom: 8px;
+  color: var(--strong);
+  font-weight: 600;
+}
+
+.pw-conns-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 16px;
+}
+
+.pw-conn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.pw-conn .bar {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--track);
+}
+
+.pw-conn .bar b {
+  display: block;
+  height: 100%;
+  background: var(--info);
+  transition: width 0.5s;
+}
+
+.pw-conn span:last-child {
+  width: 74px;
+  text-align: right;
+}
+
+.pw-dim {
+  color: var(--faint);
+}
+
+.pw-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.pw-space {
+  flex: 1;
+}
+
+.pw-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pw-link:hover {
+  color: var(--strong);
+}
+
+.pw-done {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.pw-done-title {
+  color: var(--good);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.pw-path {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pw-done-size {
+  color: var(--muted);
+}
+
+.pw-gone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: 100%;
+  color: var(--muted);
+}

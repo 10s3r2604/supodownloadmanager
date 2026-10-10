@@ -41,3 +41,22 @@ export function percent(downloaded: number, size: number | null): number | null 
   if (!size) return size === 0 ? 100 : null;
   return Math.min(100, (downloaded / size) * 100);
 }
+
+/** A friendly duration: "45 giây", "6 phút", "1 giờ 20 phút". */
+export function formatHuman(seconds: number | null | undefined, language: Language): string {
+  if (seconds == null || !Number.isFinite(seconds)) return "";
+  const s = Math.max(1, Math.round(seconds));
+  const vi = language === "vi";
+  if (s < 60) return vi ? `${s} giây` : `${s} s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return vi ? `${m} phút` : `${m} min`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  if (vi) return rest ? `${h} giờ ${rest} phút` : `${h} giờ`;
+  return rest ? `${h} h ${rest} min` : `${h} h`;
+}
+
+/** A speed with "/s", e.g. "9,9 MB/s". */
+export function formatSpeed(bytesPerSecond: number, language: Language): string {
+  return `${formatBytes(bytesPerSecond, language)}/s`;
+}

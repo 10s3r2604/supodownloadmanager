@@ -27,6 +27,17 @@ pub fn list_downloads(state: State<'_, AppState>) -> Vec<DownloadView> {
     state.manager.list()
 }
 
+#[tauri::command]
+pub fn get_download(state: State<'_, AppState>, id: u64) -> Option<DownloadView> {
+    state.manager.get(id)
+}
+
+/// Opens the IDM-style progress window of a download.
+#[tauri::command]
+pub async fn open_progress_window(app: AppHandle, id: u64) {
+    crate::windows::open_progress(&app, id);
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeResult {

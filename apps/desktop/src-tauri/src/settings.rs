@@ -28,8 +28,12 @@ pub struct Settings {
     pub proxy: String,
     /// `auto`, `en` or `vi`.
     pub language: String,
-    /// `system`, `light` or `dark`.
+    /// Look of the app: `neon` or `minimal`.
+    pub skin: String,
+    /// `system`, `light` or `dark` (the minimal skin has both).
     pub theme: String,
+    /// Open a progress window for every download that starts, like IDM.
+    pub progress_window: bool,
     /// Keep running in the tray when the window is closed.
     pub close_to_tray: bool,
     /// Show a notification when a download finishes.
@@ -56,7 +60,9 @@ impl Default for Settings {
             speed_limit: 0,
             proxy: String::new(),
             language: "auto".into(),
+            skin: "neon".into(),
             theme: "system".into(),
+            progress_window: true,
             close_to_tray: true,
             notifications: true,
             clipboard_monitor: true,
@@ -90,6 +96,9 @@ impl Settings {
         }
         if !["auto", "en", "vi"].contains(&self.language.as_str()) {
             self.language = "auto".into();
+        }
+        if !["neon", "minimal"].contains(&self.skin.as_str()) {
+            self.skin = "neon".into();
         }
         if !["system", "light", "dark"].contains(&self.theme.as_str()) {
             self.theme = "system".into();
@@ -155,6 +164,7 @@ mod tests {
             max_parallel: 99,
             bridge_port: 80,
             language: "fr".into(),
+            skin: "glossy".into(),
             capture_extensions: vec![".ZIP".into(), "zip".into(), "".into(), "a b".into()],
             ..Settings::default()
         }
@@ -163,6 +173,7 @@ mod tests {
         assert_eq!(settings.max_parallel, 16);
         assert_eq!(settings.bridge_port, DEFAULT_BRIDGE_PORT);
         assert_eq!(settings.language, "auto");
+        assert_eq!(settings.skin, "neon");
         assert_eq!(settings.capture_extensions, ["zip"]);
     }
 

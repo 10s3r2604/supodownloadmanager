@@ -10,6 +10,7 @@ mod settings;
 mod store;
 mod texts;
 mod tray;
+mod windows;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,6 +66,8 @@ pub fn run() {
         .on_window_event(on_window_event)
         .invoke_handler(tauri::generate_handler![
             commands::list_downloads,
+            commands::get_download,
+            commands::open_progress_window,
             commands::probe_url,
             commands::add_download,
             commands::pause_downloads,
@@ -160,6 +163,9 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
 }
 
 fn on_window_event(window: &Window, event: &WindowEvent) {
+    if windows::is_progress_window(window.label()) {
+        return;
+    }
     if let WindowEvent::CloseRequested { api, .. } = event {
         api.prevent_close();
         let app = window.app_handle();
@@ -195,6 +201,12 @@ pub(crate) fn quit(app: &AppHandle) {
 
 fn notify(app: &AppHandle, notice: Notice) {
     let settings = app.state::<AppState>().manager.settings();
+    if let Notice::Started { id } = notice {
+        if settings.progress_window {
+            windows::open_progress(app, id);
+        }
+        return;
+    }
     if !settings.notifications {
         return;
     }
@@ -202,6 +214,7 @@ fn notify(app: &AppHandle, notice: Notice) {
     let (title, body) = match notice {
         Notice::Completed { file_name, .. } => (texts.completed, file_name),
         Notice::Failed { file_name, error } => (texts.failed, format!("{file_name}\n{error}")),
+        Notice::Started { .. } => return,
     };
     if let Err(error) = app.notification().builder().title(title).body(body).show() {
         tracing::warn!(%error, "could not show a notification");

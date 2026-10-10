@@ -96,8 +96,18 @@ pub struct AddRequest {
 /// Something worth telling the user about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notice {
-    Completed { file_name: String, path: PathBuf },
-    Failed { file_name: String, error: String },
+    /// A download began transferring data (also after resuming).
+    Started {
+        id: u64,
+    },
+    Completed {
+        file_name: String,
+        path: PathBuf,
+    },
+    Failed {
+        file_name: String,
+        error: String,
+    },
 }
 
 pub type Notify = Box<dyn Fn(Notice) + Send + Sync>;
@@ -197,6 +207,11 @@ impl Manager {
                 view(record, progress.get(&record.id), stopping)
             })
             .collect()
+    }
+
+    /// One download with live progress.
+    pub fn get(&self, id: u64) -> Option<DownloadView> {
+        self.list().into_iter().find(|d| d.id == id)
     }
 
     /// Where a download is (or will be) saved.
@@ -358,22 +373,29 @@ impl Manager {
 
     /// Starts queued downloads while there are free slots.
     fn schedule(self: &Arc<Self>) {
-        let mut inner = self.lock();
-        if inner.closing {
-            return;
+        let started = {
+            let mut inner = self.lock();
+            if inner.closing {
+                return;
+            }
+            let free = usize::from(inner.settings.max_parallel).saturating_sub(inner.active.len());
+            let next: Vec<u64> = inner
+                .records
+                .iter()
+                .filter(|r| r.state == State::Queued && !inner.active.contains_key(&r.id))
+                .take(free)
+                .map(|r| r.id)
+                .collect();
+            for &id in &next {
+                self.start(&mut inner, id);
+            }
+            self.save(&mut inner);
+            next
+        };
+        // Outside the lock: the receiver may ask the manager for details.
+        for id in started {
+            (self.notify)(Notice::Started { id });
         }
-        let free = usize::from(inner.settings.max_parallel).saturating_sub(inner.active.len());
-        let next: Vec<u64> = inner
-            .records
-            .iter()
-            .filter(|r| r.state == State::Queued && !inner.active.contains_key(&r.id))
-            .take(free)
-            .map(|r| r.id)
-            .collect();
-        for id in next {
-            self.start(&mut inner, id);
-        }
-        self.save(&mut inner);
     }
 
     fn start(self: &Arc<Self>, inner: &mut Inner, id: u64) {
@@ -695,10 +717,13 @@ mod tests {
         assert_eq!(std::fs::read(&expected).unwrap(), DATA);
         assert_eq!(
             fixture.notices.lock().unwrap().as_slice(),
-            [Notice::Completed {
-                file_name: "clip.mp4".into(),
-                path: expected
-            }]
+            [
+                Notice::Started { id },
+                Notice::Completed {
+                    file_name: "clip.mp4".into(),
+                    path: expected
+                }
+            ]
         );
     }
 
@@ -769,7 +794,7 @@ mod tests {
         assert!(failed.error.unwrap().contains("404"));
         assert!(matches!(
             fixture.notices.lock().unwrap().as_slice(),
-            [Notice::Failed { .. }]
+            [Notice::Started { .. }, Notice::Failed { .. }]
         ));
     }
 

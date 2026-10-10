@@ -1,23 +1,33 @@
 import { useState } from "react";
 
-import { type Settings, api } from "../api";
+import { type Settings, type Skin, api } from "../api";
 import { errorText, useI18n } from "../context";
+import type { TextKey } from "../i18n";
 import { Icon } from "../icons";
 import { Dialog } from "./Dialog";
 
 interface Props {
   settings: Settings;
+  /** Called with the draft while the look is being changed, so it shows right away. */
+  onPreview: (settings: Settings | null) => void;
   onClose: () => void;
   onSaved: (settings: Settings) => void;
   onError: (message: string) => void;
 }
 
-type Tab = "general" | "connection" | "browser";
+type Tab = "appearance" | "general" | "connection" | "browser";
 type ProxyMode = "system" | "none" | "custom";
 
-export function SettingsDialog({ settings, onClose, onSaved, onError }: Props) {
+const TABS: { name: Tab; label: TextKey }[] = [
+  { name: "appearance", label: "appearance" },
+  { name: "general", label: "tabGeneral" },
+  { name: "connection", label: "tabConnection" },
+  { name: "browser", label: "tabBrowser" },
+];
+
+export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError }: Props) {
   const { t } = useI18n();
-  const [tab, setTab] = useState<Tab>("general");
+  const [tab, setTab] = useState<Tab>("appearance");
   const [draft, setDraft] = useState<Settings>(settings);
   const [proxyMode, setProxyMode] = useState<ProxyMode>(
     settings.proxy === "" ? "system" : settings.proxy === "none" ? "none" : "custom",
@@ -28,6 +38,13 @@ export function SettingsDialog({ settings, onClose, onSaved, onError }: Props) {
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
+
+  // Try the look out while choosing it.
+  const look = (patch: Partial<Settings>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    onPreview(next);
+  };
 
   async function save() {
     setSaving(true);
@@ -70,7 +87,7 @@ export function SettingsDialog({ settings, onClose, onSaved, onError }: Props) {
       }
     >
       <div className="tabs" role="tablist">
-        {(["general", "connection", "browser"] as const).map((name) => (
+        {TABS.map(({ name, label }) => (
           <button
             key={name}
             type="button"
@@ -79,10 +96,53 @@ export function SettingsDialog({ settings, onClose, onSaved, onError }: Props) {
             className={tab === name ? "tab active" : "tab"}
             onClick={() => setTab(name)}
           >
-            {t(name === "general" ? "tabGeneral" : name === "connection" ? "tabConnection" : "tabBrowser")}
+            {t(label)}
           </button>
         ))}
       </div>
+
+      {tab === "appearance" && (
+        <div className="form">
+          <div className="skins" role="radiogroup" aria-label={t("appearance")}>
+            {(["neon", "minimal"] as Skin[]).map((skin) => (
+              <button
+                key={skin}
+                type="button"
+                role="radio"
+                aria-checked={draft.skin === skin}
+                className={`skin-card${draft.skin === skin ? " on" : ""}`}
+                onClick={() => look({ skin })}
+              >
+                <SkinPreview skin={skin} dark={skin === "minimal" && draft.theme === "dark"} />
+                <strong>{t(skin === "neon" ? "skinNeon" : "skinMinimal")}</strong>
+                <small>{t(skin === "neon" ? "skinNeonHint" : "skinMinimalHint")}</small>
+              </button>
+            ))}
+          </div>
+          <div className="field-grid">
+            <label className={`field${draft.skin === "minimal" ? "" : " disabled"}`}>
+              <span>{t("colorMode")}</span>
+              <select
+                value={draft.theme}
+                disabled={draft.skin !== "minimal"}
+                onChange={(e) => look({ theme: e.target.value as Settings["theme"] })}
+              >
+                <option value="system">{t("sameAsSystem")}</option>
+                <option value="light">{t("themeLight")}</option>
+                <option value="dark">{t("themeDark")}</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>{t("language")}</span>
+              <select value={draft.language} onChange={(e) => look({ language: e.target.value as Settings["language"] })}>
+                <option value="auto">{t("sameAsSystem")}</option>
+                <option value="en">English</option>
+                <option value="vi">Tiếng Việt</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      )}
 
       {tab === "general" && (
         <div className="form">
@@ -97,24 +157,11 @@ export function SettingsDialog({ settings, onClose, onSaved, onError }: Props) {
             </div>
           </div>
           <Check label={t("categoryFolders")} checked={draft.categoryFolders} onChange={(v) => set("categoryFolders", v)} />
-          <div className="field-grid">
-            <label className="field">
-              <span>{t("language")}</span>
-              <select value={draft.language} onChange={(e) => set("language", e.target.value as Settings["language"])}>
-                <option value="auto">{t("sameAsSystem")}</option>
-                <option value="en">English</option>
-                <option value="vi">Tiếng Việt</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>{t("theme")}</span>
-              <select value={draft.theme} onChange={(e) => set("theme", e.target.value as Settings["theme"])}>
-                <option value="system">{t("sameAsSystem")}</option>
-                <option value="light">{t("themeLight")}</option>
-                <option value="dark">{t("themeDark")}</option>
-              </select>
-            </label>
-          </div>
+          <Check
+            label={t("progressWindowSetting")}
+            checked={draft.progressWindow}
+            onChange={(v) => set("progressWindow", v)}
+          />
           <Check label={t("closeToTray")} checked={draft.closeToTray} onChange={(v) => set("closeToTray", v)} />
           <Check label={t("notifications")} checked={draft.notifications} onChange={(v) => set("notifications", v)} />
         </div>
@@ -209,6 +256,43 @@ export function SettingsDialog({ settings, onClose, onSaved, onError }: Props) {
         </div>
       )}
     </Dialog>
+  );
+}
+
+/** A tiny drawing of each look for the picker. */
+function SkinPreview({ skin, dark }: { skin: Skin; dark: boolean }) {
+  if (skin === "neon") {
+    return (
+      <span className="skin-preview neon" aria-hidden>
+        <svg viewBox="0 0 100 26" preserveAspectRatio="none">
+          <path d="M0 22 L12 18 L24 20 L36 11 L48 14 L60 6 L72 9 L84 4 L100 7 L100 26 L0 26 Z" fill="currentColor" opacity="0.18" />
+          <path d="M0 22 L12 18 L24 20 L36 11 L48 14 L60 6 L72 9 L84 4 L100 7" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        </svg>
+        <i style={{ top: 44 }}>
+          <b style={{ width: "72%" }} />
+        </i>
+        <i style={{ top: 54 }}>
+          <b style={{ width: "38%" }} />
+        </i>
+        <i style={{ top: 64 }}>
+          <b style={{ width: "91%" }} />
+        </i>
+      </span>
+    );
+  }
+  return (
+    <span className={`skin-preview minimal${dark ? " dark" : ""}`} aria-hidden>
+      <em />
+      <i>
+        <b style={{ width: "64%" }} />
+      </i>
+      <i>
+        <b style={{ width: "30%" }} />
+      </i>
+      <i>
+        <b style={{ width: "100%" }} />
+      </i>
+    </span>
   );
 }
 

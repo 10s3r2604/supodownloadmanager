@@ -2,7 +2,9 @@
 // (for design work or tests) a simulated backend is used instead.
 
 import { invoke } from "@tauri-apps/api/core";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export type State = "queued" | "downloading" | "paused" | "completed" | "failed";
 export type Category =
@@ -14,6 +16,7 @@ export type Category =
   | "image"
   | "other";
 export type Engine = "chromium" | "firefox";
+export type Skin = "neon" | "minimal";
 export type Headers = [string, string][];
 
 export interface Segment {
@@ -50,7 +53,9 @@ export interface Settings {
   speedLimit: number;
   proxy: string;
   language: "auto" | "en" | "vi";
+  skin: Skin;
   theme: "system" | "light" | "dark";
+  progressWindow: boolean;
   closeToTray: boolean;
   notifications: boolean;
   clipboardMonitor: boolean;
@@ -111,6 +116,12 @@ export interface AppInfo {
 
 export interface Api {
   listDownloads(): Promise<Download[]>;
+  getDownload(id: number): Promise<Download | null>;
+  openProgressWindow(id: number): Promise<void>;
+  /** Controls the window the page runs in. */
+  closeWindow(): Promise<void>;
+  setWindowTitle(title: string): Promise<void>;
+  resizeWindow(width: number, height: number): Promise<void>;
   probe(url: string, headers: Headers): Promise<ProbeResult>;
   add(request: AddRequest): Promise<number>;
   pause(ids: number[]): Promise<void>;
@@ -133,6 +144,11 @@ export interface Api {
 
 const tauriApi: Api = {
   listDownloads: () => invoke("list_downloads"),
+  getDownload: (id) => invoke("get_download", { id }),
+  openProgressWindow: (id) => invoke("open_progress_window", { id }),
+  closeWindow: () => getCurrentWindow().close(),
+  setWindowTitle: (title) => getCurrentWindow().setTitle(title),
+  resizeWindow: (width, height) => getCurrentWindow().setSize(new LogicalSize(width, height)),
   probe: (url, headers) => invoke("probe_url", { url, headers }),
   add: (request) => invoke("add_download", { request }),
   pause: (ids) => invoke("pause_downloads", { ids }),

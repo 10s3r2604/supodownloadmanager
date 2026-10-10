@@ -14,7 +14,9 @@ const settings: Settings = {
   speedLimit: 0,
   proxy: "",
   language: "auto",
-  theme: "system",
+  skin: (new URLSearchParams(location.search).get("skin") as Settings["skin"]) || "neon",
+  theme: (new URLSearchParams(location.search).get("theme") as Settings["theme"]) || "system",
+  progressWindow: true,
   closeToTray: true,
   notifications: true,
   clipboardMonitor: true,
@@ -52,6 +54,7 @@ function folderFor(category: Category) {
 let nextId = 1;
 function make(
   fileName: string,
+  host: string,
   size: number | null,
   state: Download["state"],
   fraction: number,
@@ -61,7 +64,7 @@ function make(
   const category = categoryOf(fileName);
   return {
     id: nextId++,
-    url: `https://downloads.example.com/files/${encodeURIComponent(fileName)}`,
+    url: `https://${host}/files/${encodeURIComponent(fileName)}`,
     fileName,
     path: `${folderFor(category)}/${fileName}`,
     size,
@@ -82,21 +85,22 @@ function make(
 }
 
 const downloads: Download[] = [
-  make("ubuntu-24.04.2-desktop-amd64.iso", 6_114 * MB, "downloading", 0.42, 2),
-  make("Big.Buck.Bunny.1080p.mkv", 691 * MB, "downloading", 0.78, 5),
-  make("VSCodeUserSetup-x64.exe", 104 * MB, "queued", 0, 6),
-  make("Bao-cao-tai-chinh-2025.pdf", 18 * MB, "completed", 1, 60),
-  make("Son Tung M-TP - Album.zip", 245 * MB, "paused", 0.35, 90),
-  make("podcast-episode-128.mp3", 72 * MB, "completed", 1, 240),
-  make("dataset-archive.7z", 3_210 * MB, "failed", 0.12, 1440, {
+  make("ubuntu-24.04.2-desktop-amd64.iso", "releases.ubuntu.com", 6_114 * MB, "downloading", 0.42, 2),
+  make("Big.Buck.Bunny.1080p.mkv", "download.blender.org", 691 * MB, "downloading", 0.78, 5),
+  make("VSCodeUserSetup-x64-1.105.exe", "code.visualstudio.com", 104 * MB, "downloading", 0.18, 6),
+  make("Bao-cao-tai-chinh-2025.pdf", "drive.company.vn", 18 * MB, "completed", 1, 60),
+  make("Son Tung M-TP - Album 2025.zip", "files.example.vn", 245 * MB, "paused", 0.35, 90),
+  make("podcast-episode-128.mp3", "cdn.podcast.fm", 72 * MB, "completed", 1, 60 * 26),
+  make("dataset-archive.7z", "data.example.org", 3_210 * MB, "failed", 0.11, 60 * 27, {
     error: "server responded with 403 Forbidden",
   }),
-  make("wallpaper-4k.png", 9 * MB, "completed", 1, 2880),
+  make("wallpaper-4k-hoi-an.png", "unsplash.com", 9 * MB, "completed", 1, 60 * 50),
 ];
 
 const speeds = new Map<number, number>([
   [1, 9.4 * MB],
   [2, 4.1 * MB],
+  [3, 3.1 * MB],
 ]);
 
 function simulate() {
@@ -155,6 +159,18 @@ export const mockApi: Api = {
   async listDownloads() {
     return clone(downloads);
   },
+  async getDownload(id) {
+    const found = downloads.find((d) => d.id === id);
+    return found ? clone(found) : null;
+  },
+  async openProgressWindow(id) {
+    window.open(`${location.pathname}${location.search}#progress/${id}`, "_blank", "width=500,height=312");
+  },
+  async closeWindow() {},
+  async setWindowTitle(title) {
+    document.title = title;
+  },
+  async resizeWindow() {},
   async probe(url) {
     await wait(400);
     const parsed = new URL(url);
@@ -173,7 +189,7 @@ export const mockApi: Api = {
   },
   async add(request) {
     const name = request.fileName || new URL(request.url).pathname.split("/").pop() || "download";
-    const d = make(name, 1_480 * MB, request.start ? "queued" : "paused", 0, 0, { url: request.url });
+    const d = make(name, new URL(request.url).host, 1_480 * MB, request.start ? "queued" : "paused", 0, 0, { url: request.url });
     if (request.directory) d.path = `${request.directory}/${name}`;
     downloads.push(d);
     return d.id;
