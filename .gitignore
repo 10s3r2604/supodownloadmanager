@@ -1,0 +1,9 @@
+/target
+
+# Partial downloads created while testing
+*.sdm-part
+*.sdm-state
+
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,24 @@
+[package]
+name = "sdm-cli"
+description = "Supo Download Manager on the command line: fast, resumable, multi-connection downloads"
+keywords = ["download", "downloader", "cli", "accelerator", "resume"]
+categories = ["command-line-utilities", "network-programming"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sdm"
+path = "src/main.rs"
+
+[dependencies]
+sdm-core.workspace = true
+anyhow.workspace = true
+clap = { version = "4", features = ["derive", "wrap_help"] }
+indicatif = "0.18"
+tokio = { workspace = true, features = ["signal"] }
+tokio-util.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
