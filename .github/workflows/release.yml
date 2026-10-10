@@ -1,17 +1,24 @@
 name: Release
 
-# Push a tag such as `v0.2.0` to build the desktop app installers, the `sdm`
-# command line tool and the browser extension, and publish them as a GitHub
-# release.
+# Push a tag such as `v0.2.0`, or run this workflow by hand with the version,
+# to build the desktop app installers, the `sdm` command line tool and the
+# browser extension, and publish them as a GitHub release (the release
+# creates the tag when it does not exist yet).
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, e.g. v0.4.0
+        required: true
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   desktop:
@@ -56,8 +63,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: Supo Download Manager ${{ github.ref_name }}
+          tagName: ${{ env.VERSION }}
+          releaseName: Supo Download Manager ${{ env.VERSION }}
           releaseBody: |
             Free, open-source download manager with multi-connection downloads, a video grabber and BitTorrent (magnet links and .torrent files).
 
@@ -108,7 +115,7 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name="sdm-cli-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          name="sdm-cli-${VERSION}-${{ matrix.target }}"
           mkdir "$name"
           cp README.md LICENSE "$name"/
           if [[ "${{ matrix.target }}" == *windows* ]]; then
@@ -137,15 +144,16 @@ jobs:
       - name: Package the browser extension
         run: |
           node extension/build.mjs
-          (cd extension/dist/chromium && zip -r "../../../sdm-extension-chromium-${GITHUB_REF_NAME}.zip" .)
-          (cd extension/dist/firefox && zip -r "../../../sdm-extension-firefox-${GITHUB_REF_NAME}.zip" .)
-          (cd extension/dist/chromium-store && zip -r "../../../sdm-extension-store-chromium-${GITHUB_REF_NAME}.zip" .)
+          (cd extension/dist/chromium && zip -r "../../../sdm-extension-chromium-${VERSION}.zip" .)
+          (cd extension/dist/firefox && zip -r "../../../sdm-extension-firefox-${VERSION}.zip" .)
+          (cd extension/dist/chromium-store && zip -r "../../../sdm-extension-store-chromium-${VERSION}.zip" .)
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.VERSION }}
           files: |
             dist/*
             sdm-extension-*.zip
