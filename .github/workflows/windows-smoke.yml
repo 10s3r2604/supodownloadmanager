@@ -9,6 +9,9 @@ on:
       version:
         description: Release to test, e.g. v0.4.0
         required: true
+      video:
+        description: A video page for the yt-dlp timing job
+        default: https://www.youtube.com/watch?v=aqz-KE-bpKQ
 
 permissions:
   contents: read
@@ -98,3 +101,36 @@ jobs:
         with:
           name: windows-smoke
           path: shots
+
+  # How long yt-dlp takes to read a video page, in the ways SDM can run it.
+  ytdlp-timing:
+    runs-on: windows-latest
+    steps:
+      - name: Time yt-dlp
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $base = "https://github.com/yt-dlp/yt-dlp/releases/latest/download"
+          Invoke-WebRequest "$base/yt-dlp.exe" -OutFile yt-dlp.exe
+          Invoke-WebRequest "$base/yt-dlp_win.zip" -OutFile yt-dlp_win.zip
+          Expand-Archive yt-dlp_win.zip -DestinationPath onedir
+          Invoke-WebRequest "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -OutFile deno.zip
+          Expand-Archive deno.zip -DestinationPath deno
+          $url = "${{ inputs.video }}"
+          $onedir = Get-ChildItem onedir -Recurse -Filter yt-dlp.exe | Select-Object -First 1
+          function Time($label, $exe, $extra) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $out = & $exe -J --no-playlist @extra -- $url 2> err.txt
+            $sw.Stop()
+            $formats = 0
+            try { $formats = ($out | ConvertFrom-Json).formats.Count } catch {}
+            "{0,-28} {1,6:N1} s  formats: {2}  exit: {3}" -f $label, $sw.Elapsed.TotalSeconds, $formats, $LASTEXITCODE
+            Get-Content err.txt | Select-Object -Last 3 | ForEach-Object { "    $_" }
+          }
+          Time "version (single file)" ".\yt-dlp.exe" @("--version")
+          $sw = [Diagnostics.Stopwatch]::StartNew(); & .\yt-dlp.exe --version; "single-file start: {0:N1} s" -f $sw.Elapsed.TotalSeconds
+          $sw = [Diagnostics.Stopwatch]::StartNew(); & $onedir.FullName --version; "folder start: {0:N1} s" -f $sw.Elapsed.TotalSeconds
+          Time "single file" ".\yt-dlp.exe" @()
+          Time "single file + deno" ".\yt-dlp.exe" @("--js-runtimes", "deno:$PWD\deno\deno.exe")
+          Time "folder" $onedir.FullName @()
+          Time "folder + deno" $onedir.FullName @("--js-runtimes", "deno:$PWD\deno\deno.exe")
