@@ -15,6 +15,7 @@ use crate::category::Category;
 use crate::manager::{AddRequest, DownloadView, State as DownloadState};
 use crate::settings::Settings;
 use crate::tray;
+use crate::windows::WhenDone;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -36,6 +37,17 @@ pub fn get_download(state: State<'_, AppState>, id: u64) -> Option<DownloadView>
 #[tauri::command]
 pub async fn open_progress_window(app: AppHandle, id: u64) {
     crate::windows::open_progress(&app, id);
+}
+
+/// What happens when a download finishes.
+#[tauri::command]
+pub fn get_when_done(state: State<'_, AppState>, id: u64) -> WhenDone {
+    state.when_done.get(id, &state.manager.settings())
+}
+
+#[tauri::command]
+pub fn set_when_done(state: State<'_, AppState>, id: u64, choice: WhenDone) {
+    state.when_done.set(id, choice);
 }
 
 #[derive(Serialize)]

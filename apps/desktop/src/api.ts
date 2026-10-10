@@ -17,6 +17,7 @@ export type Category =
   | "other";
 export type Engine = "chromium" | "firefox";
 export type Skin = "neon" | "minimal";
+export type ProgressStyle = "graph" | "ring" | "classic";
 export type Headers = [string, string][];
 
 export interface Segment {
@@ -38,6 +39,8 @@ export interface Download {
   error: string | null;
   addedAt: number;
   completedAt: number | null;
+  /** Milliseconds spent transferring data. */
+  elapsed: number;
   speed: number;
   eta: number | null;
   connections: number;
@@ -56,6 +59,8 @@ export interface Settings {
   skin: Skin;
   theme: "system" | "light" | "dark";
   progressWindow: boolean;
+  progressStyle: ProgressStyle;
+  completeDialog: boolean;
   closeToTray: boolean;
   notifications: boolean;
   clipboardMonitor: boolean;
@@ -108,6 +113,12 @@ export interface InstallInfo {
   extensionsPage: string;
 }
 
+/** What happens when a download finishes. */
+export interface WhenDone {
+  showDialog: boolean;
+  openFile: boolean;
+}
+
 export interface AppInfo {
   version: string;
   bridgePort: number;
@@ -118,8 +129,11 @@ export interface Api {
   listDownloads(): Promise<Download[]>;
   getDownload(id: number): Promise<Download | null>;
   openProgressWindow(id: number): Promise<void>;
+  getWhenDone(id: number): Promise<WhenDone>;
+  setWhenDone(id: number, choice: WhenDone): Promise<void>;
   /** Controls the window the page runs in. */
   closeWindow(): Promise<void>;
+  minimizeWindow(): Promise<void>;
   setWindowTitle(title: string): Promise<void>;
   resizeWindow(width: number, height: number): Promise<void>;
   probe(url: string, headers: Headers): Promise<ProbeResult>;
@@ -146,9 +160,20 @@ const tauriApi: Api = {
   listDownloads: () => invoke("list_downloads"),
   getDownload: (id) => invoke("get_download", { id }),
   openProgressWindow: (id) => invoke("open_progress_window", { id }),
+  getWhenDone: (id) => invoke("get_when_done", { id }),
+  setWhenDone: (id, choice) => invoke("set_when_done", { id, choice }),
   closeWindow: () => getCurrentWindow().close(),
+  minimizeWindow: () => getCurrentWindow().minimize(),
   setWindowTitle: (title) => getCurrentWindow().setTitle(title),
-  resizeWindow: (width, height) => getCurrentWindow().setSize(new LogicalSize(width, height)),
+  async resizeWindow(width, height) {
+    // Pin the size with min = max: GTK will not shrink a window that is not resizable.
+    const window = getCurrentWindow();
+    const size = new LogicalSize(width, height);
+    await window.setMaxSize(null);
+    await window.setMinSize(size);
+    await window.setMaxSize(size);
+    await window.setSize(size);
+  },
   probe: (url, headers) => invoke("probe_url", { url, headers }),
   add: (request) => invoke("add_download", { request }),
   pause: (ids) => invoke("pause_downloads", { ids }),

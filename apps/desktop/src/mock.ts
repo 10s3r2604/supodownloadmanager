@@ -1,7 +1,7 @@
 // A simulated backend so the interface can be developed and tested in a
 // normal browser (`npm run dev`). It is never used inside the real app.
 
-import type { Api, Browser, Category, Download, Settings } from "./api";
+import type { Api, Browser, Category, Download, Settings, WhenDone } from "./api";
 
 const MB = 1024 * 1024;
 const now = Date.now();
@@ -17,6 +17,8 @@ const settings: Settings = {
   skin: (new URLSearchParams(location.search).get("skin") as Settings["skin"]) || "neon",
   theme: (new URLSearchParams(location.search).get("theme") as Settings["theme"]) || "system",
   progressWindow: true,
+  progressStyle: (new URLSearchParams(location.search).get("pstyle") as Settings["progressStyle"]) || "graph",
+  completeDialog: true,
   closeToTray: true,
   notifications: true,
   clipboardMonitor: true,
@@ -75,6 +77,7 @@ function make(
     error: null,
     addedAt: now - minutesAgo * 60_000,
     completedAt: state === "completed" ? now - (minutesAgo - 3) * 60_000 : null,
+    elapsed: Math.round(((size ?? 40 * MB) * fraction) / (11 * MB)) * 1000,
     speed: 0,
     eta: null,
     connections: 0,
@@ -97,6 +100,8 @@ const downloads: Download[] = [
   make("wallpaper-4k-hoi-an.png", "unsplash.com", 9 * MB, "completed", 1, 60 * 50),
 ];
 
+const whenDone = new Map<number, WhenDone>();
+
 const speeds = new Map<number, number>([
   [1, 9.4 * MB],
   [2, 4.1 * MB],
@@ -110,6 +115,7 @@ function simulate() {
     const speed = Math.max(0, base * (0.85 + Math.random() * 0.3));
     const size = d.size ?? Infinity;
     d.downloaded = Math.min(size, d.downloaded + speed / 2);
+    d.elapsed += 500;
     d.speed = Math.round(speed);
     d.connections = 8;
     d.eta = d.size ? Math.ceil((d.size - d.downloaded) / speed) : null;
@@ -164,9 +170,16 @@ export const mockApi: Api = {
     return found ? clone(found) : null;
   },
   async openProgressWindow(id) {
-    window.open(`${location.pathname}${location.search}#progress/${id}`, "_blank", "width=500,height=312");
+    window.open(`${location.pathname}${location.search}#progress/${id}`, "_blank", "width=480,height=320");
+  },
+  async getWhenDone(id) {
+    return whenDone.get(id) ?? { showDialog: settings.completeDialog, openFile: false };
+  },
+  async setWhenDone(id, choice) {
+    whenDone.set(id, choice);
   },
   async closeWindow() {},
+  async minimizeWindow() {},
   async setWindowTitle(title) {
     document.title = title;
   },

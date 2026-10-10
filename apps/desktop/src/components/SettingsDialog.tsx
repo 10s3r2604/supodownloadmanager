@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { type Settings, type Skin, api } from "../api";
+import { type ProgressStyle, type Settings, type Skin, api } from "../api";
 import { errorText, useI18n } from "../context";
 import type { TextKey } from "../i18n";
 import { Icon } from "../icons";
@@ -17,6 +17,12 @@ interface Props {
 
 type Tab = "appearance" | "general" | "connection" | "browser";
 type ProxyMode = "system" | "none" | "custom";
+
+const PROGRESS_STYLES: { style: ProgressStyle; label: TextKey; hint: TextKey }[] = [
+  { style: "graph", label: "styleGraph", hint: "styleGraphHint" },
+  { style: "ring", label: "styleRing", hint: "styleRingHint" },
+  { style: "classic", label: "styleClassic", hint: "styleClassicHint" },
+];
 
 const TABS: { name: Tab; label: TextKey }[] = [
   { name: "appearance", label: "appearance" },
@@ -141,6 +147,39 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
               </select>
             </label>
           </div>
+
+          <div className="field">
+            <span>{t("progressStyleTitle")}</span>
+            <div className="styles" role="radiogroup" aria-label={t("progressStyleTitle")}>
+              {PROGRESS_STYLES.map(({ style, label, hint }) => (
+                <button
+                  key={style}
+                  type="button"
+                  role="radio"
+                  aria-checked={draft.progressStyle === style}
+                  className={`style-card${draft.progressStyle === style ? " on" : ""}`}
+                  onClick={() => set("progressStyle", style)}
+                >
+                  <StylePreview style={style} />
+                  <strong>
+                    {t(label)}
+                    {style === "graph" && <em>{t("defaultLabel")}</em>}
+                  </strong>
+                  <small>{t(hint)}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+          <Check
+            label={t("progressWindowSetting")}
+            checked={draft.progressWindow}
+            onChange={(v) => set("progressWindow", v)}
+          />
+          <Check
+            label={t("completeDialogSetting")}
+            checked={draft.completeDialog}
+            onChange={(v) => set("completeDialog", v)}
+          />
         </div>
       )}
 
@@ -157,11 +196,6 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
             </div>
           </div>
           <Check label={t("categoryFolders")} checked={draft.categoryFolders} onChange={(v) => set("categoryFolders", v)} />
-          <Check
-            label={t("progressWindowSetting")}
-            checked={draft.progressWindow}
-            onChange={(v) => set("progressWindow", v)}
-          />
           <Check label={t("closeToTray")} checked={draft.closeToTray} onChange={(v) => set("closeToTray", v)} />
           <Check label={t("notifications")} checked={draft.notifications} onChange={(v) => set("notifications", v)} />
         </div>
@@ -291,6 +325,55 @@ function SkinPreview({ skin, dark }: { skin: Skin; dark: boolean }) {
       </i>
       <i>
         <b style={{ width: "100%" }} />
+      </i>
+    </span>
+  );
+}
+
+/** A tiny drawing of each progress window style. */
+function StylePreview({ style }: { style: ProgressStyle }) {
+  if (style === "graph") {
+    return (
+      <span className="style-preview graph" aria-hidden>
+        <svg viewBox="0 0 100 34" preserveAspectRatio="none">
+          <path d="M0 30 L10 22 L20 25 L32 16 L44 19 L56 12 L68 15 L80 9 L90 12 L100 10 L100 34 L0 34 Z" fill="currentColor" opacity="0.2" />
+          <path d="M0 30 L10 22 L20 25 L32 16 L44 19 L56 12 L68 15 L80 9 L90 12 L100 10" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        </svg>
+        <i>
+          {[0.9, 0.5, 0.7, 0.4].map((v, i) => (
+            <b key={i}>
+              <u style={{ width: `${v * 100}%` }} />
+            </b>
+          ))}
+        </i>
+      </span>
+    );
+  }
+  if (style === "ring") {
+    return (
+      <span className="style-preview ring" aria-hidden>
+        <svg viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="15" fill="none" strokeWidth="5" className="track" />
+          <circle cx="20" cy="20" r="15" fill="none" strokeWidth="5" strokeDasharray="55 100" strokeLinecap="round" transform="rotate(-90 20 20)" stroke="currentColor" />
+        </svg>
+        <span>
+          <em />
+          <em />
+          <em />
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className="style-preview classic" aria-hidden>
+      {[60, 45, 52].map((w, i) => (
+        <span key={i}>
+          <em />
+          <em style={{ width: `${w}%` }} />
+        </span>
+      ))}
+      <i>
+        <b />
       </i>
     </span>
   );

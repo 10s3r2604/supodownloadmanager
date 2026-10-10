@@ -34,6 +34,10 @@ pub struct Settings {
     pub theme: String,
     /// Open a progress window for every download that starts, like IDM.
     pub progress_window: bool,
+    /// Look of the progress window: `graph`, `ring` or `classic`.
+    pub progress_style: String,
+    /// Show a "download complete" dialog when a download finishes.
+    pub complete_dialog: bool,
     /// Keep running in the tray when the window is closed.
     pub close_to_tray: bool,
     /// Show a notification when a download finishes.
@@ -63,6 +67,8 @@ impl Default for Settings {
             skin: "neon".into(),
             theme: "system".into(),
             progress_window: true,
+            progress_style: "graph".into(),
+            complete_dialog: true,
             close_to_tray: true,
             notifications: true,
             clipboard_monitor: true,
@@ -99,6 +105,9 @@ impl Settings {
         }
         if !["neon", "minimal"].contains(&self.skin.as_str()) {
             self.skin = "neon".into();
+        }
+        if !["graph", "ring", "classic"].contains(&self.progress_style.as_str()) {
+            self.progress_style = "graph".into();
         }
         if !["system", "light", "dark"].contains(&self.theme.as_str()) {
             self.theme = "system".into();
@@ -165,6 +174,7 @@ mod tests {
             bridge_port: 80,
             language: "fr".into(),
             skin: "glossy".into(),
+            progress_style: "fancy".into(),
             capture_extensions: vec![".ZIP".into(), "zip".into(), "".into(), "a b".into()],
             ..Settings::default()
         }
@@ -174,6 +184,7 @@ mod tests {
         assert_eq!(settings.bridge_port, DEFAULT_BRIDGE_PORT);
         assert_eq!(settings.language, "auto");
         assert_eq!(settings.skin, "neon");
+        assert_eq!(settings.progress_style, "graph");
         assert_eq!(settings.capture_extensions, ["zip"]);
     }
 

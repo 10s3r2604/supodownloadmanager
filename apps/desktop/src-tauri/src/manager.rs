@@ -47,6 +47,9 @@ pub struct Record {
     pub error: Option<String>,
     pub added_at: u64,
     pub completed_at: Option<u64>,
+    /// Time spent transferring data, over all sessions.
+    #[serde(default)]
+    pub elapsed_ms: u64,
 }
 
 /// What the user interface shows for a download.
@@ -65,6 +68,8 @@ pub struct DownloadView {
     pub error: Option<String>,
     pub added_at: u64,
     pub completed_at: Option<u64>,
+    /// Milliseconds spent transferring data so far.
+    pub elapsed: u64,
     /// Bytes per second.
     pub speed: u64,
     /// Seconds left.
@@ -101,6 +106,7 @@ pub enum Notice {
         id: u64,
     },
     Completed {
+        id: u64,
         file_name: String,
         path: PathBuf,
     },
@@ -131,6 +137,7 @@ struct Inner {
 
 struct Active {
     control: DownloadControl,
+    since: Instant,
     stopping: bool,
     /// `Some(delete_file)` when the download should disappear from the list.
     remove: Option<bool>,
@@ -203,8 +210,13 @@ impl Manager {
             .records
             .iter()
             .map(|record| {
-                let stopping = inner.active.get(&record.id).is_some_and(|a| a.stopping);
-                view(record, progress.get(&record.id), stopping)
+                let active = inner.active.get(&record.id);
+                let live = Live {
+                    progress: progress.get(&record.id),
+                    stopping: active.is_some_and(|a| a.stopping),
+                    running_for: active.map_or(Duration::ZERO, |a| a.since.elapsed()),
+                };
+                view(record, &live)
             })
             .collect()
     }
@@ -274,6 +286,7 @@ impl Manager {
                 error: None,
                 added_at: now_ms(),
                 completed_at: None,
+                elapsed_ms: 0,
             });
             inner.dirty = true;
             self.save(&mut inner);
@@ -421,6 +434,7 @@ impl Manager {
             id,
             Active {
                 control: handle.control(),
+                since: Instant::now(),
                 stopping: false,
                 remove: None,
             },
@@ -450,6 +464,7 @@ impl Manager {
                 }
                 (Some(index), None) => {
                     let record = &mut inner.records[index];
+                    record.elapsed_ms += millis(active.since.elapsed());
                     record.apply(&progress);
                     record.finish(result)
                 }
@@ -545,6 +560,7 @@ impl Record {
                 self.completed_at = Some(now_ms());
                 self.headers.clear();
                 Some(Notice::Completed {
+                    id: self.id,
                     file_name: self.file_name.clone(),
                     path,
                 })
@@ -565,7 +581,15 @@ impl Record {
     }
 }
 
-fn view(record: &Record, progress: Option<&Progress>, stopping: bool) -> DownloadView {
+/// What is going on with a running download right now.
+struct Live<'a> {
+    progress: Option<&'a Progress>,
+    stopping: bool,
+    running_for: Duration,
+}
+
+fn view(record: &Record, live: &Live) -> DownloadView {
+    let progress = live.progress;
     DownloadView {
         id: record.id,
         url: record.url.clone(),
@@ -579,11 +603,12 @@ fn view(record: &Record, progress: Option<&Progress>, stopping: bool) -> Downloa
         error: record.error.clone(),
         added_at: record.added_at,
         completed_at: record.completed_at,
+        elapsed: record.elapsed_ms + millis(live.running_for),
         speed: progress.map_or(0, |p| p.speed),
         eta: progress.and_then(Progress::eta).map(|eta| eta.as_secs()),
         connections: progress.map_or(0, |p| p.connections),
         segments: progress.map(|p| p.segments.clone()).unwrap_or_default(),
-        stopping,
+        stopping: live.stopping,
     }
 }
 
@@ -602,6 +627,10 @@ fn discard_files(record: &Record, delete_file: bool) {
     {
         tracing::warn!(%error, path = %record.path.display(), "could not move the file to the trash");
     }
+}
+
+fn millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn name_from_url(url: &url::Url) -> String {
@@ -720,6 +749,7 @@ mod tests {
             [
                 Notice::Started { id },
                 Notice::Completed {
+                    id,
                     file_name: "clip.mp4".into(),
                     path: expected
                 }

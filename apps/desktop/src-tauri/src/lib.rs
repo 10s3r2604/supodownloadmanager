@@ -21,6 +21,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager as _, RunEvent, Window, WindowEvent};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::bridge::{Bridge, BridgeConfig, BrowserDownload, Handler};
 use crate::manager::{AddRequest, Manager, Notice};
@@ -37,6 +38,8 @@ pub struct AppState {
     pub bridge_port: u16,
     pub bridge_error: Mutex<Option<String>>,
     pub data_dir: PathBuf,
+    /// What to do when running downloads finish, chosen in their windows.
+    pub when_done: windows::WhenDoneChoices,
     quitting: AtomicBool,
 }
 
@@ -68,6 +71,8 @@ pub fn run() {
             commands::list_downloads,
             commands::get_download,
             commands::open_progress_window,
+            commands::get_when_done,
+            commands::set_when_done,
             commands::probe_url,
             commands::add_download,
             commands::pause_downloads,
@@ -133,6 +138,7 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         bridge_port: settings.bridge_port,
         bridge_error: Mutex::new(None),
         data_dir,
+        when_done: windows::WhenDoneChoices::default(),
         quitting: AtomicBool::new(false),
     });
     tray::create(app, settings.resolved_language())?;
@@ -200,22 +206,40 @@ pub(crate) fn quit(app: &AppHandle) {
 }
 
 fn notify(app: &AppHandle, notice: Notice) {
-    let settings = app.state::<AppState>().manager.settings();
-    if let Notice::Started { id } = notice {
-        if settings.progress_window {
-            windows::open_progress(app, id);
+    let state = app.state::<AppState>();
+    let settings = state.manager.settings();
+    let texts = texts::texts(settings.resolved_language());
+    let (title, body) = match notice {
+        Notice::Started { id } => {
+            if settings.progress_window {
+                windows::open_progress(app, id);
+            }
+            return;
         }
-        return;
-    }
+        Notice::Completed {
+            id,
+            file_name,
+            path,
+        } => {
+            let when_done = state.when_done.take(id, &settings);
+            if when_done.open_file
+                && let Err(error) = app.opener().open_path(path.to_string_lossy(), None::<&str>)
+            {
+                tracing::warn!(%error, "could not open the finished file");
+            }
+            if when_done.show_dialog {
+                // The dialog says it all; no need for a notification too.
+                windows::open_progress(app, id);
+                return;
+            }
+            windows::close_progress(app, id);
+            (texts.completed, file_name)
+        }
+        Notice::Failed { file_name, error } => (texts.failed, format!("{file_name}\n{error}")),
+    };
     if !settings.notifications {
         return;
     }
-    let texts = texts::texts(settings.resolved_language());
-    let (title, body) = match notice {
-        Notice::Completed { file_name, .. } => (texts.completed, file_name),
-        Notice::Failed { file_name, error } => (texts.failed, format!("{file_name}\n{error}")),
-        Notice::Started { .. } => return,
-    };
     if let Err(error) = app.notification().builder().title(title).body(body).show() {
         tracing::warn!(%error, "could not show a notification");
     }
