@@ -1,7 +1,8 @@
 // A simulated backend so the interface can be developed and tested in a
 // normal browser (`npm run dev`). It is never used inside the real app.
 
-import type { Api, Browser, Category, Download, MediaInfo, MediaOption, Settings, ToolStatus, WhenDone } from "./api";
+import type { Api, Browser, Category, Download, MediaInfo, MediaOption, Settings, ToolStatus, TorrentFile, TorrentInfo, WhenDone } from "./api";
+import { categoryOf } from "./model";
 
 const MB = 1024 * 1024;
 const now = Date.now();
@@ -13,7 +14,7 @@ const settings: Settings = {
   maxParallel: 3,
   speedLimit: 0,
   proxy: "",
-  language: "auto",
+  language: (new URLSearchParams(location.search).get("lang") as Settings["language"]) ?? "auto",
   skin: (new URLSearchParams(location.search).get("skin") as Settings["skin"]) || "neon",
   theme: (new URLSearchParams(location.search).get("theme") as Settings["theme"]) || "system",
   progressWindow: true,
@@ -25,19 +26,11 @@ const settings: Settings = {
   browserIntegration: true,
   confirmBrowserDownloads: true,
   bridgePort: 17360,
-  captureExtensions: ["7z", "exe", "iso", "mkv", "mp3", "mp4", "msi", "pdf", "rar", "zip"],
+  captureExtensions: ["7z", "exe", "iso", "mkv", "mp3", "mp4", "msi", "pdf", "rar", "torrent", "zip"],
+  seedRatio: 100,
+  uploadLimit: 0,
+  torrentPort: 0,
 };
-
-function categoryOf(name: string): Category {
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  if (["mp4", "mkv", "webm", "avi", "mov"].includes(ext)) return "video";
-  if (["mp3", "flac", "m4a", "wav"].includes(ext)) return "music";
-  if (["pdf", "docx", "xlsx", "epub", "txt"].includes(ext)) return "document";
-  if (["zip", "rar", "7z", "iso", "gz"].includes(ext)) return "compressed";
-  if (["exe", "msi", "dmg", "deb", "apk"].includes(ext)) return "program";
-  if (["png", "jpg", "jpeg", "webp"].includes(ext)) return "image";
-  return "other";
-}
 
 function folderFor(category: Category) {
   const folders: Record<Category, string> = {
@@ -85,12 +78,35 @@ function make(
     stopping: false,
     media: false,
     processing: false,
+    torrent: false,
+    seeding: false,
+    checking: false,
+    uploadSpeed: 0,
+    uploaded: 0,
     ...extra,
   };
 }
 
+const magnet = (hash: string, name: string) => `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(name)}`;
+
+/** The files of the example torrent (Blender's open movies, free to share). */
+const openMovies: TorrentFile[] = [
+  { index: 0, path: "Big Buck Bunny/Big Buck Bunny.mp4", size: 276_134_947 },
+  { index: 1, path: "Big Buck Bunny/Big Buck Bunny.en.srt", size: 140 },
+  { index: 2, path: "Big Buck Bunny/poster.jpg", size: 310_380 },
+  { index: 3, path: "Sintel/Sintel.mp4", size: 129_241_752 },
+  { index: 4, path: "Sintel/Sintel.en.srt", size: 1_652 },
+  { index: 5, path: "Sintel/Sintel.vi.srt", size: 1_738 },
+  { index: 6, path: "Tears of Steel/tears_of_steel_1080p.mkv", size: 571_694_486 },
+  { index: 7, path: "README.txt", size: 2_048 },
+];
+
 const downloads: Download[] = [
   make("ubuntu-24.04.2-desktop-amd64.iso", "releases.ubuntu.com", 6_114 * MB, "downloading", 0.42, 2),
+  make("debian-13.1.0-amd64-DVD-1.iso", "", 3_978 * MB, "downloading", 0.27, 3, {
+    url: magnet("6a9759bffd5c0af65319979fb7832189f4f3c35d", "debian-13.1.0-amd64-DVD-1.iso"),
+    torrent: true,
+  }),
   make("Big.Buck.Bunny.1080p.mkv", "download.blender.org", 691 * MB, "downloading", 0.78, 5),
   make("VSCodeUserSetup-x64-1.105.exe", "code.visualstudio.com", 104 * MB, "downloading", 0.18, 6),
   make("Bao-cao-tai-chinh-2025.pdf", "drive.company.vn", 18 * MB, "completed", 1, 60),
@@ -100,14 +116,23 @@ const downloads: Download[] = [
     error: "server responded with 403 Forbidden",
   }),
   make("wallpaper-4k-hoi-an.png", "unsplash.com", 9 * MB, "completed", 1, 60 * 50),
+  make("Sintel", "", 129 * MB, "completed", 1, 45, {
+    url: magnet("08ada5a7a6183aae1e09d831df6748d566095a10", "Sintel"),
+    torrent: true,
+    seeding: true,
+    uploaded: 61 * MB,
+    category: "video",
+    path: "/home/demo/Downloads/Video/Sintel",
+  }),
 ];
 
 const whenDone = new Map<number, WhenDone>();
 
 const speeds = new Map<number, number>([
   [1, 9.4 * MB],
-  [2, 4.1 * MB],
-  [3, 3.1 * MB],
+  [2, 5.2 * MB],
+  [3, 4.1 * MB],
+  [4, 3.1 * MB],
 ]);
 
 function simulate() {
@@ -119,13 +144,21 @@ function simulate() {
     d.downloaded = Math.min(size, d.downloaded + speed / 2);
     d.elapsed += 500;
     d.speed = Math.round(speed);
-    d.connections = 8;
+    d.connections = d.torrent ? 24 + Math.round(Math.random() * 6) : 8;
     d.eta = d.size ? Math.ceil((d.size - d.downloaded) / speed) : null;
     d.segments = segmentsFor(d);
+    if (d.torrent) {
+      d.uploadSpeed = Math.round(380_000 * (0.7 + Math.random() * 0.6));
+      d.uploaded += d.uploadSpeed / 2;
+    }
     if (d.size && d.downloaded >= d.size) {
       Object.assign(d, { state: "completed", speed: 0, eta: null, connections: 0, segments: [] });
       d.completedAt = Date.now();
     }
+  }
+  for (const d of downloads.filter((d) => d.seeding)) {
+    d.uploadSpeed = Math.round(620_000 * (0.6 + Math.random() * 0.8));
+    d.uploaded += d.uploadSpeed / 2;
   }
   const running = downloads.filter((d) => d.state === "downloading").length;
   const queued = downloads.filter((d) => d.state === "queued");
@@ -192,35 +225,79 @@ function option(id: string, kind: MediaOption["kind"], height: number | null, ex
 
 function mediaInfo(pageUrl: string): MediaInfo {
   const youtube = /youtu/.test(pageUrl);
+  if (!youtube) {
+    return {
+      title: "Big Buck Bunny (2008)",
+      thumbnail: null,
+      duration: 596,
+      site: "HTML5MediaEmbed",
+      url: pageUrl,
+      options: [
+        option("v1080", "video", 1080, "mp4", 276 * MB, false, { fps: 60 }),
+        option("v720", "video", 720, "mp4", 164 * MB, false),
+        option("v480", "video", 480, "mp4", 98 * MB, false),
+        option("mp3", "audio", null, "mp3", 9.5 * MB, true, { audio: "mp3", acodec: "MP3" }),
+      ],
+      default: "v1080",
+      videoDir: `${settings.downloadDir}/Video`,
+      audioDir: `${settings.downloadDir}/Music`,
+    };
+  }
   return {
-    title: youtube ? "Sơn Tùng M-TP | Chúng Ta Của Tương Lai | Official Music Video" : "Phim thử nghiệm SDM",
+    title: "Sơn Tùng M-TP | Chúng Ta Của Tương Lai | Official Music Video",
     thumbnail: null,
-    duration: youtube ? 263 : 20,
-    site: youtube ? "Youtube" : "HTML5MediaEmbed",
+    duration: 263,
+    site: "Youtube",
     url: pageUrl,
-    options: youtube
-      ? [
-          option("v2160", "video", 2160, "webm", 412 * MB, true),
-          option("v1440", "video", 1440, "webm", 205 * MB, true),
-          option("v1080", "video", 1080, "mp4", 96 * MB, true, { fps: 60 }),
-          option("v720", "video", 720, "mp4", 48 * MB, true),
-          option("v480", "video", 480, "mp4", 22 * MB, true),
-          option("v360", "video", 360, "mp4", 14 * MB, false),
-          option("m4a", "audio", null, "m4a", 4.2 * MB, false),
-          option("mp3", "audio", null, "mp3", 6.3 * MB, true, { audio: "mp3", acodec: "MP3" }),
-        ]
-      : [option("best", "video", null, "mp4", 6.7 * MB, false), option("mp3", "audio", null, "mp3", 0.5 * MB, true, { audio: "mp3", acodec: "MP3" })],
-    default: youtube ? "v1080" : "best",
+    options: [
+      option("v2160", "video", 2160, "webm", 412 * MB, true),
+      option("v1440", "video", 1440, "webm", 205 * MB, true),
+      option("v1080", "video", 1080, "mp4", 96 * MB, true, { fps: 60 }),
+      option("v720", "video", 720, "mp4", 48 * MB, true),
+      option("v480", "video", 480, "mp4", 22 * MB, true),
+      option("v360", "video", 360, "mp4", 14 * MB, false),
+      option("m4a", "audio", null, "m4a", 4.2 * MB, false),
+      option("mp3", "audio", null, "mp3", 6.3 * MB, true, { audio: "mp3", acodec: "MP3" }),
+    ],
+    default: "v1080",
     videoDir: `${settings.downloadDir}/Video`,
     audioDir: `${settings.downloadDir}/Music`,
   };
+}
+
+function torrentInfo(): TorrentInfo {
+  return {
+    infoHash: "c9e15763f722f23e98a29decdfae341b98d53056",
+    name: "Blender Open Movies",
+    size: openMovies.reduce((sum, f) => sum + f.size, 0),
+    files: openMovies,
+    private: false,
+    comment: "Big Buck Bunny, Sintel and Tears of Steel (CC BY, Blender Foundation)",
+    pieces: 3754,
+    pieceLength: 262_144,
+    directory: `${settings.downloadDir}/Video`,
+    existing: null,
+  };
+}
+
+if (query.get("torrent")) {
+  setTimeout(() => {
+    window.dispatchEvent(
+      new CustomEvent("sdm:torrent-prompt", {
+        detail: { link: magnet("c9e15763f722f23e98a29decdfae341b98d53056", "Blender Open Movies") },
+      }),
+    );
+  }, 800);
 }
 
 if (query.get("media")) {
   setTimeout(() => {
     window.dispatchEvent(
       new CustomEvent("sdm:media-prompt", {
-        detail: { pageUrl: "https://www.youtube.com/watch?v=zoEtcR5EW08", title: "YouTube" },
+        detail:
+          query.get("media") === "generic"
+            ? { pageUrl: "https://media.example.org/films/big-buck-bunny", title: "Big Buck Bunny" }
+            : { pageUrl: "https://www.youtube.com/watch?v=zoEtcR5EW08", title: "YouTube" },
       }),
     );
   }, 800);
@@ -323,7 +400,7 @@ export const mockApi: Api = {
   },
   async openExtensionFolder() {},
   async appInfo() {
-    return { version: "0.3.0", bridgePort: 17360, bridgeError: null };
+    return { version: "0.4.0", bridgePort: 17360, bridgeError: null };
   },
   async onAddPrompt(handler) {
     const listener = (event: Event) => handler((event as CustomEvent).detail);
@@ -368,6 +445,50 @@ export const mockApi: Api = {
     const listener = (event: Event) => handler((event as CustomEvent).detail);
     window.addEventListener("sdm:media-prompt", listener);
     return () => window.removeEventListener("sdm:media-prompt", listener);
+  },
+  async pickTorrentFile() {
+    return "/home/demo/Downloads/blender-open-movies.torrent";
+  },
+  async inspectTorrent(source) {
+    await wait(source.path ? 300 : query.get("slowtorrent") ? 60_000 : 1400);
+    if (/broken/.test(source.link ?? source.path ?? "")) throw new Error("no one sharing this torrent was found");
+    return torrentInfo();
+  },
+  async cancelTorrentInspect() {},
+  async addTorrent(request) {
+    const info = torrentInfo();
+    const files = request.files ? info.files.filter((f) => request.files?.includes(f.index)) : info.files;
+    const size = files.reduce((sum, f) => sum + f.size, 0);
+    const d = make(info.name, "", size, request.start ? "downloading" : "paused", 0, 0, {
+      url: magnet(info.infoHash, info.name),
+      torrent: true,
+      category: "video",
+      path: `${request.directory ?? info.directory}/${info.name}`,
+    });
+    downloads.push(d);
+    return d.id;
+  },
+  async torrentFiles(id) {
+    const d = downloads.find((x) => x.id === id);
+    if (!d?.torrent) return [];
+    if (d.fileName === "Sintel") return openMovies.filter((f) => f.path.startsWith("Sintel/"));
+    if (d.fileName.endsWith(".iso")) return [{ index: 0, path: d.fileName, size: d.size ?? 0 }];
+    return openMovies;
+  },
+  async takePendingTorrents() {
+    return [];
+  },
+  async magnetHandler() {
+    return { supported: true, registered: query.get("magnet") === "1" };
+  },
+  async registerMagnetHandler() {},
+  async onTorrentPrompt(handler) {
+    const listener = (event: Event) => handler((event as CustomEvent).detail);
+    window.addEventListener("sdm:torrent-prompt", listener);
+    return () => window.removeEventListener("sdm:torrent-prompt", listener);
+  },
+  async onFileDrop() {
+    return () => {};
   },
   async onToolProgress(handler) {
     const listener = (event: Event) => handler((event as CustomEvent).detail);

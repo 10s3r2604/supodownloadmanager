@@ -34,7 +34,23 @@ export function matches(filter: Filter, d: Download): boolean {
   }
 }
 
+const EXTENSIONS: [Category, string[]][] = [
+  ["video", ["mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "3gp", "ts", "m2ts", "vob", "rmvb"]],
+  ["music", ["mp3", "wav", "flac", "aac", "ogg", "oga", "m4a", "wma", "opus", "aiff", "ape"]],
+  ["document", ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "txt", "csv", "epub", "mobi"]],
+  ["compressed", ["zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "zst", "iso", "img", "cab"]],
+  ["program", ["exe", "msi", "msix", "dmg", "pkg", "deb", "rpm", "apk", "appimage", "flatpak", "bin", "run"]],
+  ["image", ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "tif", "tiff", "heic", "avif", "psd"]],
+];
+
+/** The category of a file name, like the app's own sorting. */
+export function categoryOf(name: string): Category {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  return EXTENSIONS.find(([, list]) => list.includes(ext))?.[0] ?? "other";
+}
+
 export function hostOf(url: string): string {
+  if (/^magnet:/i.test(url)) return "BitTorrent";
   try {
     return new URL(url).host;
   } catch {

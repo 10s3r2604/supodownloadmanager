@@ -122,10 +122,14 @@ function MinimalRow({ d, selected, actions }: { d: Download } & ViewProps) {
   const value = percent(d.downloaded, d.size);
   const running = d.state === "downloading";
 
+  // Torrents show their peers where files show their server.
+  const source = d.torrent && running && d.connections > 0 ? t("peersShort", { n: d.connections }) : hostOf(d.url);
   let meta: string;
   if (d.stopping) meta = t("stopping");
+  else if (d.seeding) meta = `${t("seeding")} · ↑ ${formatSpeed(d.uploadSpeed, language)}`;
+  else if (running && d.checking) meta = `${t("checkingData")} · ${hostOf(d.url)}`;
   else if (running && d.processing) meta = `${t("processing")} · ${hostOf(d.url)}`;
-  else if (running) meta = d.eta != null ? `${t("timeLeftShort", { t: formatDuration(d.eta) })} · ${hostOf(d.url)}` : `${t("connecting")} · ${hostOf(d.url)}`;
+  else if (running) meta = d.eta != null ? `${t("timeLeftShort", { t: formatDuration(d.eta) })} · ${source}` : `${t("connecting")} · ${source}`;
   else if (d.state === "queued") meta = `${t("state.queued")} · ${hostOf(d.url)}`;
   else meta = hostOf(d.url);
 
@@ -145,7 +149,7 @@ function MinimalRow({ d, selected, actions }: { d: Download } & ViewProps) {
         actions.menu(e, d);
       }}
     >
-      <Icon name={categoryIcon[d.category]} size={18} />
+      <Icon name={d.torrent ? "magnet" : categoryIcon[d.category]} size={18} />
       <div className="mn-main">
         <div className="mn-name" title={d.fileName}>
           {d.fileName}

@@ -127,6 +127,16 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   chevron: <path d="m6 9 6 6 6-6" />,
+  magnet: <path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15M5 8l4 4M12 15l4 4" />,
+  upload: <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />,
+  peers: (
+    <>
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="18" cy="6" r="2.5" />
+      <circle cx="12" cy="18" r="2.5" />
+      <path d="M8.2 7.2 10.8 16M15.8 7.2 13.2 16M8.5 6h7" />
+    </>
+  ),
 };
 
 export type IconName = keyof typeof paths;

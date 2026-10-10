@@ -1,168 +1,176 @@
-<p align="center"><img src="assets/logo.svg" alt="SDM" width="112"></p>
+<p align="center"><img src="assets/logo.svg" alt="Supo Download Manager" width="120"></p>
 
-<h1 align="center">Supo Download Manager (SDM)</h1>
+<h1 align="center">Supo Download Manager</h1>
 
-<p align="center"><b>A free and open-source download accelerator for Windows, macOS and Linux.</b></p>
+<p align="center">
+  <b>A free, open-source download manager for Windows, macOS and Linux.</b><br>
+  Multi-connection downloads · video grabber · torrents and magnet links · browser integration
+</p>
 
-SDM splits a file into segments and downloads them over several connections
-at the same time. When a connection finishes its part, it takes over half of
-the largest part that is still left, so every connection stays busy until the
-very end. Downloads survive network errors and can be paused and resumed, even
-after closing the program or restarting the computer.
+<p align="center">
+  <a href="https://github.com/10s3r2604/supodownloadmanager/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/10s3r2604/supodownloadmanager?label=download&color=12b886"></a>
+  <a href="https://github.com/10s3r2604/supodownloadmanager/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/10s3r2604/supodownloadmanager/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/github/license/10s3r2604/supodownloadmanager?color=blue"></a>
+  <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-555">
+  <img alt="Price" src="https://img.shields.io/badge/price-free%20forever-12b886">
+</p>
 
-> 🇻🇳 [Đọc bằng tiếng Việt](#tiếng-việt)
+<p align="center">
+  <a href="https://github.com/10s3r2604/supodownloadmanager/releases/latest"><b>Download</b></a> ·
+  <a href="#features">Features</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#building-from-source">Build</a> ·
+  <a href="docs/ROADMAP.md">Roadmap</a> ·
+  <a href="#tiếng-việt">Tiếng Việt</a>
+</p>
 
-![SDM main window, Neon look](docs/images/sdm-neon-vi.png)
+![Supo Download Manager](docs/images/sdm-main-en.png)
 
-## What's included
+## Why another download manager?
 
-- **Desktop app** with a download list, categories, a download queue, a speed
-  limiter, a tray icon and notifications, in English and Vietnamese. Two
-  looks to choose from: **Neon** (dark, with a live speed chart and every
-  connection) and **Minimal** (calm, light or dark).
-- **Progress windows** like IDM's: one small window per download that stays
-  until it is done, in three styles.
-- **Video downloads** from YouTube, Facebook, X, TikTok, Instagram, Vimeo and
-  [about 1800 other sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md),
-  in the quality you pick, powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp).
-- **Browser extension** for Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi and
-  Firefox. It hands downloads over to SDM, together with the cookies they need,
-  and puts a "Download this video" button on videos.
-- **`sdm` command line tool** for scripts and servers.
+Why pay a **yearly subscription** for something as simple as a download manager? Or buy a
+**"lifetime" licence that only covers one or two PCs**, and pay again when you get a new
+laptop?
 
-> **Status: early development (v0.3).** Everything above works and is tested,
-> but expect rough edges. See the [roadmap](docs/ROADMAP.md).
+I didn't want to. So I vibecoded my own: a fully working download manager that splits
+files into many connections, resumes after crashes and restarts, grabs videos from web
+pages, and handles **torrents and magnet links** too. It's free, it runs on every
+computer you own, and the code is right here.
+
+|                                 | Typical paid download manager                 | **Supo Download Manager**             |
+| ------------------------------- | --------------------------------------------- | ------------------------------------- |
+| Price                           | Yearly subscription, or a licence per PC      | **Free, forever**                     |
+| New laptop                      | Buy again or move the licence around          | **Install it and go**                 |
+| How many PCs                    | 1–2 per licence                               | **As many as you like**               |
+| Windows · macOS · Linux         | Usually Windows only                          | **All three**                         |
+| Torrents and magnet links       | Usually a separate program                    | **Built in**                          |
+| Videos from web pages           | Yes                                           | **Yes**, in the quality you pick      |
+| Source code                     | Closed                                        | **Open** ([GPL-3.0](LICENSE))         |
+| Accounts, ads, tracking         | Varies                                        | **None**                              |
 
 ## Features
 
-- **Multi-connection downloads**: up to 32 connections per file, with
-  dynamic segment splitting.
-- **Pause and resume**: progress is saved continuously. Quitting the app
-  pauses all downloads and they continue where they stopped. Before resuming,
-  SDM checks the file's size, `ETag` and `Last-Modified` date with the server,
-  so if the file changed, it starts over instead of mixing old and new data.
-- **Browser integration**: downloads of the file types you choose open in SDM
-  instead of the browser, with cookies, referer and user agent, so downloads
-  that need a login work. Right-click any link or image and choose
-  "Download link with SDM", or right-click a page with a video and choose
-  "Download the video on this page with SDM".
-- **One-click extension setup**: SDM finds the browsers on your computer and
-  opens the right page to install the extension.
-- **Clipboard monitoring**: copy a download link and SDM offers to download it.
-- **Categories**: files are sorted into Video, Music, Documents, Compressed,
-  Programs and Images, each with its own folder if you like.
-- **Queue**: choose how many files download at the same time; the rest wait.
-- **Robust**: automatic retries with exponential backoff. A connection that
-  keeps failing hands its work to the others, which helps with servers that
-  limit connections per user.
-- **Works with any server**: if the server does not support resuming, SDM
-  uses a single connection. It also handles files whose size is unknown.
-- **Speed limit**, **proxy** (HTTP, HTTPS, SOCKS5), **safe file names**,
-  **SHA-256 verification** (command line).
+**Faster downloads**
+- Up to 32 connections per file. When a connection finishes its part, it takes over half
+  of the largest part still left, so every connection stays busy to the very end.
+- Pause and resume any time, even after closing the app or restarting the computer. SDM
+  checks the file's size, `ETag` and date with the server first, so a changed file starts
+  over instead of being mixed.
+- Automatic retries, a download queue, a speed limit, proxies (HTTP, HTTPS, SOCKS5) and
+  safe file names. Works with servers that allow only one connection or don't say how
+  big the file is.
 
-![Minimal look, dark](docs/images/sdm-minimal-dark-en.png)
+**Videos from web pages**
+- Hover a video in your browser and click **Download this video**, or paste a link. Pick
+  4K, 1080p, 720p… or just the sound (M4A, MP3); video and sound are merged into one file.
+- Works on [about 1,800 sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
+  through [yt-dlp](https://github.com/yt-dlp/yt-dlp), which SDM downloads, verifies and
+  keeps up to date for you.
 
-### Progress windows
+**Torrents and magnet links**
+- Click a magnet link, open a `.torrent` file or drop one on the window. SDM shows what is
+  inside so you can pick the files.
+- Downloads continue after a restart without checking everything again. Finished torrents
+  are shared back for a while (you choose how long), with separate upload limits.
+- Powered by [librqbit](https://github.com/ikatson/rqbit), a fast BitTorrent engine in Rust.
 
-When a download starts, a small window follows it until it is done, like in
-IDM. Pick its style in **Settings → Appearance**: a live **speed graph** (the
-default), a compact **ring**, or the **classic** IDM layout with a connection
-list. Each window has "Show a dialog when done" and "Open the file when done";
-without the dialog the window closes by itself when the file is complete.
+**Browser integration**
+- Extension for Chrome, Edge, Firefox, Brave, Opera, Vivaldi and Cốc Cốc. Downloads of the
+  file types you choose go to SDM, with the cookies they need, so links behind a login work.
+- One click in the app opens the right page to install the extension in each browser.
 
-![Progress window styles](docs/images/progress-windows-vi.png)
+**Pleasant to use**
+- A small progress window per download, in three styles (speed graph, ring or classic),
+  with "open the file when done".
+- Two looks: **Neon** (dark, with a live speed chart and every connection) and
+  **Minimal** (light or dark). English and Vietnamese.
+- Categories with their own folders, clipboard monitoring, tray icon and notifications.
+- An `sdm` command line tool for scripts and servers.
 
-### Videos from web pages
+## Screenshots
 
-Hover a video in the browser and click **Download this video**, or paste a
-YouTube (or other video site) link into **Add URL**. SDM shows the qualities
-the site offers (4K, 1080p60, 720p, ..., audio only as M4A or MP3) with their
-sizes, then downloads and merges video and sound into one file. Video
-downloads can be paused and resumed like any other download, and appear in
-the list and in progress windows.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/sdm-torrent-en.png" alt="Choosing the files of a torrent"><br><sub><b>Torrents:</b> pick the files you want</sub></td>
+    <td width="50%"><img src="docs/images/sdm-video-en.png" alt="Choosing the quality of a video"><br><sub><b>Videos:</b> pick the quality</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/sdm-minimal-en.png" alt="Minimal look"><br><sub><b>Minimal</b> look, light</sub></td>
+    <td><img src="docs/images/sdm-minimal-dark-en.png" alt="Minimal look, dark"><br><sub><b>Minimal</b> look, dark</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/video-button-en.png" alt="Download this video button"><br><sub>The <b>Download this video</b> button</sub></td>
+    <td><img src="docs/images/sdm-browsers-en.png" alt="Installing the browser extension"><br><sub>Installing the browser extension</sub></td>
+  </tr>
+</table>
 
-<p>
-<img src="docs/images/video-button-vi.png" alt="Download this video button" width="416">
-</p>
-<img src="docs/images/sdm-video-vi.png" alt="Choosing the quality of a video" width="560">
-
-The first time you download a video, SDM fetches
-[yt-dlp](https://github.com/yt-dlp/yt-dlp) (about 18 MB on Windows, 38 MB
-elsewhere) from its official GitHub releases, checks it against the published
-SHA-256 sums and keeps it up to date. Joining separate video and sound (most
-sites send them apart above 360p) needs [ffmpeg](https://ffmpeg.org): SDM
-uses the one on your computer, or on Windows downloads just `ffmpeg.exe`
-(66 MB) out of yt-dlp's ffmpeg build, checked with the archive's CRC-32. On
-Linux and macOS install it with `sudo apt install ffmpeg` or
-`brew install ffmpeg`.
-
-> Only download videos you have the right to save. Many sites' terms of
-> service forbid downloading, and most videos are protected by copyright.
-> SDM, like yt-dlp, is a tool; how you use it is up to you.
+![Progress window styles: speed graph, ring and classic](docs/images/progress-windows-en.png)
 
 ## Install
 
-Installers for Windows (`.msi`, `.exe`), macOS (`.dmg`) and Linux (`.deb`,
-`.rpm`, `.AppImage`) are published on the
-[Releases](https://github.com/10s3r2604/supodownloadmanager/releases) page
-from the first tagged version.
+Download the installer for your system from the
+[latest release](https://github.com/10s3r2604/supodownloadmanager/releases/latest):
+
+| System                         | File                                       |
+| ------------------------------ | ------------------------------------------ |
+| Windows 10 / 11                | `…_x64-setup.exe` or `…_x64_en-US.msi`     |
+| macOS, Apple Silicon (M1–M4)   | `…_aarch64.dmg`                            |
+| macOS, Intel                   | `…_x64.dmg`                                |
+| Ubuntu, Debian, Mint           | `…_amd64.deb`                              |
+| Fedora, openSUSE               | `….x86_64.rpm`                             |
+| Any Linux                      | `…_amd64.AppImage`                         |
+
+The installers are not code-signed yet. On Windows, if SmartScreen warns, click
+**More info → Run anyway**. On macOS, if it says the app is damaged, run
+`xattr -dr com.apple.quarantine "/Applications/Supo Download Manager.app"` once.
 
 ### Browser extension
 
-Open SDM, click **Browsers**, pick your browser and click **Install
-extension**. SDM opens the browser's extension page and shows what to do.
-Details are in [docs/BROWSER_EXTENSION.md](docs/BROWSER_EXTENSION.md).
+Open SDM, click **Browsers**, pick your browser and click **Install extension**. Store
+listings for Chrome, Edge and Firefox are on the way; until then SDM shows the few steps to
+load it. Details: [docs/BROWSER_EXTENSION.md](docs/BROWSER_EXTENSION.md).
 
-<img src="docs/images/sdm-browsers-vi.png" alt="Browser integration" width="560">
-
-### Command line tool
+### Command line
 
 ```sh
 cargo install --git https://github.com/10s3r2604/supodownloadmanager sdm-cli
-```
 
-```sh
-sdm get https://example.com/big.iso                 # download with 8 connections
-sdm get -c 16 -d ~/Downloads https://example.com/big.iso
-sdm get -l 2M https://example.com/big.iso           # limit to 2 MB/s
-sdm get -j 4 -i urls.txt                            # a list of links, 4 at a time
-sdm get --cookie "session=abc" https://example.com/file.zip
+sdm get https://example.com/big.iso                 # 8 connections
+sdm get -c 16 -l 2M -d ~/Downloads https://example.com/big.iso
+sdm get -j 4 -i urls.txt                            # a list, 4 at a time
 sdm info https://example.com/big.iso                # ask the server about a file
 ```
 
-Press `Ctrl+C` to pause and run the same command again to resume.
+Press `Ctrl+C` to pause; run the same command again to resume.
 
 ## How it works
 
-1. **Probe**: SDM asks the server for the first byte of the file
-   (`Range: bytes=0-0`). The answer reveals the size, whether byte ranges
-   (and therefore multiple connections and resuming) work, and the file name.
-2. **Plan**: the file is divided into equal segments, one per connection.
-3. **Download**: each connection fills its segment from front to back. When a
-   connection finishes early, it splits the segment with the most bytes left
-   and takes over the back half.
-4. **Save progress**: data goes into `name.sdm-part`, and progress is saved to
-   `name.sdm-state` every two seconds and whenever the download is paused.
-5. **Finish**: the part file is renamed to the final name.
+1. **Probe:** SDM asks the server for the first byte (`Range: bytes=0-0`) to learn the
+   size, the name and whether ranges (and so several connections and resuming) work.
+2. **Split:** the file is divided into one segment per connection.
+3. **Download:** each connection fills its segment. A connection that finishes early
+   splits the segment with the most bytes left and takes the back half.
+4. **Save progress** to `name.sdm-part` / `name.sdm-state` every two seconds and on pause.
+5. **Finish:** the part file is renamed to the final name.
 
-The browser extension talks to the app through a small server on
-`127.0.0.1` that only accepts requests from browser extensions.
+Videos are downloaded by yt-dlp and torrents by librqbit, inside the same queue, list and
+progress windows. The browser extension talks to the app through a small server on
+`127.0.0.1` that only browser extensions can use; see [PRIVACY.md](docs/PRIVACY.md).
 
-## Project layout
-
-| Path                     | What it is                                                      |
-| ------------------------ | --------------------------------------------------------------- |
-| `crates/sdm-core`        | The download engine (Rust library), shared by all front-ends    |
-| `crates/sdm-cli`         | The `sdm` command line tool                                      |
-| `apps/desktop`           | The desktop app: Tauri (Rust) backend and React interface        |
-| `extension`              | The browser extension (Chromium and Firefox builds)              |
-| `docs`                   | Roadmap and guides                                               |
+| Path              | What it is                                                      |
+| ----------------- | --------------------------------------------------------------- |
+| `crates/sdm-core` | The download engine (Rust library)                              |
+| `crates/sdm-cli`  | The `sdm` command line tool                                     |
+| `apps/desktop`    | The desktop app: Tauri (Rust) backend and React interface       |
+| `extension`       | The browser extension (Chromium and Firefox)                    |
+| `third_party`     | A small patch to a librqbit crate (see its README)              |
+| `docs`            | Roadmap, guides, store listing and privacy policy               |
 
 ## Building from source
 
-You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 20 or
-newer. On Linux, also install the WebKitGTK libraries listed in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 20 or newer. On
+Linux, also the WebKitGTK libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```sh
 cd apps/desktop
@@ -173,102 +181,46 @@ npm run tauri build    # build an installer
 
 ## Contributing
 
-Contributions of every size are welcome: bug reports, ideas, translations,
-documentation and code. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Bug reports, ideas, translations, docs and code are all welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and the [roadmap](docs/ROADMAP.md).
 
-## License
+## Legal
 
-SDM is free software under the [GNU General Public License v3.0 or later](LICENSE).
-You may use, study, share and modify it. If you distribute a modified version,
-it must remain free under the same license.
+SDM is free software under the [GNU GPL v3.0 or later](LICENSE).
 
-SDM is an independent project and is not affiliated with Internet Download
-Manager or Tonec Inc.
+Only download what you have the right to download. Many sites forbid downloading their
+videos, and most videos and torrents are protected by copyright. While a torrent
+downloads, SDM also shares it with others, who can see your IP address.
 
-Video downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense) and
-[ffmpeg](https://ffmpeg.org) (GPL), which SDM fetches from their official
-releases when first needed; they are separate programs and are not bundled. The
-interface uses the [Inter](https://rsms.me/inter/) typeface (SIL Open Font
-License).
+Videos use [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense) and
+[ffmpeg](https://ffmpeg.org) (GPL), fetched from their official releases when first
+needed. Torrents use [librqbit](https://github.com/ikatson/rqbit) (Apache-2.0). The
+interface uses the [Inter](https://rsms.me/inter/) typeface (SIL Open Font License).
+SDM is an independent project, not affiliated with any other download manager.
 
 ---
 
 ## Tiếng Việt
 
-**Supo Download Manager (SDM)** là trình tăng tốc tải xuống miễn phí, mã nguồn
-mở, chạy trên Windows, macOS và Linux.
+**Supo Download Manager (SDM)** là trình quản lý tải xuống **miễn phí, mã nguồn mở** cho
+Windows, macOS và Linux.
 
-SDM chia file thành nhiều đoạn và tải cùng lúc qua nhiều kết nối. Khi một kết
-nối tải xong phần của mình, nó lấy một nửa của đoạn còn lại lớn nhất để tải
-tiếp, nhờ vậy mọi kết nối đều bận đến tận cuối. Mất mạng thì tự kết nối lại, tạm
-dừng rồi tải tiếp được, kể cả sau khi tắt máy.
+Tại sao phải trả **phí thuê bao hằng năm** cho một trình tải file đơn giản, hay mua bản
+**"trọn đời" chỉ dùng được 1–2 máy** rồi mất khi đổi laptop mới? SDM miễn phí mãi mãi,
+cài trên bao nhiêu máy cũng được, và mã nguồn công khai.
 
-### Gồm những gì
+- **Tải nhanh** bằng tối đa 32 kết nối, tạm dừng và tải tiếp kể cả sau khi tắt máy.
+- **Tải video** trên khoảng 1.800 trang web, chọn chất lượng 4K, 1080p, 720p hoặc chỉ âm thanh.
+- **Torrent và link magnet**: bấm link magnet, mở file `.torrent` hoặc kéo thả vào cửa sổ,
+  chọn tệp muốn tải.
+- **Extension** cho Chrome, Edge, Firefox, Cốc Cốc, Brave, Opera, Vivaldi; tải được cả
+  link cần đăng nhập.
+- Cửa sổ tiến độ cho từng file, hai giao diện Neon và Tối giản, có tiếng Việt
+  (vào **Cài đặt → Giao diện → Ngôn ngữ**).
 
-- **Ứng dụng desktop**: danh sách tải, phân loại file, hàng đợi, giới hạn tốc
-  độ, biểu tượng ở khay hệ thống, thông báo khi tải xong. Có tiếng Việt và
-  tiếng Anh, hai giao diện để chọn: **Neon** (nền tối, biểu đồ tốc độ, từng kết
-  nối) và **Tối giản** (gọn gàng, nền sáng hoặc tối).
-- **Cửa sổ tiến độ** giống IDM: mỗi file một cửa sổ nhỏ theo dõi đến khi tải
-  xong, có 3 kiểu (Biểu đồ, Vòng tròn, Cổ điển), có tùy chọn "Hiện hộp thoại khi
-  tải xong" và "Mở file khi tải xong".
-- **Tải video** từ YouTube, Facebook, X, TikTok, Instagram, Vimeo và khoảng 1800
-  trang khác, chọn chất lượng (4K, 1080p, 720p, chỉ âm thanh M4A/MP3), nhờ
-  [yt-dlp](https://github.com/yt-dlp/yt-dlp).
-- **Extension trình duyệt** cho Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi và
-  Firefox: chuyển file tải từ trình duyệt sang SDM, kèm cookie để tải được cả
-  các link cần đăng nhập, và hiện nút **"Tải video này"** trên video.
-- **Công cụ dòng lệnh `sdm`** cho script và máy chủ.
+**Cài đặt:** tải bộ cài ở trang [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
+(Windows: `…-setup.exe`; macOS: `.dmg`; Linux: `.deb`, `.rpm`, `.AppImage`), mở SDM rồi
+bấm **Trình duyệt** để cài extension.
 
-### Tính năng chính
-
-- **Tải đa luồng**: tối đa 32 kết nối mỗi file, tự chia lại đoạn khi đang tải.
-- **Tạm dừng / tải tiếp**: tiến độ được lưu liên tục; tắt ứng dụng thì mọi file
-  được tạm dừng và lần sau tải tiếp. Nếu file trên server đã đổi, SDM tải lại từ
-  đầu chứ không ghép lẫn dữ liệu.
-- **Bắt link từ trình duyệt**: các loại file bạn chọn sẽ được SDM tải thay
-  trình duyệt. Chuột phải vào link, ảnh hay video và chọn "Tải link bằng SDM".
-- **Cài extension bằng một nút bấm**: SDM tự tìm các trình duyệt trên máy và mở
-  đúng trang để cài.
-- **Theo dõi clipboard**: copy một link tải là SDM gợi ý tải ngay.
-- **Phân loại**: Video, Nhạc, Tài liệu, File nén, Chương trình, Hình ảnh, mỗi
-  loại một thư mục.
-- **Hàng đợi**: chọn số file tải cùng lúc, các file khác chờ đến lượt.
-- **Giới hạn tốc độ, proxy (HTTP, HTTPS, SOCKS5), đặt tên file an toàn.**
-
-### Tải video
-
-Rê chuột lên video trong trình duyệt và bấm **Tải video này**, hoặc dán link
-YouTube (hay trang video khác) vào **Thêm link**. SDM hiện các chất lượng có sẵn
-kèm dung lượng, tải về rồi ghép hình và tiếng thành một file. Video cũng tạm dừng
-và tải tiếp được như file thường.
-
-Lần đầu tải video, SDM tự tải yt-dlp từ trang GitHub chính thức (kiểm tra mã
-SHA-256) và tự cập nhật. Để ghép hình và tiếng cần ffmpeg: trên Windows SDM tự
-tải `ffmpeg.exe` (66 MB); trên Linux/macOS cài bằng `sudo apt install ffmpeg`
-hoặc `brew install ffmpeg`.
-
-> Chỉ tải video bạn có quyền lưu về máy. Nhiều trang cấm tải video trong điều
-> khoản sử dụng, và phần lớn video có bản quyền.
-
-### Cài đặt
-
-- **Ứng dụng**: tải bộ cài cho Windows, macOS, Linux ở trang
-  [Releases](https://github.com/10s3r2604/supodownloadmanager/releases).
-- **Extension**: mở SDM, bấm **Trình duyệt**, chọn trình duyệt rồi bấm **Cài
-  extension**, sau đó làm theo hướng dẫn hiện ra. Chi tiết xem
-  [docs/BROWSER_EXTENSION.md](docs/BROWSER_EXTENSION.md).
-- **Dòng lệnh**: `cargo install --git https://github.com/10s3r2604/supodownloadmanager sdm-cli`
-
-### Đóng góp
-
-Mọi đóng góp đều được chào đón: báo lỗi, góp ý, dịch thuật, viết tài liệu, viết
-code. Bạn có thể viết issue bằng tiếng Việt. Xem [CONTRIBUTING.md](CONTRIBUTING.md).
-
-### Giấy phép
-
-SDM là phần mềm tự do theo giấy phép [GNU GPL v3.0 trở lên](LICENSE). Bạn được tự
-do sử dụng, chia sẻ và sửa đổi. Nếu phát hành bản sửa đổi, bản đó cũng phải là mã
-nguồn mở theo cùng giấy phép.
-
-SDM là dự án độc lập, không liên quan đến Internet Download Manager hay Tonec Inc.
+Mọi đóng góp đều được chào đón, có thể viết issue bằng tiếng Việt. Chỉ tải những gì bạn
+có quyền tải.

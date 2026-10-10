@@ -1,4 +1,4 @@
-// Shows a "Download this video" button over videos on web pages, like IDM.
+// Shows a "Download this video" button over videos on web pages.
 // A click sends the page to the Supo Download Manager app, which finds the
 // video with yt-dlp and asks for the quality.
 

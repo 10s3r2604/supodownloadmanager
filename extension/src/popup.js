@@ -1,4 +1,4 @@
-const DEFAULT_PREFS = { capture: true, videoButton: true, port: 17360, minSizeMb: 0 };
+const DEFAULT_PREFS = { capture: true, videoButton: true, magnets: true, port: 17360, minSizeMb: 0 };
 const ALL_SITES = { origins: ["<all_urls>"] };
 
 const $ = (id) => document.getElementById(id);
@@ -33,6 +33,7 @@ async function load() {
   const prefs = await chrome.storage.local.get(DEFAULT_PREFS);
   $("capture").checked = prefs.capture;
   $("videoButton").checked = prefs.videoButton;
+  $("magnets").checked = prefs.magnets;
   $("minSize").value = prefs.minSizeMb;
   $("port").value = prefs.port;
 }
@@ -43,6 +44,10 @@ $("capture").addEventListener("change", (event) => {
 
 $("videoButton").addEventListener("change", (event) => {
   chrome.storage.local.set({ videoButton: event.target.checked });
+});
+
+$("magnets").addEventListener("change", (event) => {
+  chrome.storage.local.set({ magnets: event.target.checked });
 });
 
 $("minSize").addEventListener("change", (event) => {

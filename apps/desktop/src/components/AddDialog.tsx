@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { type AddPrompt, type ProbeResult, type Settings, api } from "../api";
+import { type AddPrompt, type ProbeResult, type Settings, type TorrentSource, api } from "../api";
 import { errorText, useI18n } from "../context";
 import { formatBytes } from "../format";
 import { Icon, categoryIcon } from "../icons";
@@ -14,9 +14,13 @@ interface Props {
   onError: (message: string) => void;
   /** Switches to the video quality picker for a page. */
   onMedia: (pageUrl: string) => void;
+  /** Switches to the torrent dialog. */
+  onTorrent: (source: TorrentSource) => void;
 }
 
 const isLink = (text: string) => /^https?:\/\/\S+$/i.test(text.trim());
+const isMagnet = (text: string) => /^magnet:\?\S+$/i.test(text.trim());
+const isTorrentFile = (name: string) => /\.torrent$/i.test(name.split(/[?#]/)[0] ?? "");
 
 /** Sites whose pages hold videos rather than files. */
 const VIDEO_SITES =
@@ -30,7 +34,7 @@ function isVideoPage(url: string) {
   }
 }
 
-export function AddDialog({ prompt, initialUrl, settings, onClose, onError, onMedia }: Props) {
+export function AddDialog({ prompt, initialUrl, settings, onClose, onError, onMedia, onTorrent }: Props) {
   const { t, language } = useI18n();
   const headers = prompt?.headers ?? [];
   const [url, setUrl] = useState(prompt?.url ?? initialUrl ?? "");
@@ -42,6 +46,11 @@ export function AddDialog({ prompt, initialUrl, settings, onClose, onError, onMe
   const [directory, setDirectory] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const valid = isLink(url);
+
+  // Magnet links have no server to ask; they go to the torrent dialog.
+  useEffect(() => {
+    if (isMagnet(url)) onTorrent({ link: url.trim() });
+  }, [url, onTorrent]);
 
   useEffect(() => {
     setProbe(null);
@@ -77,6 +86,17 @@ export function AddDialog({ prompt, initialUrl, settings, onClose, onError, onMe
     const folder = await api.pickFolder();
     if (folder) setDirectory(folder);
   }
+
+  async function openTorrentFile() {
+    const path = await api.pickTorrentFile();
+    if (path) onTorrent({ path });
+  }
+
+  const torrentLink =
+    valid &&
+    (isTorrentFile(url) ||
+      probe?.contentType?.startsWith("application/x-bittorrent") ||
+      (probe != null && isTorrentFile(probe.fileName)));
 
   async function submit(start: boolean) {
     if (!valid || busy) return;
@@ -127,12 +147,27 @@ export function AddDialog({ prompt, initialUrl, settings, onClose, onError, onMe
           <input
             autoFocus
             value={url}
-            placeholder="https://"
+            placeholder="https://… / magnet:?…"
             spellCheck={false}
             onChange={(event) => setUrl(event.target.value)}
           />
         </label>
-        {url.trim() && !valid && <p className="hint warning">{t("invalidUrl")}</p>}
+        <div className="add-extra">
+          <button type="button" className="link-button" onClick={openTorrentFile}>
+            <Icon name="magnet" size={14} />
+            {t("openTorrentFile")}
+          </button>
+        </div>
+        {url.trim() && !valid && !isMagnet(url) && <p className="hint warning">{t("invalidUrl")}</p>}
+        {torrentLink && (
+          <div className="video-banner">
+            <Icon name="magnet" size={18} />
+            <span>{t("addTorrentHint")}</span>
+            <button type="button" className="button primary" onClick={() => onTorrent({ link: url.trim(), headers })}>
+              {t("addTorrentButton")}
+            </button>
+          </div>
+        )}
         {valid && (isVideoPage(url) || probe?.contentType?.startsWith("text/html")) && (
           <div className="video-banner">
             <Icon name="video" size={18} />

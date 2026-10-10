@@ -3,7 +3,7 @@
     "message": "Supo Download Manager"
   },
   "extDescription": {
-    "message": "Download files with Supo Download Manager: faster downloads that you can pause and resume."
+    "message": "Send downloads, videos and magnet links to Supo Download Manager, the free download accelerator for Windows, macOS and Linux."
   },
   "menuLink": {
     "message": "Download link with SDM"
@@ -58,5 +58,8 @@
   },
   "videoButtonLabel": {
     "message": "Show a “Download this video” button on videos"
+  },
+  "magnetsLabel": {
+    "message": "Open magnet links with SDM"
   }
 }

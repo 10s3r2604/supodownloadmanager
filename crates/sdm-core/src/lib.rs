@@ -40,7 +40,7 @@ mod state;
 pub use checksum::sha256_file;
 pub use engine::{
     ClientConfig, Destination, DownloadControl, DownloadHandle, DownloadOptions, DownloadRequest,
-    Downloader, Outcome, Phase, Progress, ProxyConfig, SegmentProgress,
+    Downloader, Fetched, Outcome, Phase, Progress, ProxyConfig, SegmentProgress,
 };
 pub use error::{Error, Result};
 pub use filename::{candidates as path_candidates, sanitize as sanitize_file_name};

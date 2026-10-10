@@ -60,6 +60,10 @@ pub enum Error {
     /// The operation was stopped because the download was paused or cancelled.
     #[error("the download was stopped")]
     Cancelled,
+
+    /// A file meant to be read into memory is bigger than allowed.
+    #[error("the file is larger than {0} bytes")]
+    TooLarge(u64),
 }
 
 // The wrapped errors are part of the message instead of being reported as

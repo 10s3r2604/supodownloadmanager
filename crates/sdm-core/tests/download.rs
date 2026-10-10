@@ -491,3 +491,19 @@ async fn fetches_a_byte_range() {
         .await;
     assert!(matches!(ignored, Err(Error::RangeIgnored)), "{ignored:?}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn fetches_small_files_into_memory() {
+    let data = test_data(40 * 1024);
+    let (base, _server) = start_server(data.clone(), 0).await;
+    let fetched = downloader()
+        .fetch(&format!("{base}/file/data.bin"), &[], 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(fetched.data, data);
+
+    let too_big = downloader()
+        .fetch(&format!("{base}/file/data.bin"), &[], 1000)
+        .await;
+    assert!(matches!(too_big, Err(Error::TooLarge(1000))), "{too_big:?}");
+}

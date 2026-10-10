@@ -1,4 +1,4 @@
-//! The small per-download progress windows, like the ones IDM shows.
+//! The small per-download progress windows.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};

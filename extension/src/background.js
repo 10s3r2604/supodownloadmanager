@@ -6,18 +6,33 @@
 
 const DEFAULT_PORT = 17360;
 const PING_CACHE_MS = 5000;
-const DEFAULT_PREFS = { capture: true, videoButton: true, port: DEFAULT_PORT, minSizeMb: 0 };
+const DEFAULT_PREFS = { capture: true, videoButton: true, magnets: true, port: DEFAULT_PORT, minSizeMb: 0 };
+
+// Sites where the video button and menu stay away. The Chrome Web Store
+// build fills this in, because the store does not allow extensions that
+// download from YouTube; the SDM app itself still can.
+const NO_VIDEO_SITES = /* @no-video-sites */ [];
 
 // Used when the app does not send its own list.
 const FALLBACK_EXTENSIONS = [
   "7z", "aac", "apk", "avi", "bz2", "deb", "dmg", "exe", "flac", "flv", "gz", "iso", "m4a",
   "m4v", "mkv", "mov", "mp3", "mp4", "msi", "ogg", "pdf", "pkg", "rar", "rpm", "tar", "tgz",
-  "wav", "webm", "wmv", "xz", "zip",
+  "torrent", "wav", "webm", "wmv", "xz", "zip",
 ];
 
 // Content types worth handing over when the file name has no known extension.
 const CAPTURE_MIME =
-  /^(video|audio)\/|^application\/(zip|x-zip-compressed|x-rar-compressed|vnd\.rar|x-7z-compressed|x-msdownload|x-msi|x-apple-diskimage|vnd\.android\.package-archive|x-iso9660-image|x-tar|gzip|x-gzip|x-bzip2|x-xz)$/i;
+  /^(video|audio)\/|^application\/(zip|x-zip-compressed|x-rar-compressed|vnd\.rar|x-7z-compressed|x-msdownload|x-msi|x-apple-diskimage|vnd\.android\.package-archive|x-iso9660-image|x-tar|gzip|x-gzip|x-bzip2|x-xz|x-bittorrent)$/i;
+
+/** Whether the video button and menu may offer this page. */
+function videoAllowed(pageUrl) {
+  try {
+    const host = new URL(pageUrl).hostname;
+    return !NO_VIDEO_SITES.some((site) => host === site || host.endsWith(`.${site}`));
+  } catch {
+    return false;
+  }
+}
 
 let lastPing = { at: 0, status: null };
 let cachedBrowser = null;
@@ -163,6 +178,7 @@ async function cookieList(url) {
 
 /** Sends a page with a video to the app. Returns whether the app took it. */
 async function handOverVideo({ pageUrl, title, mediaUrl, referrer }) {
+  if (!videoAllowed(pageUrl)) return false;
   try {
     const response = await callApp("/api/media", {
       pageUrl,
@@ -229,6 +245,23 @@ function createMenus() {
 chrome.runtime.onInstalled.addListener(createMenus);
 chrome.runtime.onStartup.addListener(createMenus);
 
+/** Hides the video menu on sites where it may not be offered. */
+async function syncVideoMenu(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    chrome.contextMenus.update("sdm-video", { visible: videoAllowed(tab.url || "") }, () => void chrome.runtime.lastError);
+  } catch {
+    // The tab is gone.
+  }
+}
+
+if (NO_VIDEO_SITES.length > 0) {
+  chrome.tabs.onActivated.addListener(({ tabId }) => syncVideoMenu(tabId));
+  chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+    if (change.url && tab.active) syncVideoMenu(tabId);
+  });
+}
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "sdm-video") {
     const pageUrl = info.frameUrl || info.pageUrl || tab?.url;
@@ -241,9 +274,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
   const url = info.menuItemId === "sdm-link" ? info.linkUrl : info.srcUrl;
-  if (!url || !/^https?:/i.test(url)) return;
+  if (!url || !/^(https?|magnet):/i.test(url)) return;
   const accepted = await handOver({ url, referrer: info.pageUrl || tab?.url });
-  if (!accepted) giveBack(url);
+  // The browser cannot download magnet links itself.
+  if (!accepted && !/^magnet:/i.test(url)) giveBack(url);
 });
 
 // Tell the app every minute that the extension is installed and working.
@@ -260,8 +294,22 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   }
   if (message?.type === "video-enabled") {
     Promise.all([prefs(), ping()]).then(([settings, status]) =>
-      reply(Boolean(settings.videoButton && status?.enabled && status?.media)),
+      reply(
+        Boolean(
+          settings.videoButton && status?.enabled && status?.media && videoAllowed(sender.tab?.url || sender.url),
+        ),
+      ),
     );
+    return true;
+  }
+  if (message?.type === "magnets-enabled") {
+    Promise.all([prefs(), ping()]).then(([settings, status]) =>
+      reply(Boolean(settings.magnets && status?.enabled && status?.torrent)),
+    );
+    return true;
+  }
+  if (message?.type === "magnet" && /^magnet:\?/i.test(message.url || "")) {
+    handOver({ url: message.url, referrer: sender.tab?.url }).then((ok) => reply({ ok }));
     return true;
   }
   if (message?.type === "video" && /^https?:/i.test(message.pageUrl || "")) {

@@ -24,6 +24,7 @@ sdm-core.workspace = true
 anyhow.workspace = true
 axum = "0.8"
 flate2 = "1"
+librqbit = { version = "9.0.1", default-features = false, features = ["rust-tls"] }
 percent-encoding.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -39,6 +40,7 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trash = "5"
 url = "2"
+tauri-plugin-deep-link = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

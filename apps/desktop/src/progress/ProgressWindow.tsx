@@ -1,4 +1,4 @@
-// The small window that follows one download until it is done, like IDM's.
+// The small window that follows one download until it is done.
 
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -56,7 +56,7 @@ export function ProgressWindow({ id }: { id: number }) {
     };
   }, [id]);
 
-  // The taskbar shows "42% ubuntu.iso", like IDM.
+  // The taskbar shows "42% ubuntu.iso".
   const value = download ? percent(download.downloaded, download.size) : null;
   const title = !download
     ? "Supo Download Manager"

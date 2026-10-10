@@ -1,9 +1,10 @@
-// The familiar IDM layout, cleaned up: details, a connection list and a
+// The familiar download-manager layout, cleaned up: details, a connection list and a
 // separate "download complete" dialog.
 
 import { useState } from "react";
 
 import { logoSmall } from "../brand";
+import { useTorrentFiles } from "../components/TorrentPanel";
 import { useI18n } from "../context";
 import { formatBytes, formatSpeed } from "../format";
 import { Icon } from "../icons";
@@ -40,7 +41,7 @@ function ClassicProgress(p: PwProps) {
   const f = useFigures(d);
   const phaseText = usePhaseText();
   const [tab, setTab] = useState<"status" | "whenDone">("status");
-  const busy = phase === "running" || phase === "processing" || phase === "connecting" || phase === "queued";
+  const busy = phase === "running" || phase === "processing" || phase === "checking" || phase === "connecting" || phase === "queued";
   const showConnections = p.details;
   const fill = f.value ?? 0;
 
@@ -123,13 +124,16 @@ function ClassicProgress(p: PwProps) {
   );
 }
 
-/** One row per connection, like IDM's list under the progress bar. */
+/** One row per connection, under the progress bar. */
 function ConnectionTable({ d, segmentSpeeds, language }: PwProps & { language: Parameters<typeof formatBytes>[1] }) {
   const { t } = useI18n();
+  // A torrent's segments are its files.
+  const files = useTorrentFiles(d);
+  const named = d.torrent && files.length === d.segments.length;
   return (
-    <div className="pc-table">
+    <div className={`pc-table${named ? " named" : ""}`}>
       <div className="pc-row head">
-        <span>#</span>
+        <span>{named ? t("filesTitle") : "#"}</span>
         <span>{t("pwDownloaded")}</span>
         <span>{t("pwSpeed")}</span>
         <span>{t("pwStatus")}</span>
@@ -148,7 +152,7 @@ function ConnectionTable({ d, segmentSpeeds, language }: PwProps & { language: P
           const speed = segmentSpeeds.get(s.start);
           return (
             <div key={s.start} className={`pc-row${finished ? " finished" : ""}`}>
-              <span>{i + 1}</span>
+              <span title={named ? files[i].path : undefined}>{named ? files[i].path.split("/").pop() : i + 1}</span>
               <span>{formatBytes(s.downloaded, language)}</span>
               <span>{!finished && speed != null && d.state === "downloading" ? formatSpeed(speed, language) : "—"}</span>
               <span>{finished ? t("pwSegmentDone") : d.state === "downloading" ? t("pwReceiving") : t("pwWaiting")}</span>

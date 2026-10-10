@@ -3,7 +3,7 @@
 //! Every segment is a byte range `[start, end)` that one connection fills from
 //! front to back. When a connection finishes its own segment it steals the
 //! back half of the segment with the most bytes left, so all connections stay
-//! busy until the very end (the trick that makes IDM-style downloaders fast).
+//! busy until the very end (the trick that makes download accelerators fast).
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 

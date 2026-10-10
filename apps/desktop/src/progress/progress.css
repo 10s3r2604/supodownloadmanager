@@ -763,6 +763,16 @@
   color: var(--text);
 }
 
+.pc-table.named .pc-row {
+  grid-template-columns: 1.6fr 1fr 1fr 1.2fr;
+}
+
+.pc-table.named .pc-row span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pc-row span {
   overflow: hidden;
   text-overflow: ellipsis;

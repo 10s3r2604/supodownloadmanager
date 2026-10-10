@@ -23,7 +23,7 @@ export function RingView(p: PwProps) {
   const f = useFigures(d);
   const phaseText = usePhaseText();
   const done = phase === "done";
-  const busy = phase === "running" || phase === "processing" || phase === "connecting" || phase === "queued";
+  const busy = phase === "running" || phase === "processing" || phase === "checking" || phase === "connecting" || phase === "queued";
 
   const centre = done ? (
     <Icon name="tick" size={36} />
@@ -42,7 +42,7 @@ export function RingView(p: PwProps) {
   const eyebrow = done
     ? t("pwDone")
     : phase === "running"
-      ? `${t("state.downloading")} · ${t("connectionsTitle", { n: d.connections })}`
+      ? `${t("state.downloading")} · ${t(d.torrent ? "peersTitle" : "connectionsTitle", { n: d.connections })}`
       : phaseText(phase);
 
   return (

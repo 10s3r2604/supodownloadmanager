@@ -1,4 +1,4 @@
-//! Sorting downloads into categories by file type, like IDM does.
+//! Sorting downloads into categories by file type.
 
 use serde::{Deserialize, Serialize};
 
@@ -72,11 +72,17 @@ impl Category {
 
 /// File types the browser extension hands over to SDM by default.
 pub fn default_capture_extensions() -> Vec<String> {
-    [VIDEO, MUSIC, COMPRESSED, PROGRAM, &["pdf", "epub"]]
-        .concat()
-        .into_iter()
-        .map(str::to_owned)
-        .collect()
+    [
+        VIDEO,
+        MUSIC,
+        COMPRESSED,
+        PROGRAM,
+        &["pdf", "epub", "torrent"],
+    ]
+    .concat()
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
 }
 
 #[cfg(test)]

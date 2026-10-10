@@ -23,7 +23,7 @@ export interface PwProps {
   act: {
     pause: () => void;
     resume: () => void;
-    /** Stops the download and closes the window, like IDM's Cancel. */
+    /** Stops the download and closes the window. */
     cancel: () => void;
     open: () => void;
     folder: () => void;
@@ -31,12 +31,13 @@ export interface PwProps {
   };
 }
 
-export type Phase = "connecting" | "running" | "processing" | "stopping" | "queued" | "paused" | "failed" | "done";
+export type Phase = "connecting" | "checking" | "running" | "processing" | "stopping" | "queued" | "paused" | "failed" | "done";
 
 export function phaseOf(d: Download): Phase {
   if (d.state === "completed") return "done";
   if (d.stopping) return "stopping";
   if (d.state === "downloading" && d.processing) return "processing";
+  if (d.state === "downloading" && d.checking) return "checking";
   if (d.state === "downloading") return d.connections === 0 && d.speed === 0 ? "connecting" : "running";
   return d.state;
 }
@@ -46,6 +47,7 @@ export function usePhaseText() {
   return (phase: Phase) =>
     ({
       connecting: t("connecting"),
+      checking: t("checkingData"),
       running: t("state.downloading"),
       processing: t("processing"),
       stopping: t("stopping"),

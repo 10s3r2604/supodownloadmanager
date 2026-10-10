@@ -17,6 +17,10 @@ use crate::category::Category;
 use crate::media::{self, AddMediaRequest, MediaControl, MediaSpec, Tools};
 use crate::settings::Settings;
 use crate::store;
+use crate::torrent::{
+    self, AddTorrentRequest, TorrentControl, TorrentEngine, TorrentInfo, TorrentLive,
+    TorrentSource, TorrentSpec,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +59,10 @@ pub struct Record {
     /// page then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaSpec>,
+    /// Set for BitTorrent downloads; `url` is the magnet link or `.torrent`
+    /// address then, and `path` the file or folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub torrent: Option<TorrentSpec>,
 }
 
 /// What the user interface shows for a download.
@@ -87,6 +95,16 @@ pub struct DownloadView {
     pub media: bool,
     /// The data is there and is being put together (video and audio merged).
     pub processing: bool,
+    /// A BitTorrent download; `connections` counts peers then.
+    pub torrent: bool,
+    /// Sharing a finished torrent with others.
+    pub seeding: bool,
+    /// Checking torrent data that is already on disk.
+    pub checking: bool,
+    /// Bytes per second sent to other peers.
+    pub upload_speed: u64,
+    /// Bytes sent to other peers.
+    pub uploaded: u64,
 }
 
 /// A request to add a download.
@@ -131,6 +149,7 @@ pub struct Manager {
     inner: Mutex<Inner>,
     store: PathBuf,
     tools: Arc<Tools>,
+    torrents: Arc<TorrentEngine>,
     runtime: Handle,
     notify: Notify,
 }
@@ -145,10 +164,11 @@ struct Inner {
     closing: bool,
 }
 
-/// A running download of either kind.
+/// A running download of any kind.
 enum Job {
     File(DownloadControl),
     Media(MediaControl),
+    Torrent(TorrentControl),
 }
 
 impl Job {
@@ -156,6 +176,14 @@ impl Job {
         match self {
             Job::File(control) => control.progress(),
             Job::Media(control) => control.progress(),
+            Job::Torrent(control) => control.progress(),
+        }
+    }
+
+    fn torrent(&self) -> Option<TorrentLive> {
+        match self {
+            Job::Torrent(control) => Some(control.live()),
+            _ => None,
         }
     }
 
@@ -163,6 +191,7 @@ impl Job {
         match self {
             Job::File(control) => control.pause(),
             Job::Media(control) => control.pause(),
+            Job::Torrent(control) => control.pause(),
         }
     }
 
@@ -170,6 +199,7 @@ impl Job {
         match self {
             Job::File(control) => control.cancel(),
             Job::Media(control) => control.cancel(),
+            Job::Torrent(control) => control.cancel(),
         }
     }
 }
@@ -189,6 +219,7 @@ impl Manager {
         store: PathBuf,
         settings: Settings,
         tools: Arc<Tools>,
+        torrents: Arc<TorrentEngine>,
         runtime: Handle,
         notify: Notify,
     ) -> anyhow::Result<Arc<Self>> {
@@ -212,6 +243,7 @@ impl Manager {
             }),
             store,
             tools,
+            torrents,
             runtime,
             notify,
         }))
@@ -237,6 +269,7 @@ impl Manager {
                 inner.downloader = Downloader::new(settings.client_config())?;
             }
             inner.downloader.set_speed_limit(settings.speed_limit());
+            self.torrents.set_config(settings.torrent_config());
             inner.settings = settings;
         }
         self.schedule();
@@ -252,10 +285,18 @@ impl Manager {
             .iter()
             .map(|record| {
                 let active = inner.active.get(&record.id);
+                let torrent = match (active, &record.torrent) {
+                    (Some(active), _) => active.control.torrent(),
+                    (None, Some(spec)) if record.state == State::Completed => {
+                        self.torrents.seeding(&spec.info_hash)
+                    }
+                    _ => None,
+                };
                 let live = Live {
                     progress: progress.get(&record.id),
                     stopping: active.is_some_and(|a| a.stopping),
                     running_for: active.map_or(Duration::ZERO, |a| a.since.elapsed()),
+                    torrent,
                 };
                 view(record, &live)
             })
@@ -329,6 +370,7 @@ impl Manager {
                 completed_at: None,
                 elapsed_ms: 0,
                 media: None,
+                torrent: None,
             });
             inner.dirty = true;
             self.save(&mut inner);
@@ -385,6 +427,119 @@ impl Manager {
                 completed_at: None,
                 elapsed_ms: 0,
                 media: Some(request.spec()),
+                torrent: None,
+            });
+            inner.dirty = true;
+            self.save(&mut inner);
+            id
+        };
+        self.schedule();
+        Ok(id)
+    }
+
+    /// Reads a magnet link or `.torrent` file for the "add torrent" dialog.
+    pub async fn inspect_torrent(&self, source: TorrentSource) -> Result<TorrentInfo, String> {
+        let downloader = self.downloader();
+        let mut info = self.torrents.inspect(&source, &downloader).await?;
+        let inner = self.lock();
+        info.existing = inner.torrent_download(&info.info_hash);
+        info.directory = inner
+            .settings
+            .directory_for(Category::from_file_name(info.main_file()));
+        Ok(info)
+    }
+
+    /// The files a torrent download gets, in torrent order.
+    pub fn torrent_files(&self, id: u64) -> Option<Vec<torrent::TorrentFile>> {
+        let spec = self
+            .lock()
+            .records
+            .iter()
+            .find(|r| r.id == id)?
+            .torrent
+            .clone()?;
+        let (info, _) = self.torrents.known(&spec.info_hash)?;
+        Some(
+            info.files
+                .into_iter()
+                .filter(|f| spec.files.as_ref().is_none_or(|s| s.contains(&f.index)))
+                .collect(),
+        )
+    }
+
+    /// Stops reading magnet links.
+    pub fn cancel_torrent_inspections(&self) {
+        self.torrents.cancel_inspections();
+    }
+
+    /// Adds (some files of) a torrent read with [`Self::inspect_torrent`].
+    pub fn add_torrent(self: &Arc<Self>, request: AddTorrentRequest) -> Result<u64, String> {
+        let (info, link) = self
+            .torrents
+            .known(&request.info_hash)
+            .ok_or("this torrent is no longer known; please add it again")?;
+        let files = info.selection(request.files.as_deref())?;
+        let size = info.selected_size(files.as_deref());
+        let category = Category::from_file_name(info.main_file());
+        let name = match sdm_core::sanitize_file_name(&info.name) {
+            name if name.is_empty() => info.info_hash.clone(),
+            name => name,
+        };
+
+        let id = {
+            let mut inner = self.lock();
+            if inner.torrent_download(&info.info_hash).is_some() {
+                return Err("this torrent is already in the download list".into());
+            }
+            let directory = request
+                .directory
+                .filter(|d| !d.as_os_str().is_empty())
+                .unwrap_or_else(|| inner.settings.directory_for(category));
+            // librqbit writes the files under their names in the torrent.
+            let (folder, path) = if info.single_file() {
+                let file = directory.join(&info.files[0].path);
+                if file.exists() || inner.records.iter().any(|r| r.path == file) {
+                    // Keep the existing file; this one gets its own folder.
+                    let stem = Path::new(&name)
+                        .file_stem()
+                        .map_or_else(|| name.clone(), |s| s.to_string_lossy().into_owned());
+                    let folder = inner.free_path(&directory, &stem);
+                    let file = folder.join(&info.files[0].path);
+                    (folder, file)
+                } else {
+                    (directory, file)
+                }
+            } else {
+                let folder = inner.free_path(&directory, &name);
+                (folder.clone(), folder)
+            };
+            let id = inner.next_id;
+            inner.next_id += 1;
+            inner.records.push(Record {
+                id,
+                url: link,
+                headers: Vec::new(),
+                file_name: file_name_of(&path),
+                path,
+                size: Some(size),
+                downloaded: 0,
+                resumable: true,
+                category,
+                state: if request.start {
+                    State::Queued
+                } else {
+                    State::Paused
+                },
+                error: None,
+                added_at: now_ms(),
+                completed_at: None,
+                elapsed_ms: 0,
+                media: None,
+                torrent: Some(TorrentSpec {
+                    info_hash: info.info_hash.clone(),
+                    files,
+                    folder,
+                }),
             });
             inner.dirty = true;
             self.save(&mut inner);
@@ -399,16 +554,30 @@ impl Manager {
         for &id in ids {
             inner.pause_one(id);
         }
+        self.stop_seeding(&inner, ids);
         self.save(&mut inner);
     }
 
     pub fn pause_all(&self) {
         let mut inner = self.lock();
         let ids: Vec<u64> = inner.records.iter().map(|r| r.id).collect();
-        for id in ids {
+        for &id in &ids {
             inner.pause_one(id);
         }
+        self.stop_seeding(&inner, &ids);
         self.save(&mut inner);
+    }
+
+    /// Pausing a finished torrent stops sharing it.
+    fn stop_seeding(&self, inner: &Inner, ids: &[u64]) {
+        for record in inner.records.iter().filter(|r| ids.contains(&r.id)) {
+            if let (State::Completed, Some(spec)) = (record.state, &record.torrent) {
+                let torrents = self.torrents.clone();
+                let hash = spec.info_hash.clone();
+                self.runtime
+                    .spawn(async move { torrents.stop_seeding(&hash).await });
+            }
+        }
     }
 
     pub fn resume(self: &Arc<Self>, ids: &[u64]) {
@@ -444,7 +613,7 @@ impl Manager {
             }
             if let Some(index) = inner.records.iter().position(|r| r.id == id) {
                 let record = inner.records.remove(index);
-                discard_files(&record, delete_file, &self.tools);
+                self.discard(&record, delete_file);
                 inner.dirty = true;
             }
         }
@@ -476,10 +645,13 @@ impl Manager {
         while !self.lock().active.is_empty() && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        let mut inner = self.lock();
-        inner.sync_progress();
-        inner.dirty = true;
-        self.save(&mut inner);
+        {
+            let mut inner = self.lock();
+            inner.sync_progress();
+            inner.dirty = true;
+            self.save(&mut inner);
+        }
+        let _ = tokio::time::timeout(Duration::from_secs(5), self.torrents.shutdown()).await;
     }
 
     /// Starts queued downloads while there are free slots.
@@ -515,17 +687,45 @@ impl Manager {
         };
         record.state = State::Downloading;
         record.error = None;
-        let (url, path, headers, media) = (
+        let (url, path, headers, media, torrent) = (
             record.url.clone(),
             record.path.clone(),
             record.headers.clone(),
             record.media.clone(),
+            record.torrent.clone(),
         );
         inner.dirty = true;
         let this = Arc::clone(self);
         let _runtime = self.runtime.enter();
 
-        let control = if let Some(spec) = media {
+        let control = if let Some(spec) = torrent {
+            let Some((info, _)) = self.torrents.known(&spec.info_hash) else {
+                if let Some(record) = inner.records.iter_mut().find(|r| r.id == id) {
+                    record.state = State::Failed;
+                    record.error = Some("the .torrent data of this download is missing".into());
+                }
+                return;
+            };
+            let sizes = info
+                .files
+                .iter()
+                .filter(|f| spec.files.as_ref().is_none_or(|s| s.contains(&f.index)))
+                .map(|f| (f.index, f.size))
+                .collect();
+            let job = self.torrents.start(torrent::JobConfig {
+                info_hash: spec.info_hash,
+                files: spec.files,
+                sizes,
+                folder: spec.folder,
+                path,
+            });
+            let control = job.control();
+            self.runtime.spawn(async move {
+                let result = job.wait().await;
+                this.finished(id, result);
+            });
+            Job::Torrent(control)
+        } else if let Some(spec) = media {
             let Some(ytdlp) = self.tools.ytdlp() else {
                 record.state = State::Failed;
                 record.error = Some("yt-dlp is not installed".into());
@@ -591,7 +791,7 @@ impl Manager {
             let notice = match (index, active.remove) {
                 (Some(index), Some(delete_file)) => {
                     let record = inner.records.remove(index);
-                    discard_files(&record, delete_file, &self.tools);
+                    self.discard(&record, delete_file);
                     None
                 }
                 (Some(index), None) => {
@@ -612,6 +812,29 @@ impl Manager {
         self.schedule();
     }
 
+    /// Deletes what is left of a download that leaves the list.
+    fn discard(&self, record: &Record, delete_file: bool) {
+        let Some(spec) = &record.torrent else {
+            discard_files(record, delete_file, &self.tools);
+            return;
+        };
+        let torrents = self.torrents.clone();
+        let hash = spec.info_hash.clone();
+        let finished = record.state == State::Completed;
+        let path = record.path.clone();
+        self.runtime.spawn(async move {
+            // Unfinished data goes for good, finished files to the trash.
+            torrents.forget(&hash, !finished).await;
+            if finished
+                && delete_file
+                && path.exists()
+                && let Err(error) = trash::delete(&path)
+            {
+                tracing::warn!(%error, path = %path.display(), "could not move the files to the trash");
+            }
+        });
+    }
+
     fn save(&self, inner: &mut Inner) {
         if !inner.dirty {
             return;
@@ -624,6 +847,14 @@ impl Manager {
 }
 
 impl Inner {
+    /// The download of a torrent, if one has it.
+    fn torrent_download(&self, info_hash: &str) -> Option<u64> {
+        self.records
+            .iter()
+            .find(|r| r.torrent.as_ref().is_some_and(|t| t.info_hash == info_hash))
+            .map(|r| r.id)
+    }
+
     /// Copies live progress into the records and returns it.
     fn sync_progress(&mut self) -> HashMap<u64, Progress> {
         let progress: HashMap<u64, Progress> = self
@@ -721,6 +952,7 @@ struct Live<'a> {
     progress: Option<&'a Progress>,
     stopping: bool,
     running_for: Duration,
+    torrent: Option<TorrentLive>,
 }
 
 fn view(record: &Record, live: &Live) -> DownloadView {
@@ -746,6 +978,11 @@ fn view(record: &Record, live: &Live) -> DownloadView {
         stopping: live.stopping,
         media: record.media.is_some(),
         processing: progress.is_some_and(|p| p.phase == Phase::Finishing),
+        torrent: record.torrent.is_some(),
+        seeding: live.torrent.is_some_and(|t| t.seeding),
+        checking: live.torrent.is_some_and(|t| t.checking),
+        upload_speed: live.torrent.map_or(0, |t| t.upload_speed),
+        uploaded: live.torrent.map_or(0, |t| t.uploaded),
     }
 }
 
@@ -842,10 +1079,18 @@ mod tests {
                 ..Settings::default()
             };
             let notices = self.notices.clone();
+            let torrents = TorrentEngine::new(
+                self.dir.path().join("torrent"),
+                torrent::EngineConfig {
+                    local_only: true,
+                    ..torrent::EngineConfig::default()
+                },
+            );
             Manager::new(
                 self.dir.path().join("downloads.json"),
                 settings,
                 Arc::new(tools),
+                torrents,
                 Handle::current(),
                 Box::new(move |notice| notices.lock().unwrap().push(notice)),
             )
@@ -992,6 +1237,105 @@ echo "SDMF $home/$name"
             started.elapsed() < Duration::from_secs(5),
             "yt-dlp was not stopped"
         );
+    }
+
+    /// A torrent from a .torrent file: read, one file chosen, downloaded
+    /// from a seeder on this computer, then removed from the list.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn downloads_torrents() {
+        use crate::torrent::testing::{data, make_torrent, tracker};
+
+        let fixture = Fixture::new();
+        let shared = fixture.dir.path().join("shared/Holiday");
+        std::fs::create_dir_all(&shared).unwrap();
+        let video = data(900_000, 3);
+        std::fs::write(shared.join("beach.mp4"), &video).unwrap();
+        std::fs::write(shared.join("notes.txt"), b"sunny").unwrap();
+        let file = fixture.dir.path().join("Holiday.torrent");
+        std::fs::write(&file, make_torrent(&shared, &tracker().await).await).unwrap();
+        let source = TorrentSource {
+            path: Some(file),
+            ..TorrentSource::default()
+        };
+
+        let seeder = TorrentEngine::new(
+            fixture.dir.path().join("seeder"),
+            torrent::EngineConfig {
+                local_only: true,
+                seed_ratio: torrent::SEED_FOREVER,
+                ..torrent::EngineConfig::default()
+            },
+        );
+        let downloader = Downloader::new(sdm_core::ClientConfig::default()).unwrap();
+        let info = seeder.inspect(&source, &downloader).await.unwrap();
+        let shares = seeder.start(torrent::JobConfig {
+            info_hash: info.info_hash.clone(),
+            files: None,
+            sizes: info.files.iter().map(|f| (f.index, f.size)).collect(),
+            folder: shared.clone(),
+            path: shared.clone(),
+        });
+        assert!(matches!(shares.wait().await, Ok(Outcome::Completed { .. })));
+
+        let manager = fixture.manager();
+        let info = manager.inspect_torrent(source.clone()).await.unwrap();
+        assert_eq!(info.directory, fixture.downloads().join("Video"));
+        assert_eq!(info.existing, None);
+        let beach = info.files.iter().find(|f| f.path == "beach.mp4").unwrap();
+        let id = manager
+            .add_torrent(AddTorrentRequest {
+                info_hash: info.info_hash.clone(),
+                files: Some(vec![beach.index]),
+                start: true,
+                ..AddTorrentRequest::default()
+            })
+            .unwrap();
+        let again = AddTorrentRequest {
+            info_hash: info.info_hash.clone(),
+            start: true,
+            ..AddTorrentRequest::default()
+        };
+        assert!(manager.add_torrent(again).is_err());
+        assert_eq!(
+            manager.inspect_torrent(source).await.unwrap().existing,
+            Some(id)
+        );
+
+        let done = wait_for(&manager, id, State::Completed).await;
+        let folder = fixture.downloads().join("Video").join("Holiday");
+        assert_eq!(done.path, folder);
+        assert_eq!(done.file_name, "Holiday");
+        assert!(done.torrent);
+        assert_eq!(done.size, Some(900_000));
+        assert!(done.url.starts_with("magnet:?xt=urn:btih:"));
+        assert_eq!(std::fs::read(folder.join("beach.mp4")).unwrap(), video);
+        assert!(
+            fixture
+                .notices
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| matches!(n, Notice::Completed { id: done, .. } if *done == id))
+        );
+
+        // Removing keeps the finished files but forgets the torrent.
+        let torrent_file = fixture
+            .dir
+            .path()
+            .join("torrent/torrents")
+            .join(format!("{}.torrent", info.info_hash));
+        assert!(torrent_file.exists());
+        manager.remove(&[id], false);
+        for _ in 0..200 {
+            if !torrent_file.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(!torrent_file.exists());
+        assert!(folder.join("beach.mp4").exists());
+        manager.shutdown().await;
+        seeder.shutdown().await;
     }
 
     fn request(url: String, start: bool) -> AddRequest {

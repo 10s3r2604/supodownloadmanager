@@ -90,6 +90,8 @@ struct Ping {
     version: &'static str,
     /// The app downloads videos from web pages (`/api/media`).
     media: bool,
+    /// The app takes magnet links in `/api/download`.
+    torrent: bool,
     #[serde(flatten)]
     config: BridgeConfig,
 }
@@ -169,6 +171,7 @@ async fn ping(State(bridge): State<Arc<Bridge>>, headers: HeaderMap) -> Response
         app: "sdm",
         version: env!("CARGO_PKG_VERSION"),
         media: true,
+        torrent: true,
         config: bridge.handler.config(),
     })
     .into_response()
@@ -186,12 +189,12 @@ async fn download(
     if !bridge.handler.config().enabled {
         return (StatusCode::CONFLICT, "browser integration is turned off").into_response();
     }
-    let valid =
-        url::Url::parse(&request.url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
+    let valid = crate::torrent::is_magnet(&request.url)
+        || url::Url::parse(&request.url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
     if !valid {
         return (
             StatusCode::BAD_REQUEST,
-            "only http and https links are supported",
+            "only http, https and magnet links are supported",
         )
             .into_response();
     }
@@ -356,6 +359,19 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert!(received.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn accepts_magnet_links() {
+        let (bridge, received) = bridge(true);
+        let body = r#"{"url":"magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"}"#;
+        let response = bridge
+            .router()
+            .oneshot(post(None, true, body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert!(received.lock().unwrap()[0].url.starts_with("magnet:?"));
     }
 
     #[tokio::test]

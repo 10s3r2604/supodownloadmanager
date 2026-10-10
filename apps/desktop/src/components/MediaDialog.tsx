@@ -1,4 +1,4 @@
-// Picks the quality of a video on a web page, like IDM's "Download this video".
+// Picks the quality of a video on a web page ("Download this video").
 
 import { useCallback, useEffect, useState } from "react";
 

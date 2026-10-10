@@ -26,7 +26,7 @@ export function GraphView(p: PwProps) {
   const f = useFigures(d);
   const phaseText = usePhaseText();
   const done = phase === "done";
-  const busy = phase === "running" || phase === "processing" || phase === "connecting" || phase === "queued";
+  const busy = phase === "running" || phase === "processing" || phase === "checking" || phase === "connecting" || phase === "queued";
 
   let left: ReactNode;
   let right: ReactNode;
@@ -102,7 +102,7 @@ export function GraphView(p: PwProps) {
             <>
               <span>{phase === "running" && f.left ? <b>{t("pwLeftLong", { t: f.left })}</b> : phaseText(phase)}</span>
               <span>
-                {phase === "running" && `${t("connectionsTitle", { n: d.connections })} · `}
+                {phase === "running" && `${t(d.torrent ? "peersTitle" : "connectionsTitle", { n: d.connections })} · `}
                 {d.resumable ? t("resumableYes") : t("resumableNo")}
               </span>
             </>

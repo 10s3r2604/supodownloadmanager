@@ -751,6 +751,82 @@
   text-align: right;
 }
 
+.neon-dot.seeding {
+  background: var(--info);
+  box-shadow: 0 0 8px var(--info);
+}
+
+/* Torrent details: peers, upload and files */
+
+.torrent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.torrent-panel h3 {
+  margin: 0;
+}
+
+.torrent-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.torrent-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.torrent-files {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 120px;
+  overflow-y: auto;
+  scrollbar-color: var(--border-2) transparent;
+  scrollbar-width: thin;
+}
+
+.torrent-file {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 90px 70px;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.torrent-file .name {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.torrent-file .bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--track);
+}
+
+.torrent-file .bar b {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.5s;
+}
+
+.torrent-file .size {
+  text-align: right;
+}
+
 @media (max-width: 1080px) {
   .c-spark,
   .c-size {

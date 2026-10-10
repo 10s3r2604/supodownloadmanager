@@ -10,10 +10,11 @@ mod media;
 mod settings;
 mod store;
 mod texts;
+mod torrent;
 mod tray;
 mod windows;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -36,6 +37,8 @@ const CLIPBOARD_EVENT: &str = "sdm:clipboard-link";
 const MEDIA_PROMPT_EVENT: &str = "sdm:media-prompt";
 /// Progress of downloading yt-dlp or ffmpeg.
 pub(crate) const TOOL_PROGRESS_EVENT: &str = "sdm:tool-progress";
+/// Asks the user interface to show the "add torrent" dialog.
+const TORRENT_PROMPT_EVENT: &str = "sdm:torrent-prompt";
 
 pub struct AppState {
     pub manager: Arc<Manager>,
@@ -47,6 +50,8 @@ pub struct AppState {
     pub tools: Arc<media::Tools>,
     /// What to do when running downloads finish, chosen in their windows.
     pub when_done: windows::WhenDoneChoices,
+    /// Torrents SDM was started with, until the window asks for them.
+    pub pending_torrents: Mutex<Vec<torrent::TorrentSource>>,
     quitting: AtomicBool,
 }
 
@@ -62,9 +67,14 @@ struct AddPrompt {
 pub fn run() {
     init_logging();
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             show_main_window(app);
+            // Opening a magnet link or .torrent file while SDM runs.
+            for source in torrent_sources(args.iter().skip(1), Path::new(&cwd)) {
+                let _ = app.emit(TORRENT_PROMPT_EVENT, source);
+            }
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -83,6 +93,14 @@ pub fn run() {
             commands::media_prepare,
             commands::media_probe,
             commands::add_media,
+            commands::inspect_torrent,
+            commands::cancel_torrent_inspect,
+            commands::add_torrent,
+            commands::pick_torrent_file,
+            commands::torrent_files,
+            commands::take_pending_torrents,
+            commands::magnet_handler,
+            commands::register_magnet_handler,
             commands::set_when_done,
             commands::probe_url,
             commands::add_download,
@@ -103,15 +121,30 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Supo Download Manager")
-        .run(|app, event| {
+        .run(|app, event| match event {
             // Closing the last window should still save all progress.
-            if let RunEvent::ExitRequested {
+            RunEvent::ExitRequested {
                 api, code: None, ..
-            } = event
-            {
+            } => {
                 api.prevent_exit();
                 quit(app);
             }
+            // macOS hands over magnet links and .torrent files this way.
+            #[cfg(target_os = "macos")]
+            RunEvent::Opened { urls } => {
+                let args: Vec<String> = urls
+                    .iter()
+                    .map(|url| match url.to_file_path() {
+                        Ok(path) => path.display().to_string(),
+                        Err(()) => url.to_string(),
+                    })
+                    .collect();
+                for source in torrent_sources(args.iter(), Path::new("/")) {
+                    show_main_window(app);
+                    let _ = app.emit(TORRENT_PROMPT_EVENT, source);
+                }
+            }
+            _ => {}
         });
 }
 
@@ -134,10 +167,12 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
 
     let notify_app = app.clone();
     let tools = Arc::new(media::Tools::new(&data_dir));
+    let torrents = torrent::TorrentEngine::new(data_dir.join("torrent"), settings.torrent_config());
     let manager = Manager::new(
         data_dir.join("downloads.json"),
         settings.clone(),
         tools.clone(),
+        torrents,
         tauri::async_runtime::handle().inner().clone(),
         Box::new(move |notice| notify(&notify_app, notice)),
     )?;
@@ -153,6 +188,10 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         data_dir,
         tools: tools.clone(),
         when_done: windows::WhenDoneChoices::default(),
+        pending_torrents: Mutex::new(torrent_sources(
+            std::env::args().skip(1),
+            &std::env::current_dir().unwrap_or_default(),
+        )),
         quitting: AtomicBool::new(false),
     });
     tray::create(app, settings.resolved_language())?;
@@ -306,6 +345,22 @@ impl Handler for AppBridge {
     fn download(&self, download: BrowserDownload) {
         let headers = download.headers();
         let file_name = download.file_name.filter(|name| !name.trim().is_empty());
+        if torrent::is_magnet(&download.url)
+            || torrent::is_torrent_file_name(&download.url)
+            || file_name
+                .as_deref()
+                .is_some_and(torrent::is_torrent_file_name)
+        {
+            open_torrent(
+                &self.app,
+                torrent::TorrentSource {
+                    link: Some(download.url),
+                    path: None,
+                    headers,
+                },
+            );
+            return;
+        }
         if self.manager.settings().confirm_browser_downloads {
             show_main_window(&self.app);
             let _ = self.app.emit(
@@ -336,5 +391,78 @@ impl Handler for AppBridge {
     fn media(&self, source: media::MediaSource) {
         show_main_window(&self.app);
         let _ = self.app.emit(MEDIA_PROMPT_EVENT, source);
+    }
+}
+
+/// Magnet links and `.torrent` files among command line arguments.
+fn torrent_sources<S: AsRef<str>>(
+    args: impl Iterator<Item = S>,
+    cwd: &Path,
+) -> Vec<torrent::TorrentSource> {
+    args.filter_map(|arg| {
+        let arg = arg.as_ref().trim();
+        if torrent::is_magnet(arg) {
+            return Some(torrent::TorrentSource {
+                link: Some(arg.to_owned()),
+                ..torrent::TorrentSource::default()
+            });
+        }
+        let path = cwd.join(arg);
+        (torrent::is_torrent_file_name(arg) && path.is_file()).then(|| torrent::TorrentSource {
+            path: Some(path),
+            ..torrent::TorrentSource::default()
+        })
+    })
+    .collect()
+}
+
+/// Shows the "add torrent" dialog, or adds the whole torrent right away
+/// when the user does not want to confirm downloads.
+pub(crate) fn open_torrent(app: &AppHandle, source: torrent::TorrentSource) {
+    let manager = app.state::<AppState>().manager.clone();
+    if manager.settings().confirm_browser_downloads {
+        show_main_window(app);
+        let _ = app.emit(TORRENT_PROMPT_EVENT, source);
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let added = match manager.inspect_torrent(source).await {
+            Ok(info) if info.existing.is_some() => return,
+            Ok(info) => manager.add_torrent(torrent::AddTorrentRequest {
+                info_hash: info.info_hash,
+                start: true,
+                ..torrent::AddTorrentRequest::default()
+            }),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = added {
+            tracing::warn!(%error, "could not add a torrent from the browser");
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_torrents_in_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Ubuntu.torrent"), b"d4:infod...").unwrap();
+        let magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567";
+        let args = [
+            "--minimized",
+            magnet,
+            "Ubuntu.torrent",
+            "missing.torrent",
+            "notes.txt",
+        ];
+        let found = torrent_sources(args.iter(), dir.path());
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].link.as_deref(), Some(magnet));
+        assert_eq!(
+            found[1].path.as_deref(),
+            Some(dir.path().join("Ubuntu.torrent").as_path())
+        );
     }
 }

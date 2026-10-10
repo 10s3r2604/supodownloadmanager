@@ -42,12 +42,13 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 - [x] Forward cookies, referer and user agent so downloads that need a login work
 - [x] Local bridge that only browser extensions can use
 - [x] Find installed browsers and guide the extension installation from the app
-- [ ] Publish in the Chrome Web Store and on addons.mozilla.org (one-click install)
+- [ ] Publish in the Chrome Web Store, Edge Add-ons and on addons.mozilla.org (one-click install);
+      packages, listing and images are ready, see [STORE.md](STORE.md)
 
 ## Phase 4: Looks, progress windows and videos ✅ (v0.3)
 
 - [x] Two looks, switchable in Settings: Neon (live speed chart, segments, connections) and Minimal (light or dark)
-- [x] IDM-style progress window for every download, in three styles (speed graph, ring, classic)
+- [x] A progress window for every download, in three styles (speed graph, ring, classic)
 - [x] "Show a dialog when done" and "Open the file when done" per download, "Don't show this dialog again"
 - [x] Video grabber: YouTube, Facebook, X, TikTok and ~1800 other sites through yt-dlp, with a quality picker
 - [x] HLS (`.m3u8`) and DASH streams, video and sound merged with ffmpeg
@@ -56,17 +57,29 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 - [ ] Playlists and channels
 - [ ] Subtitles
 
-## Phase 5: Power features
+## Phase 5: BitTorrent ✅ (v0.4)
 
-- [ ] **BitTorrent**: magnet links and `.torrent` files, captured from the browser too
-      (planned on top of [librqbit](https://github.com/ikatson/rqbit), a Rust BitTorrent engine)
+Built on [librqbit](https://github.com/ikatson/rqbit), a BitTorrent engine in Rust.
+
+- [x] Magnet links and `.torrent` files (from a link, a file, drag and drop or the command line)
+- [x] "Add torrent" dialog with the files to choose, as a folder tree
+- [x] Torrents in the same list, queue and progress windows as other downloads; peers and upload speed
+- [x] Fast resume after a restart, without checking all the data again
+- [x] Sharing finished torrents back until a ratio, with an upload limit
+- [x] Browser: magnet link clicks and `.torrent` downloads go to SDM
+- [x] Optionally open magnet links from other programs with SDM (Windows, Linux)
+- [ ] Per-torrent peer list and piece map
+- [ ] Creating torrents
+
+## Phase 6: Power features
+
 - [ ] Scheduler: start and stop at set times, shut down or sleep when done
 - [ ] Several queues with their own limits
 - [ ] Saved logins per site
 - [ ] Refresh expired download links without losing progress
 - [ ] "Download all links" on a page, batch downloads with numbered patterns
 
-## Phase 6: Distribution
+## Phase 7: Distribution
 
 - [x] Installers built by CI: MSI/NSIS for Windows, DMG for macOS, deb/rpm/AppImage for Linux
 - [ ] Code signing for Windows and macOS

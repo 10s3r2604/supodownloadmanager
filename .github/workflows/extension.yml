@@ -1,0 +1,94 @@
+name: Publish extension
+
+# Uploads the browser extension to the Chrome Web Store, Microsoft Edge
+# Add-ons and addons.mozilla.org. Run it by hand (Actions → Publish extension
+# → Run workflow) after a release. Each store is skipped while its secrets are
+# missing; docs/STORE.md explains how to get them. The very first version of
+# each listing must be submitted by hand in the store's dashboard.
+on:
+  workflow_dispatch:
+    inputs:
+      chrome:
+        description: Chrome Web Store
+        type: boolean
+        default: true
+      edge:
+        description: Microsoft Edge Add-ons
+        type: boolean
+        default: true
+      firefox:
+        description: addons.mozilla.org
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Secrets can't be tested in `if:` directly, their copies in env can.
+    env:
+      CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+      EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+      AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Build
+        run: |
+          node extension/build.mjs
+          (cd extension/dist/chromium-store && zip -qr ../../../store-chromium.zip .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-packages
+          path: |
+            store-chromium.zip
+            extension/dist/firefox
+
+      - name: Chrome Web Store
+        if: inputs.chrome && env.CWS_REFRESH_TOKEN != ''
+        env:
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+        run: npx --yes chrome-webstore-upload-cli@4 --source store-chromium.zip
+
+      - name: Microsoft Edge Add-ons
+        if: inputs.edge && env.EDGE_API_KEY != ''
+        env:
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+        run: |
+          set -euo pipefail
+          api="https://api.addons.microsoftedge.microsoft.com/v1/products/$EDGE_PRODUCT_ID/submissions"
+          auth=(-H "Authorization: ApiKey $EDGE_API_KEY" -H "X-ClientID: $EDGE_CLIENT_ID")
+          wait_for() {
+            for _ in $(seq 1 60); do
+              status=$(curl -fsS "${auth[@]}" "$1" | tee /dev/stderr | jq -r .status)
+              case "$status" in
+                Succeeded) return 0 ;;
+                Failed) return 1 ;;
+              esac
+              sleep 10
+            done
+            return 1
+          }
+          upload=$(curl -fsS -D - -o /dev/null "${auth[@]}" -H "Content-Type: application/zip" \
+            -X POST "$api/draft/package" --data-binary @store-chromium.zip | tr -d '\r' | awk 'tolower($1)=="location:" {print $2}')
+          wait_for "$api/draft/package/operations/$(basename "$upload")"
+          publish=$(curl -fsS -D - -o /dev/null "${auth[@]}" -H "Content-Type: application/json" \
+            -X POST "$api" -d '{"notes":"Update from GitHub Actions"}' | tr -d '\r' | awk 'tolower($1)=="location:" {print $2}')
+          wait_for "$api/operations/$(basename "$publish")"
+
+      - name: addons.mozilla.org
+        if: inputs.firefox && env.AMO_JWT_ISSUER != ''
+        env:
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          npx --yes web-ext@10 sign --channel listed --source-dir extension/dist/firefox \
+            --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET" --approval-timeout 0

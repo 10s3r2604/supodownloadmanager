@@ -50,6 +50,7 @@ export function ContextMenu({ x, y, download: d, selected, actions, onClose }: P
       {item("folder", t("showInFolder"), () => actions.showInFolder(d))}
       {canPause && item("pause", t("pause"), () => actions.pause(ids))}
       {canResume && item("play", t("resume"), () => actions.resume(ids))}
+      {d.seeding && item("pause", t("stopSeeding"), () => actions.pause([d.id]))}
       {item("link", t("copyLink"), () => actions.copyLink(d))}
       <hr />
       {item("trash", t("delete"), () => actions.remove(ids), true)}

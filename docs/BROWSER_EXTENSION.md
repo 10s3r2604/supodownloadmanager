@@ -19,10 +19,13 @@ Firefox.
   with yt-dlp and asks for the quality. The button can be turned off in the
   popup.
 
-  <img src="images/video-button-vi.png" alt="Download this video" width="416">
+  <img src="images/video-button-en.png" alt="Download this video" width="416">
 
-- **Adds "Download link with SDM"** to the right-click menu of links, images
-  and audio, and **"Download the video on this page with SDM"** to the menu of
+- **Opens magnet links in SDM.** A click on a magnet link shows SDM's torrent
+  dialog instead of asking which program to use (when SDM is running; can be
+  turned off in the popup). `.torrent` files the browser downloads go to SDM too.
+- **Adds "Download link with SDM"** to the right-click menu of links (also
+  magnet links), images and audio, and **"Download the video on this page with SDM"** to the menu of
   videos and pages. Sites such as YouTube replace the video's own menu, so
   right-click next to the player there.
 - **Falls back gracefully.** When SDM is not running, the browser downloads as
@@ -92,16 +95,12 @@ them as soon as the video is complete.
 node extension/build.mjs
 ```
 
-This writes `extension/dist/chromium` and `extension/dist/firefox`. The
-desktop app bundles both and the release workflow publishes them as zip files.
+This writes `extension/dist/chromium`, `extension/dist/chromium-store` and
+`extension/dist/firefox`. The desktop app bundles the first and the last; the
+store build is the one for the Chrome Web Store and Edge Add-ons (see
+[STORE.md](STORE.md)). The release workflow publishes all three as zip files.
 
 ## Publishing (maintainers)
 
-1. **Chrome Web Store**: register a developer account (one-time fee), upload
-   `sdm-extension-chromium-<version>.zip` from the release. Edge, Cốc Cốc,
-   Brave, Opera and Vivaldi can all install from the Chrome Web Store.
-2. **Firefox**: upload `sdm-extension-firefox-<version>.zip` to
-   [addons.mozilla.org](https://addons.mozilla.org/developers/) (free).
-3. Put the store links into `CHROME_WEB_STORE_URL` and `FIREFOX_ADDONS_URL` in
-   `apps/desktop/src-tauri/src/browsers.rs`. From then on the **Install
-   extension** button opens the store page instead of the folder steps.
+See [STORE.md](STORE.md) for the store packages, listing texts, privacy answers, images
+and the publishing workflow.

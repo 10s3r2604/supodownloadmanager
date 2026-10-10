@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { Download } from "../api";
 import { logoSmall } from "../brand";
 import { AreaChart, SegmentBlocks, Sparkline, niceMax } from "../components/Charts";
+import { TorrentPanel } from "../components/TorrentPanel";
 import { useI18n } from "../context";
 import { formatBytes, formatDuration, formatHuman, formatSpeed, percent } from "../format";
 import type { TextKey } from "../i18n";
@@ -198,6 +199,8 @@ function RailButton(props: { icon: IconName; label: string; active?: boolean; do
 
 function statusText(d: Download, t: ReturnType<typeof useI18n>["t"]) {
   if (d.stopping) return t("stopping");
+  if (d.state === "completed" && d.seeding) return t("seeding");
+  if (d.state === "downloading" && d.checking) return t("checkingData");
   if (d.state === "downloading" && d.processing) return t("processing");
   if (d.state === "downloading" && d.connections === 0 && d.speed === 0) return t("connecting");
   return t(`state.${d.state}` as TextKey);
@@ -224,7 +227,7 @@ function NeonRow({ d, selected, actions, history }: { d: Download } & ViewProps)
     >
       <td className="c-name">
         <div className="neon-name">
-          <Icon name={categoryIcon[d.category]} size={15} />
+          <Icon name={d.torrent ? "magnet" : categoryIcon[d.category]} size={15} />
           <span title={d.fileName}>{d.fileName}</span>
         </div>
       </td>
@@ -233,14 +236,16 @@ function NeonRow({ d, selected, actions, history }: { d: Download } & ViewProps)
         <SegmentBlocks fills={blocks(d)} className={d.state} />
         <div className="neon-sub mono">
           {value == null ? formatBytes(d.downloaded, language) : `${Math.floor(value)}%`}
-          {running && d.connections > 0 && ` · ${t("connShort", { n: d.connections })}`}
+          {running && d.connections > 0 && ` · ${t(d.torrent ? "peersShort" : "connShort", { n: d.connections })}`}
         </div>
       </td>
-      <td className={`c-speed mono${running ? "" : " dim"}`}>{running ? formatSpeed(d.speed, language) : "—"}</td>
+      <td className={`c-speed mono${running || d.seeding ? "" : " dim"}`}>
+        {running ? formatSpeed(d.speed, language) : d.seeding ? `↑ ${formatSpeed(d.uploadSpeed, language)}` : "—"}
+      </td>
       <td className="c-spark">{running && <Sparkline values={history.perDownload.get(d.id) ?? []} />}</td>
       <td className="c-eta mono">{running ? formatDuration(d.eta) : ""}</td>
       <td className="c-state" title={d.error ?? undefined}>
-        <span className={`neon-dot ${d.state}`} />
+        <span className={`neon-dot ${d.seeding ? "seeding" : d.state}`} />
         {statusText(d, t)}
       </td>
     </tr>
@@ -262,7 +267,7 @@ function NeonDetails({ d, actions, history }: { d: Download } & ViewProps) {
           : { icon: "play", label: t("resume") };
 
   return (
-    <section className={`neon-details${running ? "" : " single"}`}>
+    <section className={`neon-details${running || d.torrent ? "" : " single"}`}>
       <div>
         <div className="neon-details-head">
           <h3 title={d.fileName}>{d.fileName}</h3>
@@ -270,6 +275,11 @@ function NeonDetails({ d, actions, history }: { d: Download } & ViewProps) {
             <button type="button" className="neon-ghost" onClick={() => actions.primary(d)}>
               <Icon name={primary.icon} size={14} /> {primary.label}
             </button>
+            {d.seeding && (
+              <button type="button" className="neon-ghost" onClick={() => actions.pause([d.id])}>
+                <Icon name="pause" size={14} /> {t("stopSeeding")}
+              </button>
+            )}
             {running && (
               <button type="button" className="neon-ghost" title={t("viewProgress")} onClick={() => actions.openProgress(d)}>
                 <Icon name="window" size={14} />
@@ -287,10 +297,14 @@ function NeonDetails({ d, actions, history }: { d: Download } & ViewProps) {
         <dl className="neon-kv">
           <dt>{t("savedTo")}</dt>
           <dd title={d.path}>{d.path}</dd>
-          <dt>{t("resumable")}</dt>
-          <dd>{d.resumable ? t("yes") : t("no")}</dd>
-          <dt>{t("server")}</dt>
-          <dd>{hostOf(d.url)}</dd>
+          {!d.torrent && (
+            <>
+              <dt>{t("resumable")}</dt>
+              <dd>{d.resumable ? t("yes") : t("no")}</dd>
+            </>
+          )}
+          <dt>{d.torrent ? t("sectionTorrent") : t("server")}</dt>
+          <dd title={d.url}>{d.torrent ? d.url.match(/btih:([0-9a-z]+)/i)?.[1] ?? hostOf(d.url) : hostOf(d.url)}</dd>
           <dt>{t("downloadedLabel")}</dt>
           <dd className="mono">
             {formatBytes(d.downloaded, language)}
@@ -310,7 +324,8 @@ function NeonDetails({ d, actions, history }: { d: Download } & ViewProps) {
           )}
         </dl>
       </div>
-      {running && (
+      {d.torrent && <TorrentPanel d={d} />}
+      {running && !d.torrent && (
         <div>
           <h3>{t("connectionsTitle", { n: d.connections })}</h3>
           <div className="neon-conns">

@@ -3,7 +3,7 @@
     "message": "Supo Download Manager"
   },
   "extDescription": {
-    "message": "Tải file bằng Supo Download Manager: nhanh hơn, tạm dừng và tải tiếp được."
+    "message": "Chuyển file tải, video và link magnet sang Supo Download Manager, trình tăng tốc tải miễn phí cho Windows, macOS và Linux."
   },
   "menuLink": {
     "message": "Tải link bằng SDM"
@@ -58,5 +58,8 @@
   },
   "videoButtonLabel": {
     "message": "Hiện nút “Tải video này” trên video"
+  },
+  "magnetsLabel": {
+    "message": "Mở link magnet bằng SDM"
   }
 }

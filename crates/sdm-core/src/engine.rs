@@ -154,6 +154,14 @@ impl DownloadRequest {
     }
 }
 
+/// A small file read into memory by [`Downloader::fetch`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fetched {
+    pub data: Vec<u8>,
+    /// The `Content-Type` the server sent.
+    pub content_type: Option<String>,
+}
+
 /// How a download ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -359,6 +367,48 @@ impl Downloader {
         }
         data.truncate(usize::try_from(wanted).unwrap_or(usize::MAX));
         Ok(data)
+    }
+
+    /// Downloads a small file, such as a `.torrent` file, into memory.
+    /// Fails with [`Error::TooLarge`] when it has more than `limit` bytes.
+    pub async fn fetch(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        limit: u64,
+    ) -> Result<Fetched> {
+        let url = parse_url(url)?;
+        let response = self
+            .client
+            .get(url)
+            .headers(build_headers(headers)?)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(Error::Status(response.status()));
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > limit)
+        {
+            return Err(Error::TooLarge(limit));
+        }
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let mut data = Vec::new();
+        let mut body = response.bytes_stream();
+        while let Some(chunk) = body.next().await {
+            let chunk = chunk?;
+            if (data.len() + chunk.len()) as u64 > limit {
+                return Err(Error::TooLarge(limit));
+            }
+            self.limiter.acquire(chunk.len()).await;
+            data.extend_from_slice(&chunk);
+        }
+        Ok(Fetched { data, content_type })
     }
 
     /// Starts a download in the background. Must be called from within a

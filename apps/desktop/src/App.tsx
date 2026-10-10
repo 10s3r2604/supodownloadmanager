@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AddPrompt, type AppInfo, type Download, type MediaSource, type Settings, api } from "./api";
+import { type AddPrompt, type AppInfo, type Download, type MediaSource, type Settings, type TorrentSource, api } from "./api";
 import { useAppearance } from "./appearance";
 import { AddDialog } from "./components/AddDialog";
 import { BrowsersDialog } from "./components/BrowsersDialog";
@@ -8,6 +8,7 @@ import { ContextMenu } from "./components/ContextMenu";
 import { DeleteDialog } from "./components/DeleteDialog";
 import { MediaDialog } from "./components/MediaDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { TorrentDialog } from "./components/TorrentDialog";
 import { type Toast, Toasts } from "./components/Toasts";
 import { I18nContext, copyText, errorText } from "./context";
 import { type Filter, type History, emptyHistory, matches, recordHistory, totals } from "./model";
@@ -18,6 +19,7 @@ import type { RowActions, ViewProps } from "./views";
 type DialogState =
   | { kind: "add"; prompt?: AddPrompt; url?: string }
   | { kind: "media"; source: MediaSource }
+  | { kind: "torrent"; source: TorrentSource }
   | { kind: "settings" }
   | { kind: "browsers" }
   | { kind: "delete"; ids: number[] };
@@ -29,6 +31,13 @@ interface Menu {
 }
 
 const POLL_MS = 600;
+
+const isMagnet = (text: string) => /^magnet:\?\S+$/i.test(text.trim());
+
+/** Opens magnet links in the torrent dialog, other links in the add dialog. */
+function dialogFor(url: string): DialogState {
+  return isMagnet(url) ? { kind: "torrent", source: { link: url.trim() } } : { kind: "add", url };
+}
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -42,7 +51,7 @@ export default function App() {
   const [selected, setSelected] = useState<number[]>([]);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
-  const [prompts, setPrompts] = useState<(AddPrompt | MediaSource)[]>([]);
+  const [prompts, setPrompts] = useState<(AddPrompt | MediaSource | TorrentSource)[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const anchor = useRef<number | null>(null);
 
@@ -85,6 +94,15 @@ export default function App() {
     const stops = [
       api.onAddPrompt((prompt) => setPrompts((queue) => [...queue, prompt])),
       api.onMediaPrompt((source) => setPrompts((queue) => [...queue, source])),
+      api.onTorrentPrompt((source) => setPrompts((queue) => [...queue, source])),
+      api.takePendingTorrents().then((sources) => {
+        setPrompts((queue) => [...queue, ...sources]);
+        return () => {};
+      }),
+      api.onFileDrop((paths) => {
+        const torrents = paths.filter((path) => /\.torrent$/i.test(path)).map((path) => ({ path }));
+        setPrompts((queue) => [...queue, ...torrents]);
+      }),
       api.onClipboardLink((url) => toast("clipboard", t("clipboardFound"), url)),
     ];
     return () => stops.forEach((stop) => stop.then((unlisten) => unlisten()));
@@ -94,7 +112,13 @@ export default function App() {
   useEffect(() => {
     if (!dialog && prompts.length > 0 && settings) {
       const next = prompts[0];
-      setDialog("pageUrl" in next ? { kind: "media", source: next } : { kind: "add", prompt: next });
+      setDialog(
+        "pageUrl" in next
+          ? { kind: "media", source: next }
+          : "url" in next
+            ? { kind: "add", prompt: next }
+            : { kind: "torrent", source: next },
+      );
       setPrompts((queue) => queue.slice(1));
     }
   }, [dialog, prompts, settings]);
@@ -170,7 +194,7 @@ export default function App() {
     const onPaste = (event: ClipboardEvent) => {
       if (dialog || typing(event.target)) return;
       const text = event.clipboardData?.getData("text")?.trim() ?? "";
-      if (/^https?:\/\/\S+$/i.test(text)) setDialog({ kind: "add", url: text });
+      if (/^https?:\/\/\S+$/i.test(text) || isMagnet(text)) setDialog(dialogFor(text));
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("paste", onPaste);
@@ -227,6 +251,20 @@ export default function App() {
           onClose={closeDialog}
           onError={showError}
           onMedia={(pageUrl) => setDialog({ kind: "media", source: { pageUrl } })}
+          onTorrent={(source) => setDialog({ kind: "torrent", source })}
+        />
+      )}
+      {dialog?.kind === "torrent" && settings && (
+        <TorrentDialog
+          source={dialog.source}
+          settings={settings}
+          onClose={closeDialog}
+          onError={showError}
+          onShowExisting={(id) => {
+            setFilter("all");
+            setQuery("");
+            setSelected([id]);
+          }}
         />
       )}
       {dialog?.kind === "media" && settings && (
@@ -271,7 +309,7 @@ export default function App() {
       <Toasts
         toasts={toasts}
         onDismiss={(id) => setToasts((list) => list.filter((item) => item.id !== id))}
-        onDownload={(url) => setDialog({ kind: "add", url })}
+        onDownload={(url) => setDialog(dialogFor(url))}
       />
     </I18nContext.Provider>
   );

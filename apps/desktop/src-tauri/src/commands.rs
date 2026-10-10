@@ -15,6 +15,7 @@ use crate::category::Category;
 use crate::manager::{AddRequest, DownloadView, State as DownloadState};
 use crate::media::{AddMediaRequest, MediaInfo, MediaSource, ToolStatus};
 use crate::settings::Settings;
+use crate::torrent::{AddTorrentRequest, TorrentFile, TorrentInfo, TorrentSource};
 use crate::tray;
 use crate::windows::WhenDone;
 
@@ -34,7 +35,7 @@ pub fn get_download(state: State<'_, AppState>, id: u64) -> Option<DownloadView>
     state.manager.get(id)
 }
 
-/// Opens the IDM-style progress window of a download.
+/// Opens the progress window of a download.
 #[tauri::command]
 pub async fn open_progress_window(app: AppHandle, id: u64) {
     crate::windows::open_progress(&app, id);
@@ -91,6 +92,27 @@ pub async fn media_probe(state: State<'_, AppState>, source: MediaSource) -> Res
 #[tauri::command]
 pub fn add_media(state: State<'_, AppState>, request: AddMediaRequest) -> Result<u64> {
     state.manager.add_media(request)
+}
+
+/// Reads a magnet link or `.torrent` file for the "add torrent" dialog.
+#[tauri::command]
+pub async fn inspect_torrent(
+    state: State<'_, AppState>,
+    source: TorrentSource,
+) -> Result<TorrentInfo> {
+    state.manager.inspect_torrent(source).await
+}
+
+/// Stops reading magnet links (the dialog was closed).
+#[tauri::command]
+pub fn cancel_torrent_inspect(state: State<'_, AppState>) {
+    state.manager.cancel_torrent_inspections();
+}
+
+/// Adds the chosen files of a torrent to the download list.
+#[tauri::command]
+pub fn add_torrent(state: State<'_, AppState>, request: AddTorrentRequest) -> Result<u64> {
+    state.manager.add_torrent(request)
 }
 
 /// What happens when a download finishes.
@@ -222,6 +244,67 @@ pub async fn pick_folder(app: AppHandle) -> Option<String> {
     });
     let folder = receiver.await.ok().flatten()?;
     folder.into_path().ok().map(|p| p.display().to_string())
+}
+
+/// Asks for a `.torrent` file.
+#[tauri::command]
+pub async fn pick_torrent_file(app: AppHandle) -> Option<String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("BitTorrent", &["torrent"])
+        .pick_file(move |file| {
+            let _ = sender.send(file);
+        });
+    let file = receiver.await.ok().flatten()?;
+    file.into_path().ok().map(|p| p.display().to_string())
+}
+
+/// Magnet links and .torrent files SDM was started with.
+#[tauri::command]
+pub fn take_pending_torrents(state: State<'_, AppState>) -> Vec<TorrentSource> {
+    state
+        .pending_torrents
+        .lock()
+        .map(|mut list| std::mem::take(&mut *list))
+        .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MagnetHandler {
+    /// The system lets SDM make itself the program for magnet links.
+    supported: bool,
+    registered: bool,
+}
+
+/// Whether SDM opens magnet links outside the browser.
+#[tauri::command]
+pub fn magnet_handler(app: AppHandle) -> MagnetHandler {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    match app.deep_link().is_registered("magnet") {
+        Ok(registered) => MagnetHandler {
+            supported: true,
+            registered,
+        },
+        Err(_) => MagnetHandler {
+            supported: false,
+            registered: false,
+        },
+    }
+}
+
+/// Makes SDM the program that opens magnet links.
+#[tauri::command]
+pub fn register_magnet_handler(app: AppHandle) -> Result<()> {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    app.deep_link().register("magnet").map_err(text_error)
+}
+
+/// The files a torrent download gets, in torrent order.
+#[tauri::command]
+pub fn torrent_files(state: State<'_, AppState>, id: u64) -> Vec<TorrentFile> {
+    state.manager.torrent_files(id).unwrap_or_default()
 }
 
 #[derive(Serialize)]

@@ -4,9 +4,10 @@ members = ["crates/sdm-core", "crates/sdm-cli", "apps/desktop/src-tauri"]
 # The desktop app needs extra system libraries and a built web UI, so plain
 # `cargo build` / `cargo test` skip it. Use `--workspace` to include it.
 default-members = ["crates/sdm-core", "crates/sdm-cli"]
+exclude = ["third_party"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/10s3r2604/supodownloadmanager"
@@ -14,7 +15,7 @@ homepage = "https://github.com/10s3r2604/supodownloadmanager"
 authors = ["Supo Download Manager contributors"]
 
 [workspace.dependencies]
-sdm-core = { path = "crates/sdm-core", version = "0.3.0" }
+sdm-core = { path = "crates/sdm-core", version = "0.4.0" }
 anyhow = "1"
 futures-util = "0.3"
 percent-encoding = "2"
@@ -31,3 +32,7 @@ tracing = "0.1"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# BitTorrent on computers without IPv6; see third_party/librqbit-tracker-comms/README.md.
+[patch.crates-io]
+librqbit-tracker-comms = { path = "third_party/librqbit-tracker-comms" }

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { type ProgressStyle, type Settings, type Skin, api } from "../api";
+import { type ProgressStyle, SEED_FOREVER, type Settings, type Skin, api } from "../api";
 import { errorText, useI18n } from "../context";
 import type { TextKey } from "../i18n";
 import { Icon } from "../icons";
@@ -15,7 +15,7 @@ interface Props {
   onError: (message: string) => void;
 }
 
-type Tab = "appearance" | "general" | "connection" | "browser";
+type Tab = "appearance" | "general" | "connection" | "browser" | "torrent";
 type ProxyMode = "system" | "none" | "custom";
 
 const PROGRESS_STYLES: { style: ProgressStyle; label: TextKey; hint: TextKey }[] = [
@@ -28,7 +28,15 @@ const TABS: { name: Tab; label: TextKey }[] = [
   { name: "appearance", label: "appearance" },
   { name: "general", label: "tabGeneral" },
   { name: "connection", label: "tabConnection" },
+  { name: "torrent", label: "sectionTorrent" },
   { name: "browser", label: "tabBrowser" },
+];
+
+const SEED_CHOICES: { value: number; label: TextKey }[] = [
+  { value: 0, label: "seedNone" },
+  { value: 100, label: "seedOne" },
+  { value: 200, label: "seedTwo" },
+  { value: SEED_FOREVER, label: "seedForever" },
 ];
 
 export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError }: Props) {
@@ -257,6 +265,53 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
         </div>
       )}
 
+      {tab === "torrent" && (
+        <div className="form">
+          <fieldset className="field">
+            <span>{t("seedLabel")}</span>
+            <div className="radios column">
+              {SEED_CHOICES.map((choice) => (
+                <label key={choice.value} className="radio">
+                  <input
+                    type="radio"
+                    checked={
+                      draft.seedRatio === choice.value ||
+                      (choice.value === 100 && !SEED_CHOICES.some((c) => c.value === draft.seedRatio))
+                    }
+                    onChange={() => set("seedRatio", choice.value)}
+                  />
+                  {t(choice.label)}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="field-grid">
+            <label className="field">
+              <span>{t("uploadLimitLabel")}</span>
+              <input
+                type="number"
+                min={0}
+                value={Math.round(draft.uploadLimit / 1024)}
+                onChange={(e) => set("uploadLimit", number(e.target.value, 0, 10_000_000) * 1024)}
+              />
+            </label>
+            <label className="field">
+              <span>{t("torrentPortLabel")}</span>
+              <input
+                type="number"
+                min={0}
+                max={65535}
+                value={draft.torrentPort}
+                onChange={(e) => set("torrentPort", number(e.target.value, 0, 65535))}
+              />
+            </label>
+          </div>
+          <small className="muted">{t("torrentPortHint")}</small>
+          <MagnetHandler onError={onError} />
+          <small className="muted">{t("torrentRights")}</small>
+        </div>
+      )}
+
       {tab === "browser" && (
         <div className="form">
           <Check
@@ -390,5 +445,40 @@ function Check(props: { label: string; checked: boolean; disabled?: boolean; onC
       />
       {props.label}
     </label>
+  );
+}
+
+/** Lets SDM open magnet links clicked outside the browser (Windows, Linux). */
+function MagnetHandler({ onError }: { onError: (message: string) => void }) {
+  const { t } = useI18n();
+  const [state, setState] = useState<{ supported: boolean; registered: boolean } | null>(null);
+  useEffect(() => {
+    api.magnetHandler().then(setState).catch(() => setState(null));
+  }, []);
+  if (!state?.supported) return null;
+  return (
+    <div className="field">
+      <span>{t("magnetHandler")}</span>
+      <div className="input-row align-center">
+        <span className={state.registered ? "good" : "muted"}>
+          {state.registered ? t("magnetHandlerOn") : t("magnetHandlerOff")}
+        </span>
+        {!state.registered && (
+          <button
+            type="button"
+            className="button"
+            onClick={() =>
+              api
+                .registerMagnetHandler()
+                .then(() => api.magnetHandler().then(setState))
+                .catch((error) => onError(errorText(error)))
+            }
+          >
+            <Icon name="magnet" size={15} />
+            {t("magnetHandlerButton")}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

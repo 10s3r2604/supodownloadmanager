@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export type State = "queued" | "downloading" | "paused" | "completed" | "failed";
@@ -50,6 +51,16 @@ export interface Download {
   media: boolean;
   /** Video and audio are being merged. */
   processing: boolean;
+  /** A BitTorrent download; `connections` counts peers then. */
+  torrent: boolean;
+  /** Sharing a finished torrent with others. */
+  seeding: boolean;
+  /** Checking torrent data already on disk. */
+  checking: boolean;
+  /** Bytes per second sent to other peers. */
+  uploadSpeed: number;
+  /** Bytes sent to other peers. */
+  uploaded: number;
 }
 
 export interface Settings {
@@ -72,7 +83,16 @@ export interface Settings {
   confirmBrowserDownloads: boolean;
   bridgePort: number;
   captureExtensions: string[];
+  /** Share finished torrents until this many percent were uploaded; 0 = no, 65535 = until SDM quits. */
+  seedRatio: number;
+  /** Bytes per second, 0 = unlimited. */
+  uploadLimit: number;
+  /** 0 = picked automatically. */
+  torrentPort: number;
 }
+
+/** Share finished torrents until SDM quits. */
+export const SEED_FOREVER = 65535;
 
 export interface ProbeResult {
   url: string;
@@ -187,6 +207,42 @@ export interface AddMediaRequest {
   start: boolean;
 }
 
+/** A magnet link, a .torrent address or a .torrent file. */
+export interface TorrentSource {
+  link?: string | null;
+  path?: string | null;
+  headers?: [string, string][];
+}
+
+export interface TorrentFile {
+  index: number;
+  /** Path inside the torrent, with "/" between folders. */
+  path: string;
+  size: number;
+}
+
+export interface TorrentInfo {
+  infoHash: string;
+  name: string;
+  size: number;
+  files: TorrentFile[];
+  private: boolean;
+  comment: string | null;
+  pieces: number;
+  pieceLength: number;
+  directory: string;
+  /** The download that already has this torrent. */
+  existing: number | null;
+}
+
+export interface AddTorrentRequest {
+  infoHash: string;
+  /** Indexes of the chosen files; all when missing. */
+  files?: number[] | null;
+  directory?: string;
+  start: boolean;
+}
+
 /** What happens when a download finishes. */
 export interface WhenDone {
   showDialog: boolean;
@@ -222,6 +278,7 @@ export interface Api {
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<Settings>;
   pickFolder(): Promise<string | null>;
+  pickTorrentFile(): Promise<string | null>;
   listBrowsers(): Promise<Browser[]>;
   installExtension(id: string): Promise<InstallInfo>;
   openExtensionFolder(engine: Engine): Promise<void>;
@@ -234,6 +291,17 @@ export interface Api {
   mediaProbe(source: MediaSource): Promise<MediaInfo>;
   addMedia(request: AddMediaRequest): Promise<number>;
   onMediaPrompt(handler: (source: MediaSource) => void): Promise<UnlistenFn>;
+  inspectTorrent(source: TorrentSource): Promise<TorrentInfo>;
+  cancelTorrentInspect(): Promise<void>;
+  addTorrent(request: AddTorrentRequest): Promise<number>;
+  torrentFiles(id: number): Promise<TorrentFile[]>;
+  /** Magnet links and .torrent files SDM was started with. */
+  takePendingTorrents(): Promise<TorrentSource[]>;
+  magnetHandler(): Promise<{ supported: boolean; registered: boolean }>;
+  registerMagnetHandler(): Promise<void>;
+  onTorrentPrompt(handler: (source: TorrentSource) => void): Promise<UnlistenFn>;
+  /** Files dropped on the window. */
+  onFileDrop(handler: (paths: string[]) => void): Promise<UnlistenFn>;
   onToolProgress(handler: (progress: ToolProgress) => void): Promise<UnlistenFn>;
 }
 
@@ -267,6 +335,7 @@ const tauriApi: Api = {
   getSettings: () => invoke("get_settings"),
   saveSettings: (settings) => invoke("save_settings", { settings }),
   pickFolder: () => invoke("pick_folder"),
+  pickTorrentFile: () => invoke("pick_torrent_file"),
   listBrowsers: () => invoke("list_browsers"),
   installExtension: (id) => invoke("install_extension", { id }),
   openExtensionFolder: (engine) => invoke("open_extension_folder", { engine }),
@@ -278,6 +347,18 @@ const tauriApi: Api = {
   mediaProbe: (source) => invoke("media_probe", { source }),
   addMedia: (request) => invoke("add_media", { request }),
   onMediaPrompt: (handler) => listen<MediaSource>("sdm:media-prompt", (e) => handler(e.payload)),
+  inspectTorrent: (source) => invoke("inspect_torrent", { source }),
+  cancelTorrentInspect: () => invoke("cancel_torrent_inspect"),
+  addTorrent: (request) => invoke("add_torrent", { request }),
+  torrentFiles: (id) => invoke("torrent_files", { id }),
+  takePendingTorrents: () => invoke("take_pending_torrents"),
+  magnetHandler: () => invoke("magnet_handler"),
+  registerMagnetHandler: () => invoke("register_magnet_handler"),
+  onTorrentPrompt: (handler) => listen<TorrentSource>("sdm:torrent-prompt", (e) => handler(e.payload)),
+  onFileDrop: (handler) =>
+    getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type === "drop") handler(event.payload.paths);
+    }),
   onToolProgress: (handler) => listen<ToolProgress>("sdm:tool-progress", (e) => handler(e.payload)),
 };
 

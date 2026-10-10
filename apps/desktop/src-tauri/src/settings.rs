@@ -32,7 +32,7 @@ pub struct Settings {
     pub skin: String,
     /// `system`, `light` or `dark` (the minimal skin has both).
     pub theme: String,
-    /// Open a progress window for every download that starts, like IDM.
+    /// Open a progress window for every download that starts.
     pub progress_window: bool,
     /// Look of the progress window: `graph`, `ring` or `classic`.
     pub progress_style: String,
@@ -52,6 +52,13 @@ pub struct Settings {
     pub bridge_port: u16,
     /// File types the browser extension hands over to SDM.
     pub capture_extensions: Vec<String>,
+    /// Share finished torrents until this many percent of their size were
+    /// uploaded: `0` for not at all, `65535` until SDM quits.
+    pub seed_ratio: u16,
+    /// Upload limit for torrents in bytes per second, `0` for unlimited.
+    pub upload_limit: u64,
+    /// Port for incoming BitTorrent connections, `0` to pick one.
+    pub torrent_port: u16,
 }
 
 impl Default for Settings {
@@ -63,7 +70,7 @@ impl Default for Settings {
             max_parallel: 3,
             speed_limit: 0,
             proxy: String::new(),
-            language: "auto".into(),
+            language: "en".into(),
             skin: "neon".into(),
             theme: "system".into(),
             progress_window: true,
@@ -76,6 +83,9 @@ impl Default for Settings {
             confirm_browser_downloads: true,
             bridge_port: DEFAULT_BRIDGE_PORT,
             capture_extensions: default_capture_extensions(),
+            seed_ratio: 100,
+            upload_limit: 0,
+            torrent_port: 0,
         }
     }
 }
@@ -101,7 +111,7 @@ impl Settings {
             self.bridge_port = DEFAULT_BRIDGE_PORT;
         }
         if !["auto", "en", "vi"].contains(&self.language.as_str()) {
-            self.language = "auto".into();
+            self.language = "en".into();
         }
         if !["neon", "minimal"].contains(&self.skin.as_str()) {
             self.skin = "neon".into();
@@ -113,6 +123,9 @@ impl Settings {
             self.theme = "system".into();
         }
         self.proxy = self.proxy.trim().to_owned();
+        if self.torrent_port < 1024 {
+            self.torrent_port = 0;
+        }
         let mut extensions: Vec<String> = self
             .capture_extensions
             .iter()
@@ -127,6 +140,17 @@ impl Settings {
 
     pub fn speed_limit(&self) -> Option<u64> {
         (self.speed_limit > 0).then_some(self.speed_limit)
+    }
+
+    pub fn torrent_config(&self) -> crate::torrent::EngineConfig {
+        crate::torrent::EngineConfig {
+            port: self.torrent_port,
+            download_limit: self.speed_limit(),
+            upload_limit: (self.upload_limit > 0).then_some(self.upload_limit),
+            proxy: self.proxy.clone(),
+            seed_ratio: self.seed_ratio,
+            local_only: false,
+        }
     }
 
     pub fn client_config(&self) -> ClientConfig {
@@ -182,7 +206,7 @@ mod tests {
         assert_eq!(settings.connections, 1);
         assert_eq!(settings.max_parallel, 16);
         assert_eq!(settings.bridge_port, DEFAULT_BRIDGE_PORT);
-        assert_eq!(settings.language, "auto");
+        assert_eq!(settings.language, "en");
         assert_eq!(settings.skin, "neon");
         assert_eq!(settings.progress_style, "graph");
         assert_eq!(settings.capture_extensions, ["zip"]);

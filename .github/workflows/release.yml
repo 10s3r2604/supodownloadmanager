@@ -58,7 +58,30 @@ jobs:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
           releaseName: Supo Download Manager ${{ github.ref_name }}
-          releaseBody: See the assets below to download SDM for your system.
+          releaseBody: |
+            Free, open-source download manager with multi-connection downloads, a video grabber and BitTorrent (magnet links and .torrent files).
+
+            ## Which file do I need?
+
+            | System | File |
+            | --- | --- |
+            | Windows 10/11 | `Supo.Download.Manager_*_x64-setup.exe` (or the `.msi`) |
+            | macOS, Apple Silicon (M1–M4) | `Supo.Download.Manager_*_aarch64.dmg` |
+            | macOS, Intel | `Supo.Download.Manager_*_x64.dmg` |
+            | Ubuntu, Debian, Mint | `*_amd64.deb` |
+            | Fedora, openSUSE | `*.x86_64.rpm` |
+            | Any Linux | `*_amd64.AppImage` |
+            | Command line only | `sdm-cli-*` for your system |
+            | Browser extension (manual install) | `sdm-extension-chromium-*.zip` or `sdm-extension-firefox-*.zip` |
+
+            The installers are not code-signed yet:
+
+            - **Windows**: if SmartScreen warns, click **More info → Run anyway**.
+            - **macOS**: if macOS says the app is damaged or from an unidentified developer, run
+              `xattr -dr com.apple.quarantine "/Applications/Supo Download Manager.app"` once, then open it.
+
+            After installing, open SDM and click **Browsers** to add the browser extension.
+            See the [README](https://github.com/10s3r2604/supodownloadmanager#readme) for details.
           args: ${{ matrix.args }}
 
   cli:
@@ -116,6 +139,7 @@ jobs:
           node extension/build.mjs
           (cd extension/dist/chromium && zip -r "../../../sdm-extension-chromium-${GITHUB_REF_NAME}.zip" .)
           (cd extension/dist/firefox && zip -r "../../../sdm-extension-firefox-${GITHUB_REF_NAME}.zip" .)
+          (cd extension/dist/chromium-store && zip -r "../../../sdm-extension-store-chromium-${GITHUB_REF_NAME}.zip" .)
       - uses: actions/download-artifact@v4
         with:
           path: dist
