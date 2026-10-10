@@ -3,7 +3,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::Router;
@@ -31,7 +31,6 @@ struct Server {
     data: Vec<u8>,
     failures_left: AtomicUsize,
     data_requests: AtomicUsize,
-    bytes_sent: AtomicU64,
 }
 
 async fn start_server(data: Vec<u8>, failures: usize) -> (String, Arc<Server>) {
@@ -39,7 +38,6 @@ async fn start_server(data: Vec<u8>, failures: usize) -> (String, Arc<Server>) {
         data,
         failures_left: AtomicUsize::new(failures),
         data_requests: AtomicUsize::new(0),
-        bytes_sent: AtomicU64::new(0),
     });
     let app = Router::new()
         .route("/{mode}/{name}", get(serve))
@@ -118,9 +116,6 @@ async fn serve(
     let body = Bytes::copy_from_slice(&server.data[start as usize..end as usize]);
 
     if mode == "chunked" {
-        server
-            .bytes_sent
-            .fetch_add(body.len() as u64, Ordering::SeqCst);
         let chunks: Vec<Result<Bytes, std::io::Error>> = body
             .chunks(10_000)
             .map(|c| Ok(Bytes::copy_from_slice(c)))
@@ -133,7 +128,6 @@ async fn serve(
     response = response.header(header::CONTENT_LENGTH, body.len());
     if mode == "flaky" && !is_probe && body.len() > 2 && take_failure(&server) {
         let cut = (body.len() / 2).min(64 * 1024);
-        server.bytes_sent.fetch_add(cut as u64, Ordering::SeqCst);
         let parts: Vec<Result<Bytes, std::io::Error>> = vec![
             Ok(body.slice(..cut)),
             Err(std::io::Error::other("connection dropped")),
@@ -142,9 +136,6 @@ async fn serve(
             .body(Body::from_stream(futures_util::stream::iter(parts)))
             .unwrap();
     }
-    server
-        .bytes_sent
-        .fetch_add(body.len() as u64, Ordering::SeqCst);
     response.body(Body::from(body)).unwrap()
 }
 
@@ -306,7 +297,7 @@ async fn falls_back_when_server_ignores_ranges() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pauses_and_resumes() {
     let data = test_data(2 * 1024 * 1024);
-    let (base, server) = start_server(data.clone(), 0).await;
+    let (base, _server) = start_server(data.clone(), 0).await;
     let dir = tempfile::tempdir().unwrap();
     let url = format!("{base}/file/data.bin");
     let downloader = downloader();
@@ -331,19 +322,15 @@ async fn pauses_and_resumes() {
     assert!(dir.path().join("data.bin.sdm-state").exists());
     assert!(!dir.path().join("data.bin").exists());
 
-    server.bytes_sent.store(0, Ordering::SeqCst);
     let handle = downloader.start(request(url, Destination::Directory(dir.path().into())));
+    let control = handle.control();
     let (path, _) = completed(handle).await;
     assert_eq!(path, dir.path().join("data.bin"));
     assert_eq!(std::fs::read(path).unwrap(), data);
     assert!(leftovers(dir.path()).is_empty());
 
-    // The second run only asked for the bytes that were missing.
-    let requested = server.bytes_sent.load(Ordering::SeqCst);
-    assert!(
-        requested < data.len() as u64,
-        "resumed run requested {requested} bytes after keeping {kept}"
-    );
+    // The second run started from everything the first one kept.
+    assert_eq!(control.progress().resumed_from, kept);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
