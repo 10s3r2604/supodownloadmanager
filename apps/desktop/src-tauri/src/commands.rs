@@ -78,14 +78,24 @@ pub struct MediaProbe {
 
 /// Asks yt-dlp which qualities a page offers.
 #[tauri::command]
-pub async fn media_probe(state: State<'_, AppState>, source: MediaSource) -> Result<MediaProbe> {
+pub async fn media_probe(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source: MediaSource,
+) -> Result<MediaProbe> {
     let settings = state.manager.settings();
-    let info = crate::media::probe(&state.tools, &source, &settings.proxy).await?;
+    let info = crate::probe_page(&app, &source).await?;
     Ok(MediaProbe {
         info,
         video_dir: settings.directory_for(Category::Video),
         audio_dir: settings.directory_for(Category::Music),
     })
+}
+
+/// What yt-dlp is doing while it reads a page.
+#[tauri::command]
+pub fn media_probe_stage(state: State<'_, AppState>, page_url: String) -> Option<String> {
+    state.prober.stage(&page_url)
 }
 
 /// Adds a video in the chosen quality to the download list.

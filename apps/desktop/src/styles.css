@@ -819,6 +819,17 @@ textarea:focus-visible {
   transition: width 0.2s;
 }
 
+.media-stage {
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 520px;
+}
+
 .media-failed {
   padding: 8px 0;
 }

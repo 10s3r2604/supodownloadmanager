@@ -9,3 +9,7 @@ extension/dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Video tools bundled by the release workflow
+apps/desktop/src-tauri/tools/*
+!apps/desktop/src-tauri/tools/README.md

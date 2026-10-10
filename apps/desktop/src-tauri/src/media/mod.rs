@@ -90,18 +90,18 @@ impl AddMediaRequest {
     }
 }
 
-/// Asks yt-dlp which videos and qualities a page has.
-pub async fn probe(tools: &Tools, source: &MediaSource, proxy: &str) -> Result<MediaInfo, String> {
+/// Asks yt-dlp which videos and qualities a page has, writing what it is
+/// doing into `stage` meanwhile.
+async fn read_page(
+    tools: &Tools,
+    source: &MediaSource,
+    proxy: &str,
+    stage: &std::sync::Mutex<String>,
+) -> Result<MediaInfo, String> {
     let ytdlp = tools.ytdlp().ok_or("yt-dlp is not installed")?;
     let work = tools.scratch_dir()?;
     let mut command = tokio::process::Command::new(ytdlp);
-    command.args([
-        "-J",
-        "--no-playlist",
-        "--no-warnings",
-        "--encoding",
-        "utf-8",
-    ]);
+    command.args(["-J", "--no-playlist", "--encoding", "utf-8"]);
     if !source.cookies.is_empty() {
         let file = work.join("cookies.txt");
         std::fs::write(&file, cookies::netscape(&source.cookies)).map_err(|e| e.to_string())?;
@@ -109,6 +109,11 @@ pub async fn probe(tools: &Tools, source: &MediaSource, proxy: &str) -> Result<M
     }
     if let Some(agent) = source.user_agent.as_deref().filter(|a| !a.is_empty()) {
         command.args(["--user-agent", agent]);
+    }
+    if let Some(deno) = tools.deno() {
+        let mut runtime = std::ffi::OsString::from("deno:");
+        runtime.push(deno.as_os_str());
+        command.arg("--js-runtimes").arg(runtime);
     }
     if let Some(referrer) = source.referrer.as_deref().filter(|r| !r.is_empty()) {
         command.args(["--referer", referrer]);
@@ -126,25 +131,176 @@ pub async fn probe(tools: &Tools, source: &MediaSource, proxy: &str) -> Result<M
         .args(["--", &source.page_url])
         .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     job::hide_window(&mut command);
-    let output = tokio::time::timeout(Duration::from_secs(90), command.output()).await;
+    let result = run_probe(command, stage).await;
     let _ = std::fs::remove_dir_all(&work);
-    let output = output
-        .map_err(|_| "the site took too long to answer".to_owned())?
-        .map_err(|e| format!("could not start yt-dlp: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let message = stderr
-            .lines()
-            .rev()
-            .find_map(|l| l.strip_prefix("ERROR:"))
-            .unwrap_or("no video found on this page");
-        return Err(message.trim().to_owned());
-    }
-    let mut info = formats::parse(&String::from_utf8_lossy(&output.stdout))?;
+    let stdout = result?;
+    let mut info = formats::parse(&stdout)?;
     if info.url.is_empty() {
         info.url.clone_from(&source.page_url);
     }
     Ok(info)
+}
+
+/// How long reading a page may take.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Runs `yt-dlp -J` and returns its output. Errors name the step yt-dlp
+/// was at, so slow or blocked sites can be told apart.
+async fn run_probe(
+    mut command: tokio::process::Command,
+    stage: &std::sync::Mutex<String>,
+) -> Result<String, String> {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("could not start yt-dlp: {e}"))?;
+    let mut stdout = child.stdout.take().ok_or("no output from yt-dlp")?;
+    let stderr = child.stderr.take().ok_or("no output from yt-dlp")?;
+    let last = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = last.clone();
+    let mut lines = BufReader::new(stderr).lines();
+    let reader = async move {
+        while let Ok(Some(line)) = lines.next_line().await {
+            tracing::debug!(target: "sdm_desktop::ytdlp", "{line}");
+            *stage
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = line.clone();
+            let mut kept = log
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            kept.push(line);
+            let excess = kept.len().saturating_sub(20);
+            kept.drain(..excess);
+        }
+    };
+    let work = async {
+        let mut out = String::new();
+        stdout
+            .read_to_string(&mut out)
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = child.wait().await.map_err(|e| e.to_string())?;
+        Ok::<_, String>((out, status))
+    };
+    let (finished, ()) = tokio::join!(tokio::time::timeout(PROBE_TIMEOUT, work), async {
+        let _ = tokio::time::timeout(PROBE_TIMEOUT + Duration::from_secs(2), reader).await;
+    });
+    let lines = last
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    match finished {
+        Err(_) => {
+            let step = lines.last().map(|l| l.trim()).unwrap_or("starting");
+            Err(format!(
+                "the site took too long to answer (yt-dlp was at: {step})"
+            ))
+        }
+        Ok(Err(error)) => Err(error),
+        Ok(Ok((_, status))) if !status.success() => Err(lines
+            .iter()
+            .rev()
+            .find_map(|l| l.strip_prefix("ERROR:"))
+            .map_or_else(
+                || "no video found on this page".to_owned(),
+                |m| m.trim().to_owned(),
+            )),
+        Ok(Ok((out, _))) => Ok(out),
+    }
+}
+
+/// Remembers what yt-dlp found on pages for a while, so the quality menu
+/// opens at once when the page was read in advance (when the pointer
+/// reached the video).
+#[derive(Default)]
+pub struct Prober {
+    pages: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Probe>>>,
+}
+
+struct Probe {
+    started: std::time::Instant,
+    /// The last thing yt-dlp said, while it works.
+    stage: std::sync::Mutex<String>,
+    result: tokio::sync::OnceCell<Result<MediaInfo, String>>,
+}
+
+/// How long a page's formats stay valid; their addresses expire.
+const PROBE_KEEP: Duration = Duration::from_secs(20 * 60);
+
+impl Prober {
+    /// What yt-dlp finds on a page, read once and shared by everyone who
+    /// asks while it is being read.
+    pub async fn probe(
+        &self,
+        tools: &Tools,
+        source: &MediaSource,
+        proxy: &str,
+    ) -> Result<MediaInfo, String> {
+        let key = page_key(&source.page_url);
+        let entry = {
+            let mut pages = self
+                .pages
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            pages.retain(|_, p| p.started.elapsed() < PROBE_KEEP);
+            pages
+                .entry(key.clone())
+                .or_insert_with(|| {
+                    std::sync::Arc::new(Probe {
+                        started: std::time::Instant::now(),
+                        stage: std::sync::Mutex::new(String::new()),
+                        result: tokio::sync::OnceCell::new(),
+                    })
+                })
+                .clone()
+        };
+        let result = entry
+            .result
+            .get_or_init(|| read_page(tools, source, proxy, &entry.stage))
+            .await
+            .clone();
+        if result.is_err() {
+            // Let the next attempt try again.
+            let mut pages = self
+                .pages
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if pages
+                .get(&key)
+                .is_some_and(|p| std::sync::Arc::ptr_eq(p, &entry))
+            {
+                pages.remove(&key);
+            }
+        }
+        result
+    }
+}
+
+impl Prober {
+    /// What yt-dlp is doing for a page being read, for the user to see.
+    pub fn stage(&self, page_url: &str) -> Option<String> {
+        let pages = self
+            .pages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let probe = pages.get(&page_key(page_url))?;
+        if probe.result.initialized() {
+            return None;
+        }
+        let stage = probe
+            .stage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Some(stage.clone()).filter(|s| !s.is_empty())
+    }
+}
+
+/// Pages that differ only in their fragment are the same video.
+fn page_key(url: &str) -> String {
+    url.split('#').next().unwrap_or(url).to_owned()
 }

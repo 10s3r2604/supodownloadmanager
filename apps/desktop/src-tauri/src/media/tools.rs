@@ -1,5 +1,9 @@
-//! yt-dlp and ffmpeg: found on the computer or downloaded into the app's
-//! data folder on first use.
+//! yt-dlp, ffmpeg and Deno: shipped with the app, found on the computer, or
+//! downloaded into the app's data folder.
+//!
+//! The installers ship all of them (ffmpeg only on Windows), so videos work
+//! right away. Our copy of yt-dlp is replaced by a newer one when its
+//! published checksum changes; newer copies go into the data folder.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -40,6 +44,8 @@ pub struct ToolProgress {
 
 pub struct Tools {
     dir: PathBuf,
+    /// Tools shipped with the app, read only.
+    bundled: Option<PathBuf>,
     work: PathBuf,
     /// One installation at a time.
     installing: Mutex<()>,
@@ -55,10 +61,13 @@ fn exe(name: &str) -> String {
     }
 }
 
-/// The yt-dlp build for this system.
+/// The yt-dlp build for this system. On Windows it is a zipped folder: the
+/// single-file build unpacks itself on every start, which takes seconds.
 fn ytdlp_asset() -> &'static str {
-    if cfg!(windows) {
-        "yt-dlp.exe"
+    if cfg!(all(windows, target_arch = "aarch64")) {
+        "yt-dlp_win_arm64.zip"
+    } else if cfg!(windows) {
+        "yt-dlp_win.zip"
     } else if cfg!(target_os = "macos") {
         "yt-dlp_macos"
     } else if cfg!(target_arch = "aarch64") {
@@ -83,6 +92,36 @@ fn extra_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// `name` in `base`, either as `base/name/name.exe` (a zipped folder) or as
+/// `base/name.exe`.
+fn tool_in(base: &Path, name: &str) -> Option<PathBuf> {
+    [base.join(name).join(exe(name)), base.join(exe(name))]
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+/// Copies a file or folder.
+fn copy_all(from: &Path, to: &Path) -> std::io::Result<()> {
+    if from.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_all(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(from, to).map(|_| ())
+    }
+}
+
+/// Unpacks a zip archive into a folder.
+fn extract_zip(archive: &Path, into: &Path) -> Result<(), String> {
+    let file = std::fs::File::open(archive).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("broken archive: {e}"))?;
+    zip.extract(into)
+        .map_err(|e| format!("could not unpack: {e}"))
+}
+
 fn find_program(name: &str) -> Option<PathBuf> {
     let file = exe(name);
     std::env::var_os("PATH")
@@ -97,9 +136,10 @@ fn find_program(name: &str) -> Option<PathBuf> {
 impl Tools {
     /// Tools live in `<data_dir>/tools`, unfinished media downloads in
     /// `<data_dir>/media`.
-    pub fn new(data_dir: &Path) -> Self {
+    pub fn new(data_dir: &Path, bundled: Option<PathBuf>) -> Self {
         Self {
             dir: data_dir.join("tools"),
+            bundled: bundled.filter(|dir| dir.is_dir()),
             work: data_dir.join("media"),
             installing: Mutex::new(()),
             ytdlp_override: None,
@@ -110,7 +150,7 @@ impl Tools {
     pub fn with_ytdlp(data_dir: &Path, ytdlp: PathBuf) -> Self {
         Self {
             ytdlp_override: Some(ytdlp),
-            ..Self::new(data_dir)
+            ..Self::new(data_dir, None)
         }
     }
 
@@ -130,27 +170,53 @@ impl Tools {
         Ok(dir)
     }
 
-    fn own(&self, name: &str) -> PathBuf {
-        self.dir.join(exe(name))
+    /// A tool shipped with the app. Windows runs it where it is; elsewhere
+    /// it is copied into the data folder first, because installers do not
+    /// always keep files executable.
+    fn shipped(&self, name: &str) -> Option<PathBuf> {
+        let bundled = self.bundled.as_deref()?;
+        let path = tool_in(bundled, name)?;
+        if cfg!(windows) {
+            return Some(path);
+        }
+        let from = if path.parent() == Some(bundled) {
+            path.clone()
+        } else {
+            bundled.join(name)
+        };
+        let to = self.dir.join(from.file_name()?);
+        std::fs::create_dir_all(&self.dir).ok()?;
+        copy_all(&from, &to).ok()?;
+        let record = format!("{name}.sha256");
+        let _ = std::fs::copy(bundled.join(&record), self.dir.join(&record));
+        let copied = tool_in(&self.dir, name)?;
+        make_executable(&copied).ok()?;
+        Some(copied)
+    }
+
+    fn find(&self, name: &str) -> Option<PathBuf> {
+        tool_in(&self.dir, name)
+            .or_else(|| self.shipped(name))
+            .or_else(|| find_program(name))
     }
 
     pub fn ytdlp(&self) -> Option<PathBuf> {
         if let Some(path) = &self.ytdlp_override {
             return Some(path.clone());
         }
-        let own = self.own("yt-dlp");
-        if own.is_file() {
-            return Some(own);
-        }
-        find_program("yt-dlp")
+        self.find("yt-dlp")
     }
 
     pub fn ffmpeg(&self) -> Option<PathBuf> {
-        let own = self.own("ffmpeg");
-        if own.is_file() {
-            return Some(own);
+        self.find("ffmpeg")
+    }
+
+    /// The JavaScript runtime yt-dlp needs for all of YouTube's formats.
+    pub fn deno(&self) -> Option<PathBuf> {
+        if self.ytdlp_override.is_some() {
+            return None;
         }
-        find_program("ffmpeg")
+        self.find("deno")
     }
 
     pub fn status(&self) -> ToolStatus {
@@ -158,7 +224,7 @@ impl Tools {
             ytdlp: self.ytdlp().is_some(),
             ffmpeg: self.ffmpeg().is_some(),
             ffmpeg_installable: cfg!(all(windows, target_arch = "x86_64")),
-            ytdlp_size_mb: if cfg!(windows) { 18 } else { 38 },
+            ytdlp_size_mb: if cfg!(windows) { 20 } else { 38 },
             ffmpeg_size_mb: 66,
         }
     }
@@ -174,22 +240,20 @@ impl Tools {
         if let Some(path) = self.ytdlp() {
             return Ok(path);
         }
+        let expected = latest_ytdlp_sum(downloader).await?;
+        self.download_ytdlp(downloader, &expected, progress).await
+    }
+
+    /// Downloads the yt-dlp release whose checksum is `expected` into the
+    /// data folder.
+    async fn download_ytdlp(
+        &self,
+        downloader: &Downloader,
+        expected: &str,
+        progress: impl Fn(ToolProgress),
+    ) -> Result<PathBuf, String> {
         std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
         let asset = ytdlp_asset();
-        let sums_path = self.dir.join("SHA2-256SUMS.download");
-        download_file(
-            downloader,
-            &format!("{YTDLP_RELEASE}/SHA2-256SUMS"),
-            &sums_path,
-            |_, _| {},
-        )
-        .await
-        .map_err(|e| format!("could not reach GitHub: {e}"))?;
-        let sums = std::fs::read_to_string(&sums_path).unwrap_or_default();
-        let _ = std::fs::remove_file(&sums_path);
-        let expected =
-            expected_sum(&sums, asset).ok_or("the yt-dlp checksums do not list this system")?;
-
         let partial = self.dir.join(format!("{asset}.download"));
         download_file(
             downloader,
@@ -207,15 +271,31 @@ impl Tools {
         let actual = sdm_core::sha256_file(&partial)
             .await
             .map_err(|e| e.to_string())?;
-        if !actual.eq_ignore_ascii_case(&expected) {
+        if !actual.eq_ignore_ascii_case(expected) {
             let _ = std::fs::remove_file(&partial);
             return Err("the downloaded yt-dlp is damaged (checksum mismatch)".into());
         }
-        let target = self.own("yt-dlp");
-        make_executable(&partial)?;
-        std::fs::rename(&partial, &target).map_err(|e| e.to_string())?;
+        let folder = self.dir.join("yt-dlp");
+        let single = self.dir.join(exe("yt-dlp"));
+        if asset.ends_with(".zip") {
+            let fresh = self.dir.join("yt-dlp.new");
+            let _ = std::fs::remove_dir_all(&fresh);
+            let (archive, into) = (partial.clone(), fresh.clone());
+            tokio::task::spawn_blocking(move || extract_zip(&archive, &into))
+                .await
+                .map_err(|e| e.to_string())??;
+            let _ = std::fs::remove_file(&partial);
+            let _ = std::fs::remove_dir_all(&folder);
+            let _ = std::fs::remove_file(&single);
+            std::fs::rename(&fresh, &folder).map_err(|e| e.to_string())?;
+        } else {
+            let _ = std::fs::remove_dir_all(&folder);
+            make_executable(&partial)?;
+            std::fs::rename(&partial, &single).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(self.dir.join("yt-dlp.sha256"), expected).map_err(|e| e.to_string())?;
         touch(&self.dir.join("yt-dlp.checked"));
-        Ok(target)
+        tool_in(&self.dir, "yt-dlp").ok_or_else(|| "yt-dlp is missing from its archive".into())
     }
 
     /// Downloads ffmpeg on Windows: only `ffmpeg.exe` out of the 200 MB
@@ -246,7 +326,7 @@ impl Tools {
             },
         )
         .await?;
-        let target = self.own("ffmpeg");
+        let target = self.dir.join(exe("ffmpeg"));
         let partial = self.dir.join("ffmpeg.download");
         std::fs::write(&partial, data).map_err(|e| e.to_string())?;
         make_executable(&partial)?;
@@ -254,31 +334,46 @@ impl Tools {
         Ok(target)
     }
 
-    /// Lets our own copy of yt-dlp update itself every couple of days.
-    pub async fn update_ytdlp(&self) {
-        let own = self.own("yt-dlp");
+    /// Replaces our copy of yt-dlp every couple of days when a new release
+    /// is out. A yt-dlp installed by the user is left alone.
+    pub async fn update_ytdlp(&self, downloader: &Downloader) {
+        let Some(current) = self.ytdlp() else {
+            return;
+        };
+        if !current.starts_with(&self.dir) && find_program("yt-dlp").as_ref() == Some(&current) {
+            return;
+        }
         let stamp = self.dir.join("yt-dlp.checked");
         let fresh = std::fs::metadata(&stamp)
             .and_then(|m| m.modified())
             .is_ok_and(|t| SystemTime::now().duration_since(t).unwrap_or_default() < UPDATE_EVERY);
-        if !own.is_file() || fresh {
+        if fresh {
             return;
         }
         let _guard = self.installing.lock().await;
-        let mut command = tokio::process::Command::new(&own);
-        command.arg("-U").stdin(std::process::Stdio::null());
-        super::job::hide_window(&mut command);
-        match tokio::time::timeout(Duration::from_secs(300), command.output()).await {
-            Ok(Ok(output)) if output.status.success() => {
-                tracing::info!("yt-dlp: {}", String::from_utf8_lossy(&output.stdout).trim());
-                touch(&stamp);
+        let latest = match latest_ytdlp_sum(downloader).await {
+            Ok(sum) => sum,
+            Err(error) => {
+                tracing::warn!(%error, "could not check for a new yt-dlp");
+                return;
             }
-            Ok(Ok(output)) => tracing::warn!(
-                "yt-dlp update failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-            Ok(Err(error)) => tracing::warn!(%error, "could not run the yt-dlp update"),
-            Err(_) => tracing::warn!("the yt-dlp update took too long"),
+        };
+        let installed = std::fs::read_to_string(self.dir.join("yt-dlp.sha256"))
+            .or_else(|_| {
+                self.bundled
+                    .as_ref()
+                    .map_or(Err(std::io::ErrorKind::NotFound.into()), |b| {
+                        std::fs::read_to_string(b.join("yt-dlp.sha256"))
+                    })
+            })
+            .unwrap_or_default();
+        if installed.trim().eq_ignore_ascii_case(&latest) {
+            touch(&stamp);
+            return;
+        }
+        match self.download_ytdlp(downloader, &latest, |_| {}).await {
+            Ok(path) => tracing::info!(path = %path.display(), "yt-dlp updated"),
+            Err(error) => tracing::warn!(%error, "yt-dlp update failed"),
         }
     }
 }
@@ -296,6 +391,16 @@ fn make_executable(path: &Path) -> Result<(), String> {
     }
     let _ = path;
     Ok(())
+}
+
+/// The checksum of the latest yt-dlp build for this system.
+async fn latest_ytdlp_sum(downloader: &Downloader) -> Result<String, String> {
+    let sums = downloader
+        .fetch(&format!("{YTDLP_RELEASE}/SHA2-256SUMS"), &[], 64 * 1024)
+        .await
+        .map_err(|e| format!("could not reach GitHub: {e}"))?;
+    expected_sum(&String::from_utf8_lossy(&sums.data), ytdlp_asset())
+        .ok_or_else(|| "the yt-dlp checksums do not list this system".into())
 }
 
 /// The checksum of `asset` in a `SHA2-256SUMS` file.

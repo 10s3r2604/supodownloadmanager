@@ -734,6 +734,7 @@ impl Manager {
             let config = media::JobConfig {
                 ytdlp,
                 ffmpeg: self.tools.ffmpeg(),
+                deno: self.tools.deno(),
                 url,
                 spec,
                 directory: path.parent().map(Path::to_path_buf).unwrap_or_default(),
@@ -1069,7 +1070,7 @@ mod tests {
         }
 
         fn manager(&self) -> Arc<Manager> {
-            self.manager_with(Tools::new(self.dir.path()))
+            self.manager_with(Tools::new(self.dir.path(), None))
         }
 
         fn manager_with(&self, tools: Tools) -> Arc<Manager> {

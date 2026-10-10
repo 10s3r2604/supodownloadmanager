@@ -41,6 +41,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trash = "5"
 url = "2"
 tauri-plugin-deep-link = "2"
+zip = { version = "9.0.1", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

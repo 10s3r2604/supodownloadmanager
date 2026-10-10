@@ -26,6 +26,8 @@ const PREFIX_FILE: &str = "SDMF ";
 pub struct JobConfig {
     pub ytdlp: PathBuf,
     pub ffmpeg: Option<PathBuf>,
+    /// JavaScript runtime for YouTube.
+    pub deno: Option<PathBuf>,
     /// The page of the video.
     pub url: String,
     pub spec: MediaSpec,
@@ -182,6 +184,9 @@ pub fn args(config: &JobConfig, cookies_file: Option<&Path>) -> Vec<OsString> {
     path_arg("-P", "temp:", &config.work_dir);
     if let Some(ffmpeg) = &config.ffmpeg {
         path_arg("--ffmpeg-location", "", ffmpeg);
+    }
+    if let Some(deno) = &config.deno {
+        path_arg("--js-runtimes", "deno:", deno);
     }
     if let Some(file) = cookies_file {
         path_arg("--cookies", "", file);
@@ -458,6 +463,7 @@ mod tests {
         let config = JobConfig {
             ytdlp: "yt-dlp".into(),
             ffmpeg: Some("/tools/ffmpeg".into()),
+            deno: Some("/tools/deno".into()),
             url: "https://www.youtube.com/watch?v=x".into(),
             spec: MediaSpec {
                 format: "137+140/b".into(),
@@ -485,6 +491,7 @@ mod tests {
         assert!(has(["-P", "home:/home/a/Downloads/Video"]));
         assert!(has(["-P", "temp:/data/media/7"]));
         assert!(has(["--ffmpeg-location", "/tools/ffmpeg"]));
+        assert!(has(["--js-runtimes", "deno:/tools/deno"]));
         assert!(has(["--cookies", "/data/media/7/cookies.txt"]));
         assert!(has(["--limit-rate", "1000"]));
         assert!(has(["--proxy", ""]));

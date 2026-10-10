@@ -34,6 +34,19 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
   const [title, setTitle] = useState("");
   const [directory, setDirectory] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // What yt-dlp is doing, so a slow site is not a mystery.
+  const [ytdlpStage, setYtdlpStage] = useState<string | null>(null);
+  const probing = stage.kind === "probing";
+  useEffect(() => {
+    if (!probing) {
+      setYtdlpStage(null);
+      return;
+    }
+    const timer = setInterval(() => {
+      api.mediaProbeStage(source.pageUrl).then(setYtdlpStage).catch(() => {});
+    }, 700);
+    return () => clearInterval(timer);
+  }, [probing, source.pageUrl]);
 
   // Tool downloads report their progress with events.
   useEffect(() => {
@@ -146,6 +159,7 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
           <div>
             <strong>{t("mediaProbing")}</strong>
             <div className="muted">{source.title || hostOf(source.pageUrl)}</div>
+            {ytdlpStage && <div className="media-stage">{ytdlpStage}</div>}
           </div>
         </div>
       ) : stage.kind === "failed" ? (

@@ -25,7 +25,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::bridge::{Bridge, BridgeConfig, BrowserDownload, Handler};
+use crate::bridge::{BoxFuture, Bridge, BridgeConfig, BrowserDownload, Handler};
 use crate::manager::{AddRequest, Manager, Notice};
 use crate::settings::Settings;
 
@@ -48,6 +48,8 @@ pub struct AppState {
     pub data_dir: PathBuf,
     /// yt-dlp and ffmpeg for videos from web pages.
     pub tools: Arc<media::Tools>,
+    /// What yt-dlp found on video pages recently.
+    pub prober: Arc<media::Prober>,
     /// What to do when running downloads finish, chosen in their windows.
     pub when_done: windows::WhenDoneChoices,
     /// Torrents SDM was started with, until the window asks for them.
@@ -92,6 +94,7 @@ pub fn run() {
             commands::media_tools,
             commands::media_prepare,
             commands::media_probe,
+            commands::media_probe_stage,
             commands::add_media,
             commands::inspect_torrent,
             commands::cancel_torrent_inspect,
@@ -166,7 +169,8 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
     }
 
     let notify_app = app.clone();
-    let tools = Arc::new(media::Tools::new(&data_dir));
+    let bundled_tools = app.path().resource_dir().ok().map(|dir| dir.join("tools"));
+    let tools = Arc::new(media::Tools::new(&data_dir, bundled_tools));
     let torrents = torrent::TorrentEngine::new(data_dir.join("torrent"), settings.torrent_config());
     let manager = Manager::new(
         data_dir.join("downloads.json"),
@@ -187,6 +191,7 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         bridge_error: Mutex::new(None),
         data_dir,
         tools: tools.clone(),
+        prober: Arc::default(),
         when_done: windows::WhenDoneChoices::default(),
         pending_torrents: Mutex::new(torrent_sources(
             std::env::args().skip(1),
@@ -197,9 +202,10 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
     tray::create(app, settings.resolved_language())?;
 
     // Sites change all the time; keep our copy of yt-dlp fresh.
+    let update_manager = manager.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(20)).await;
-        tools.update_ytdlp().await;
+        tools.update_ytdlp(&update_manager.downloader()).await;
     });
 
     // Keep the stored list up to date and save it every few seconds.
@@ -392,6 +398,60 @@ impl Handler for AppBridge {
         show_main_window(&self.app);
         let _ = self.app.emit(MEDIA_PROMPT_EVENT, source);
     }
+
+    fn probe_media(
+        &self,
+        source: media::MediaSource,
+    ) -> BoxFuture<Result<media::MediaInfo, String>> {
+        let app = self.app.clone();
+        Box::pin(async move { probe_page(&app, &source).await })
+    }
+
+    fn add_media(
+        &self,
+        source: media::MediaSource,
+        option: String,
+    ) -> BoxFuture<Result<u64, String>> {
+        let app = self.app.clone();
+        Box::pin(async move {
+            let info = probe_page(&app, &source).await?;
+            let option = info
+                .options
+                .iter()
+                .find(|o| o.id == option)
+                .cloned()
+                .ok_or("this quality is no longer offered")?;
+            let state = app.state::<AppState>();
+            if option.needs_ffmpeg && state.tools.ffmpeg().is_none() {
+                if !state.tools.status().ffmpeg_installable {
+                    return Err("this quality needs ffmpeg; install it first".into());
+                }
+                let downloader = state.manager.downloader();
+                state.tools.install_ffmpeg(&downloader, |_| {}).await?;
+            }
+            state.manager.add_media(media::AddMediaRequest {
+                source,
+                option,
+                title: info.title,
+                directory: None,
+                start: true,
+            })
+        })
+    }
+}
+
+/// What yt-dlp finds on a page, getting yt-dlp first if needed.
+pub(crate) async fn probe_page(
+    app: &AppHandle,
+    source: &media::MediaSource,
+) -> Result<media::MediaInfo, String> {
+    let state = app.state::<AppState>();
+    if state.tools.ytdlp().is_none() {
+        let downloader = state.manager.downloader();
+        state.tools.install_ytdlp(&downloader, |_| {}).await?;
+    }
+    let proxy = state.manager.settings().proxy;
+    state.prober.probe(&state.tools, source, &proxy).await
 }
 
 /// Magnet links and `.torrent` files among command line arguments.

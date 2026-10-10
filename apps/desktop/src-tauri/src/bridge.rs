@@ -16,7 +16,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::media::MediaSource;
+use crate::media::{MediaInfo, MediaSource};
+
+pub type BoxFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>;
 
 pub const CLIENT_HEADER: &str = "x-sdm-client";
 pub const BROWSER_HEADER: &str = "x-sdm-browser";
@@ -76,6 +78,29 @@ pub trait Handler: Send + Sync + 'static {
     fn download(&self, download: BrowserDownload);
     /// A video on a web page, to download with yt-dlp.
     fn media(&self, source: MediaSource);
+    /// The qualities of a video page (read once, then remembered a while).
+    fn probe_media(&self, source: MediaSource) -> BoxFuture<Result<MediaInfo, String>>;
+    /// Starts downloading a video in one of the qualities found.
+    fn add_media(&self, source: MediaSource, option: String) -> BoxFuture<Result<u64, String>>;
+}
+
+/// Asks for the qualities of a video page.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProbeRequest {
+    #[serde(flatten)]
+    source: MediaSource,
+    /// `false` only starts reading the page, so a later request is quick.
+    #[serde(default)]
+    wait: bool,
+}
+
+/// Downloads a video in the quality picked in the page's menu.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddMediaRequest {
+    source: MediaSource,
+    option: String,
 }
 
 pub struct Bridge {
@@ -119,6 +144,8 @@ impl Bridge {
             .route("/api/ping", get(ping))
             .route("/api/download", post(download))
             .route("/api/media", post(media))
+            .route("/api/media/probe", post(media_probe))
+            .route("/api/media/add", post(media_add))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self)
     }
@@ -202,29 +229,74 @@ async fn download(
     StatusCode::ACCEPTED.into_response()
 }
 
+/// Checks a request about a video page; `None` when it may go ahead.
+fn refuse_media(bridge: &Bridge, headers: &HeaderMap, page_url: &str) -> Option<Response> {
+    if !from_extension(headers) {
+        return Some(StatusCode::FORBIDDEN.into_response());
+    }
+    bridge.remember(headers);
+    if !bridge.handler.config().enabled {
+        return Some((StatusCode::CONFLICT, "browser integration is turned off").into_response());
+    }
+    let valid = url::Url::parse(page_url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
+    (!valid).then(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "only http and https pages are supported",
+        )
+            .into_response()
+    })
+}
+
 async fn media(
     State(bridge): State<Arc<Bridge>>,
     headers: HeaderMap,
     Json(source): Json<MediaSource>,
 ) -> Response {
-    if !from_extension(&headers) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    bridge.remember(&headers);
-    if !bridge.handler.config().enabled {
-        return (StatusCode::CONFLICT, "browser integration is turned off").into_response();
-    }
-    let valid =
-        url::Url::parse(&source.page_url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
-    if !valid {
-        return (
-            StatusCode::BAD_REQUEST,
-            "only http and https pages are supported",
-        )
-            .into_response();
+    if let Some(refused) = refuse_media(&bridge, &headers, &source.page_url) {
+        return refused;
     }
     bridge.handler.media(source);
     StatusCode::ACCEPTED.into_response()
+}
+
+async fn media_probe(
+    State(bridge): State<Arc<Bridge>>,
+    headers: HeaderMap,
+    Json(request): Json<ProbeRequest>,
+) -> Response {
+    if let Some(refused) = refuse_media(&bridge, &headers, &request.source.page_url) {
+        return refused;
+    }
+    let probe = bridge.handler.probe_media(request.source);
+    if !request.wait {
+        tokio::spawn(async move {
+            let _ = probe.await;
+        });
+        return StatusCode::ACCEPTED.into_response();
+    }
+    match probe.await {
+        Ok(info) => Json(info).into_response(),
+        Err(error) => (StatusCode::UNPROCESSABLE_ENTITY, error).into_response(),
+    }
+}
+
+async fn media_add(
+    State(bridge): State<Arc<Bridge>>,
+    headers: HeaderMap,
+    Json(request): Json<AddMediaRequest>,
+) -> Response {
+    if let Some(refused) = refuse_media(&bridge, &headers, &request.source.page_url) {
+        return refused;
+    }
+    match bridge
+        .handler
+        .add_media(request.source, request.option)
+        .await
+    {
+        Ok(id) => Json(serde_json::json!({ "id": id })).into_response(),
+        Err(error) => (StatusCode::UNPROCESSABLE_ENTITY, error).into_response(),
+    }
 }
 
 #[cfg(test)]
@@ -256,6 +328,37 @@ mod tests {
 
         fn media(&self, source: MediaSource) {
             self.videos.lock().unwrap().push(source);
+        }
+
+        fn probe_media(&self, source: MediaSource) -> BoxFuture<Result<MediaInfo, String>> {
+            Box::pin(async move {
+                if source.page_url.contains("broken") {
+                    return Err("Unsupported URL".into());
+                }
+                Ok(crate::media::MediaInfo {
+                    title: "Clip".into(),
+                    thumbnail: None,
+                    duration: Some(60.0),
+                    site: "Example".into(),
+                    url: source.page_url,
+                    options: Vec::new(),
+                    default: None,
+                })
+            })
+        }
+
+        fn add_media(
+            &self,
+            _source: MediaSource,
+            option: String,
+        ) -> BoxFuture<Result<u64, String>> {
+            Box::pin(async move {
+                if option == "v720" {
+                    Ok(7)
+                } else {
+                    Err("no such quality".into())
+                }
+            })
         }
     }
 
@@ -427,5 +530,92 @@ mod tests {
         assert_eq!(videos.len(), 1);
         assert_eq!(videos[0].cookies[0].path, "/");
         assert_eq!(videos[0].title.as_deref(), Some("Clip"));
+    }
+
+    #[tokio::test]
+    async fn reads_and_adds_videos_for_the_page_menu() {
+        let (bridge, _) = bridge(true);
+        let post = |path: &str, body: &str| {
+            Request::post(path)
+                .header("content-type", "application/json")
+                .header(CLIENT_HEADER, "extension")
+                .body(Body::from(body.to_owned()))
+                .unwrap()
+        };
+        let read = |response: Response| async move {
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), 65536)
+                .await
+                .unwrap();
+            (status, String::from_utf8_lossy(&body).into_owned())
+        };
+        let page = r#""pageUrl":"https://videos.example.com/watch/1""#;
+        let (status, body) = read(
+            bridge
+                .clone()
+                .router()
+                .oneshot(post(
+                    "/api/media/probe",
+                    &format!("{{{page},\"wait\":true}}"),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains(r#""title":"Clip""#), "{body}");
+
+        let response = bridge
+            .clone()
+            .router()
+            .oneshot(post("/api/media/probe", &format!("{{{page}}}")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let (status, body) = read(
+            bridge
+                .clone()
+                .router()
+                .oneshot(post(
+                    "/api/media/probe",
+                    r#"{"pageUrl":"https://broken.example.com/","wait":true}"#,
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::UNPROCESSABLE_ENTITY, "Unsupported URL")
+        );
+
+        let (status, body) = read(
+            bridge
+                .clone()
+                .router()
+                .oneshot(post(
+                    "/api/media/add",
+                    &format!(r#"{{"source":{{{page}}},"option":"v720"}}"#),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!((status, body.as_str()), (StatusCode::OK, r#"{"id":7}"#));
+
+        let response = bridge
+            .router()
+            .oneshot(
+                Request::post("/api/media/add")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"source":{{{page}}},"option":"v720"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
