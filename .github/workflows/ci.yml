@@ -33,6 +33,7 @@ jobs:
           npm ci
           npm run build
       - run: cargo fmt --all --check
+      - run: node --test extension/tests/*.test.mjs
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:

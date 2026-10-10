@@ -61,5 +61,29 @@
   },
   "magnetsLabel": {
     "message": "Open magnet links with SDM"
+  },
+  "videoQualities": {
+    "message": "Video qualities"
+  },
+  "videoFindingQualities": {
+    "message": "Finding qualities…"
+  },
+  "videoMoreOptions": {
+    "message": "More options in SDM…"
+  },
+  "videoDownloading": {
+    "message": "Downloading in SDM ✓"
+  },
+  "videoAudio": {
+    "message": "Audio"
+  },
+  "videoBest": {
+    "message": "Best"
+  },
+  "videoNoQualities": {
+    "message": "No qualities found on this page."
+  },
+  "videoUnavailable": {
+    "message": "Video downloads are not available on this page."
   }
 }

@@ -192,10 +192,15 @@ Only download what you have the right to download. Many sites forbid downloading
 videos, and most videos and torrents are protected by copyright. While a torrent
 downloads, SDM also shares it with others, who can see your IP address.
 
-Videos use [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense) and
-[ffmpeg](https://ffmpeg.org) (GPL), fetched from their official releases when first
-needed. Torrents use [librqbit](https://github.com/ikatson/rqbit) (Apache-2.0). The
-interface uses the [Inter](https://rsms.me/inter/) typeface (SIL Open Font License).
+The installers bundle [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense) and
+[Deno](https://github.com/denoland/deno) (MIT) for video downloads. Windows also
+bundles [ffmpeg](https://github.com/yt-dlp/FFmpeg-Builds) (GPL); on macOS and Linux,
+install ffmpeg with your package manager for merging and converting media. Bundled
+tools come from their official releases and are checksum-verified when packaged.
+SDM keeps its own copy of yt-dlp up to date; source and licenses are available from
+the linked upstream projects. Torrents use [librqbit](https://github.com/ikatson/rqbit)
+(Apache-2.0). The interface uses the [Inter](https://rsms.me/inter/) typeface
+(SIL Open Font License).
 SDM is an independent project, not affiliated with any other download manager.
 
 ---

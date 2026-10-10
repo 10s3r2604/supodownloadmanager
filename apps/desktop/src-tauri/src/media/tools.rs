@@ -659,4 +659,50 @@ mod tests {
         assert_eq!(expected_sum(sums, "yt-dlp_macos").as_deref(), Some("0099"));
         assert_eq!(expected_sum(sums, "yt-dlp_linux"), None);
     }
+
+    #[test]
+    fn bundled_readme_is_not_a_tool() {
+        let bundled = tempfile::tempdir().unwrap();
+        std::fs::write(
+            bundled.path().join("README.md"),
+            "Local builds need no tools",
+        )
+        .unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let tools = Tools::new(data.path(), Some(bundled.path().to_path_buf()));
+        assert!(tools.shipped("yt-dlp").is_none());
+        assert!(tools.shipped("deno").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copies_bundled_tools_and_restores_execute_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let bundled = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let program = bundled.path().join("yt-dlp");
+        std::fs::write(&program, "bundled tool").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::write(bundled.path().join("yt-dlp.sha256"), "checksum").unwrap();
+        let tools = Tools::new(data.path(), Some(bundled.path().to_path_buf()));
+        let found = tools.ytdlp().unwrap();
+        assert_eq!(found, data.path().join("tools/yt-dlp"));
+        assert_eq!(std::fs::read_to_string(&found).unwrap(), "bundled tool");
+        assert_eq!(
+            std::fs::metadata(found).unwrap().permissions().mode() & 0o111,
+            0o111
+        );
+        assert_eq!(
+            std::fs::read_to_string(data.path().join("tools/yt-dlp.sha256")).unwrap(),
+            "checksum"
+        );
+
+        // A downloaded update takes precedence over the bundled copy.
+        std::fs::write(data.path().join("tools/yt-dlp"), "newer tool").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tools.ytdlp().unwrap()).unwrap(),
+            "newer tool"
+        );
+    }
 }

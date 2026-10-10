@@ -14,7 +14,7 @@ const settings: Settings = {
   maxParallel: 3,
   speedLimit: 0,
   proxy: "",
-  language: (new URLSearchParams(location.search).get("lang") as Settings["language"]) ?? "auto",
+  language: (new URLSearchParams(location.search).get("lang") as Settings["language"]) ?? "en",
   skin: (new URLSearchParams(location.search).get("skin") as Settings["skin"]) || "neon",
   theme: (new URLSearchParams(location.search).get("theme") as Settings["theme"]) || "system",
   progressWindow: true,
@@ -400,7 +400,7 @@ export const mockApi: Api = {
   },
   async openExtensionFolder() {},
   async appInfo() {
-    return { version: "0.4.0", bridgePort: 17360, bridgeError: null };
+    return { version: "0.5.0", bridgePort: 17360, bridgeError: null };
   },
   async onAddPrompt(handler) {
     const listener = (event: Event) => handler((event as CustomEvent).detail);

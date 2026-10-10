@@ -61,5 +61,29 @@
   },
   "magnetsLabel": {
     "message": "Mở link magnet bằng SDM"
+  },
+  "videoQualities": {
+    "message": "Chất lượng video"
+  },
+  "videoFindingQualities": {
+    "message": "Đang tìm chất lượng…"
+  },
+  "videoMoreOptions": {
+    "message": "Tùy chọn khác trong SDM…"
+  },
+  "videoDownloading": {
+    "message": "Đang tải trong SDM ✓"
+  },
+  "videoAudio": {
+    "message": "Âm thanh"
+  },
+  "videoBest": {
+    "message": "Tốt nhất"
+  },
+  "videoNoQualities": {
+    "message": "Không tìm thấy chất lượng trên trang này."
+  },
+  "videoUnavailable": {
+    "message": "Không thể tải video trên trang này."
   }
 }

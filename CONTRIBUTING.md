@@ -65,6 +65,7 @@ Run the same checks as CI:
 ```sh
 cargo fmt --all
 (cd apps/desktop && npm run build)    # the desktop crate embeds the built interface
+node --test extension/tests/*.test.mjs
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```

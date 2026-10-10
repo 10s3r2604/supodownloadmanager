@@ -6,6 +6,8 @@
 
 const DEFAULT_PORT = 17360;
 const PING_CACHE_MS = 5000;
+const PREFETCH_CACHE_MS = 60_000;
+const MEDIA_TIMEOUT_MS = 180_000;
 const DEFAULT_PREFS = { capture: true, videoButton: true, magnets: true, port: DEFAULT_PORT, minSizeMb: 0 };
 
 // Sites where the video button and menu stay away. The Chrome Web Store
@@ -38,6 +40,7 @@ let lastPing = { at: 0, status: null };
 let cachedBrowser = null;
 // Links given back to the browser because SDM could not take them.
 const givenBack = new Set();
+const prefetchedPages = new Map();
 
 async function prefs() {
   return chrome.storage.local.get(DEFAULT_PREFS);
@@ -67,7 +70,7 @@ async function isBrave() {
   }
 }
 
-async function callApp(path, body) {
+async function callApp(path, body, timeout = 2500) {
   const { port } = await prefs();
   return fetch(`http://127.0.0.1:${port}${path}`, {
     method: body ? "POST" : "GET",
@@ -77,7 +80,7 @@ async function callApp(path, body) {
       "X-SDM-Browser": await browserId(),
     },
     body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(2500),
+    signal: AbortSignal.timeout(timeout),
   });
 }
 
@@ -191,6 +194,55 @@ async function handOverVideo({ pageUrl, title, mediaUrl, referrer }) {
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+/** Reads qualities or starts the chosen download without opening the app dialog. */
+async function videoRequest(message, sender) {
+  const { pageUrl } = message;
+  if (
+    !/^https?:/i.test(pageUrl || "") ||
+    !videoAllowed(pageUrl) ||
+    !videoAllowed(sender.url || sender.tab?.url)
+  ) {
+    return { ok: false, error: chrome.i18n.getMessage("videoUnavailable") };
+  }
+  const [settings, status] = await Promise.all([prefs(), ping()]);
+  if (!settings.videoButton || !status?.enabled || !status?.media) {
+    return { ok: false, error: chrome.i18n.getMessage("statusOffline") };
+  }
+  const prefetch = message.type === "video-prefetch";
+  const key = pageUrl.split("#")[0];
+  const now = Date.now();
+  for (const [page, time] of prefetchedPages) {
+    if (now - time >= PREFETCH_CACHE_MS) prefetchedPages.delete(page);
+  }
+  if (prefetch) {
+    if (prefetchedPages.has(key)) return { ok: true };
+    prefetchedPages.set(key, now);
+  }
+  try {
+    const source = {
+      pageUrl,
+      title: message.title || undefined,
+      mediaUrl: /^https?:/i.test(message.mediaUrl || "") ? message.mediaUrl : undefined,
+      referrer: sender.tab?.url !== pageUrl ? sender.tab?.url : undefined,
+      cookies: await cookieList(pageUrl),
+      userAgent: navigator.userAgent,
+    };
+    const add = message.type === "video-add";
+    const response = await callApp(
+      add ? "/api/media/add" : "/api/media/probe",
+      add ? { source, option: message.option } : { ...source, wait: !prefetch },
+      prefetch ? 2500 : MEDIA_TIMEOUT_MS,
+    );
+    if (!response.ok) throw new Error((await response.text()) || chrome.i18n.getMessage("videoFailed"));
+    if (prefetch) return { ok: true };
+    const result = await response.json();
+    return add ? { ok: true, id: result.id } : { ok: true, info: result };
+  } catch (error) {
+    if (prefetch && prefetchedPages.get(key) === now) prefetchedPages.delete(key);
+    return { ok: false, error: error instanceof TypeError ? chrome.i18n.getMessage("statusOffline") : error.message };
   }
 }
 
@@ -319,6 +371,10 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       mediaUrl: message.mediaUrl,
       referrer: sender.tab?.url !== message.pageUrl ? sender.tab?.url : undefined,
     }).then((ok) => reply({ ok }));
+    return true;
+  }
+  if (["video-prefetch", "video-probe", "video-add"].includes(message?.type)) {
+    videoRequest(message, sender).then(reply).catch(() => reply({ ok: false, error: chrome.i18n.getMessage("videoFailed") }));
     return true;
   }
   return false;

@@ -8,6 +8,8 @@ os=$1
 deno_asset=$2
 out=apps/desktop/src-tauri/tools
 tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$out"
 
 sha256() {
   if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
@@ -28,7 +30,7 @@ fetch "$ytdlp/$asset" "$tmp/$asset"
 actual=$(sha256 "$tmp/$asset")
 [ -n "$expected" ] && [ "$expected" = "$actual" ] || { echo "yt-dlp checksum mismatch" >&2; exit 1; }
 if [ "$os" = Windows ]; then
-  unzip -q "$tmp/$asset" -d "$out/yt-dlp"
+  unzip -q -o "$tmp/$asset" -d "$out/yt-dlp"
   test -f "$out/yt-dlp/yt-dlp.exe"
 else
   cp "$tmp/$asset" "$out/yt-dlp"
@@ -55,5 +57,4 @@ if [ "$os" = Windows ]; then
   unzip -q -j "$tmp/ffmpeg.zip" "*/bin/ffmpeg.exe" -d "$out"
 fi
 
-rm -rf "$tmp"
 ls -la "$out"

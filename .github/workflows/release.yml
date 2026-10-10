@@ -30,15 +30,19 @@ jobs:
           - name: Windows
             os: windows-latest
             args: ""
+            deno: deno-x86_64-pc-windows-msvc.zip
           - name: Linux
             os: ubuntu-22.04
             args: ""
+            deno: deno-x86_64-unknown-linux-gnu.zip
           - name: macOS Apple Silicon
             os: macos-latest
             args: --target aarch64-apple-darwin
+            deno: deno-aarch64-apple-darwin.zip
           - name: macOS Intel
             os: macos-latest
             args: --target x86_64-apple-darwin
+            deno: deno-x86_64-apple-darwin.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -58,6 +62,13 @@ jobs:
           cache-dependency-path: apps/desktop/package-lock.json
       - working-directory: apps/desktop
         run: npm ci
+      - name: Bundle video tools
+        shell: bash
+        env:
+          DENO_ASSET: ${{ matrix.deno }}
+        run: |
+          bash .github/scripts/bundle-tools.sh "$RUNNER_OS" "$DENO_ASSET"
+          du -sh apps/desktop/src-tauri/tools
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -67,6 +78,8 @@ jobs:
           releaseName: Supo Download Manager ${{ env.VERSION }}
           releaseBody: |
             Free, open-source download manager with multi-connection downloads, a video grabber and BitTorrent (magnet links and .torrent files).
+
+            Pick a video quality directly on the web page. SDM reads formats in advance and ships yt-dlp and Deno, plus ffmpeg on Windows, so video downloads can start without installing tools first.
 
             ## Which file do I need?
 

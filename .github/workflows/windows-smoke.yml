@@ -12,6 +12,9 @@ on:
       video:
         description: A video page for the yt-dlp timing job
         default: https://www.youtube.com/watch?v=aqz-KE-bpKQ
+      bundled_video:
+        description: A non-YouTube video page for the installed bundled tools
+        default: https://www.w3schools.com/html/html5_video.asp
 
 permissions:
   contents: read
@@ -82,6 +85,7 @@ jobs:
             try { Invoke-RestMethod http://127.0.0.1:17360/api/ping -Headers @{ "X-SDM-Client" = "smoke" } | Out-Null; $up = $true } catch {}
           }
           "bridge up: $up" | Tee-Object -Append shots/windows.txt
+          if (-not $up) { throw "SDM did not start its browser bridge" }
           Start-Sleep 5
           Shot "1-started"
           Windows "after start"
@@ -96,6 +100,55 @@ jobs:
           Windows "after the download"
           Get-ChildItem "$env:USERPROFILE\Downloads" -Recurse | Select-Object FullName, Length | Format-Table -AutoSize | Out-String | Tee-Object -Append shots/windows.txt
 
+      - name: Time the installed bundled video tools
+        shell: pwsh
+        env:
+          BUNDLED_VIDEO: ${{ inputs.bundled_video }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = Get-ChildItem "$env:LOCALAPPDATA", "$env:ProgramFiles" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match "^(sdm-desktop|Supo Download Manager)\.exe$" } | Select-Object -First 1
+          if (-not $exe) { throw "SDM is not installed" }
+          $tools = Join-Path $exe.Directory.FullName "tools"
+          $ytdlp = Join-Path $tools "yt-dlp\yt-dlp.exe"
+          $deno = Join-Path $tools "deno.exe"
+          $ffmpeg = Join-Path $tools "ffmpeg.exe"
+          foreach ($tool in @($ytdlp, $deno, $ffmpeg)) {
+            if (-not (Test-Path $tool)) { throw "Bundled tool is missing: $tool" }
+            "{0}: {1:N1} MB" -f $tool, ((Get-Item $tool).Length / 1MB) | Tee-Object -Append shots/bundled-video.txt
+          }
+          & $ytdlp --version | Tee-Object -Append shots/bundled-video.txt
+          if ($LASTEXITCODE -ne 0) { throw "Bundled yt-dlp did not start" }
+          & $deno --version | Tee-Object -Append shots/bundled-video.txt
+          if ($LASTEXITCODE -ne 0) { throw "Bundled Deno did not start" }
+          $ffmpegVersion = & $ffmpeg -version
+          if ($LASTEXITCODE -ne 0) { throw "Bundled ffmpeg did not start" }
+          $ffmpegVersion | Select-Object -First 1 | Tee-Object -Append shots/bundled-video.txt
+
+          $start = [Diagnostics.ProcessStartInfo]::new($ytdlp)
+          $start.UseShellExecute = $false
+          $start.RedirectStandardOutput = $true
+          $start.RedirectStandardError = $true
+          foreach ($arg in @("-J", "--no-playlist", "--socket-timeout", "15", "--retries", "0", "--extractor-retries", "0", "--js-runtimes", "deno:$deno", "--", $env:BUNDLED_VIDEO)) {
+            $start.ArgumentList.Add($arg)
+          }
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $probe = [Diagnostics.Process]::Start($start)
+          $stdout = $probe.StandardOutput.ReadToEndAsync()
+          $stderr = $probe.StandardError.ReadToEndAsync()
+          if (-not $probe.WaitForExit(60000)) {
+            $probe.Kill($true)
+            throw "Bundled yt-dlp took more than 60 seconds to read the page"
+          }
+          $sw.Stop()
+          $stderr.GetAwaiter().GetResult() | Tee-Object -Append shots/bundled-video.txt
+          $result = $stdout.GetAwaiter().GetResult()
+          "bundled yt-dlp + deno: {0:N1} s, exit: {1}" -f $sw.Elapsed.TotalSeconds, $probe.ExitCode | Tee-Object -Append shots/bundled-video.txt
+          if ($probe.ExitCode -ne 0) { throw "Bundled yt-dlp could not read the video page" }
+          $formats = ($result | ConvertFrom-Json).formats.Count
+          "formats: $formats" | Tee-Object -Append shots/bundled-video.txt
+          if ($formats -lt 1) { throw "Bundled yt-dlp returned no formats" }
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -108,6 +161,8 @@ jobs:
     steps:
       - name: Time yt-dlp
         shell: pwsh
+        env:
+          VIDEO_PAGE: ${{ inputs.video }}
         run: |
           $ErrorActionPreference = "Continue"
           $base = "https://github.com/yt-dlp/yt-dlp/releases/latest/download"
@@ -116,7 +171,7 @@ jobs:
           Expand-Archive yt-dlp_win.zip -DestinationPath onedir
           Invoke-WebRequest "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -OutFile deno.zip
           Expand-Archive deno.zip -DestinationPath deno
-          $url = "${{ inputs.video }}"
+          $url = $env:VIDEO_PAGE
           $onedir = Get-ChildItem onedir -Recurse -Filter yt-dlp.exe | Select-Object -First 1
           function Time($label, $exe, $extra) {
             $sw = [Diagnostics.Stopwatch]::StartNew()
