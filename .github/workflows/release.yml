@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -46,6 +47,51 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Validate Windows signing configuration
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_ENABLED: ${{ vars.WINDOWS_SIGNING_ENABLED }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_CERTIFICATE_THUMBPRINT: ${{ vars.SIGNPATH_CERTIFICATE_THUMBPRINT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:WINDOWS_SIGNING_ENABLED -notin @('', 'false', 'true')) {
+            throw 'WINDOWS_SIGNING_ENABLED must be true, false or unset.'
+          }
+          if ($env:WINDOWS_SIGNING_ENABLED -ne 'true') { exit 0 }
+          foreach ($name in @('SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID', 'SIGNPATH_PROJECT_SLUG', 'SIGNPATH_CERTIFICATE_THUMBPRINT')) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              throw "Windows signing is enabled but $name is missing."
+            }
+          }
+          if ($env:SIGNPATH_CERTIFICATE_THUMBPRINT -notmatch '^[0-9a-fA-F]{40}$') {
+            throw 'SIGNPATH_CERTIFICATE_THUMBPRINT must be the approved certificate SHA-1 thumbprint (40 hex digits).'
+          }
+          $config = Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          if ($config.version -notmatch '^\d+\.\d+\.\d+$' -or $env:VERSION -ne "v$($config.version)") {
+            throw 'Use a stable vMAJOR.MINOR.PATCH tag matching the app version.'
+          }
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:GITHUB_REF -ne 'refs/heads/main') {
+            throw 'Run signed releases from main or push a release tag on main.'
+          }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Only commits on main may be signed for release.' }
+          $response = & gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:VERSION" 2>$null
+          $apiExit = $LASTEXITCODE
+          $release = $response | ConvertFrom-Json
+          if ($apiExit -eq 0) {
+            if (@($release.assets | Where-Object { $_.name -match '^Supo\.Download\.Manager_.*(\.exe|\.msi)$' }).Count -gt 0) {
+              throw 'This version already has Windows installers. Publish a new version instead of replacing them.'
+            }
+          } elseif ($release.status -ne '404') {
+            throw 'Unable to check existing release assets; refusing to continue signing.'
+          }
+          "PACKAGE_VERSION=$($config.version)" >> $env:GITHUB_ENV
       - name: Install system libraries
         if: runner.os == 'Linux'
         run: |
@@ -69,7 +115,104 @@ jobs:
         run: |
           bash .github/scripts/bundle-tools.sh "$RUNNER_OS" "$DENO_ASSET"
           du -sh apps/desktop/src-tauri/tools
+      - name: Build Windows application before signing
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        working-directory: apps/desktop
+        run: npm run tauri build -- --ci --no-bundle -- --locked
+      - name: Upload Windows application for signing
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        id: unsigned-app
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-app-unsigned
+          path: target/release/sdm-desktop.exe
+          if-no-files-found: error
+          retention-days: 7
+      - name: Sign Windows application
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        timeout-minutes: 65
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-app
+          github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
+          parameters: |
+            version: "${{ env.PACKAGE_VERSION }}"
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed-app
+      - name: Verify and install signed application into build output
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        shell: pwsh
+        env:
+          SIGNPATH_CERTIFICATE_THUMBPRINT: ${{ vars.SIGNPATH_CERTIFICATE_THUMBPRINT }}
+        run: |
+          . .github/scripts/WindowsSigning.ps1
+          Assert-SignedWindowsArtifact -Directory signed-app -Kind App -Version $env:PACKAGE_VERSION -Thumbprint $env:SIGNPATH_CERTIFICATE_THUMBPRINT
+          Copy-Item -LiteralPath signed-app/sdm-desktop.exe -Destination target/release/sdm-desktop.exe -Force
+          "SIGNED_APP_SHA256=$((Get-FileHash target/release/sdm-desktop.exe -Algorithm SHA256).Hash)" >> $env:GITHUB_ENV
+      - name: Bundle signed Windows application without modifying its signature
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        working-directory: apps/desktop
+        run: npm run tauri bundle -- --ci --no-sign --no-binary-patching --bundles nsis,msi
+      - name: Stage Windows installers for signing
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        shell: pwsh
+        run: |
+          if ((Get-FileHash target/release/sdm-desktop.exe -Algorithm SHA256).Hash -ne $env:SIGNED_APP_SHA256) {
+            throw 'Bundling modified the signed application.'
+          }
+          New-Item -ItemType Directory -Path unsigned-installers | Out-Null
+          $installers = @(Get-ChildItem target/release/bundle/nsis/*.exe, target/release/bundle/msi/*.msi -File)
+          if ($installers.Count -ne 2) { throw 'Expected exactly one NSIS and one MSI installer.' }
+          foreach ($file in $installers) {
+            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path unsigned-installers $file.Name.Replace(' ', '.'))
+          }
+      - name: Upload Windows installers for signing
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        id: unsigned-installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers-unsigned
+          path: unsigned-installers/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Sign Windows installers
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        timeout-minutes: 65
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-installers
+          github-artifact-id: ${{ steps.unsigned-installers.outputs.artifact-id }}
+          parameters: |
+            version: "${{ env.PACKAGE_VERSION }}"
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed-installers
+      - name: Verify signed Windows installers
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        shell: pwsh
+        env:
+          SIGNPATH_CERTIFICATE_THUMBPRINT: ${{ vars.SIGNPATH_CERTIFICATE_THUMBPRINT }}
+        run: |
+          . .github/scripts/WindowsSigning.ps1
+          Assert-SignedWindowsArtifact -Directory signed-installers -Kind Installers -Version $env:PACKAGE_VERSION -Thumbprint $env:SIGNPATH_CERTIFICATE_THUMBPRINT
+      - name: Upload verified signed Windows installers
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING_ENABLED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdm-windows-signed
+          path: signed-installers/*
+          if-no-files-found: error
       - uses: tauri-apps/tauri-action@v0
+        if: runner.os != 'Windows' || vars.WINDOWS_SIGNING_ENABLED != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -94,9 +237,14 @@ jobs:
             | Command line only | `sdm-cli-*` for your system |
             | Browser extension (manual install) | `sdm-extension-chromium-*.zip` or `sdm-extension-firefox-*.zip` |
 
-            The installers are not code-signed yet:
+            ## Code signing
 
-            - **Windows**: if SmartScreen warns, click **More info → Run anyway**.
+            Windows installers: ${{ vars.WINDOWS_SIGNING_ENABLED == 'true' && 'code-signed through SignPath; the application and both installers are verified before publication.' || 'unsigned; Windows may show Unknown publisher or a SmartScreen warning.' }}
+
+            See the [Code signing policy](https://github.com/10s3r2604/supodownloadmanager/blob/main/docs/CODE_SIGNING.md).
+            A valid signature identifies the publisher; a new signed release can still trigger SmartScreen while reputation builds.
+
+            - **Windows**: only proceed through **More info → Run anyway** if you trust the release and its source.
             - **macOS**: if macOS says the app is damaged or from an unidentified developer, run
               `xattr -dr com.apple.quarantine "/Applications/Supo Download Manager.app"` once, then open it.
 
@@ -162,11 +310,19 @@ jobs:
           (cd extension/dist/chromium-store && zip -r "../../../sdm-extension-store-chromium-${VERSION}.zip" .)
       - uses: actions/download-artifact@v4
         with:
+          pattern: sdm-cli-*
           path: dist
           merge-multiple: true
+      - name: Download verified signed Windows installers
+        if: vars.WINDOWS_SIGNING_ENABLED == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: sdm-windows-signed
+          path: dist
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
+          overwrite_files: false
           files: |
             dist/*
             sdm-extension-*.zip

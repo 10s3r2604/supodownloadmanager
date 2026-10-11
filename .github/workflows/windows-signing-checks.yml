@@ -1,0 +1,29 @@
+name: Windows signing checks
+
+on:
+  pull_request:
+    paths:
+      - .github/scripts/*WindowsSigning.ps1
+      - .github/workflows/release.yml
+      - .github/workflows/windows-signing-checks.yml
+      - .signpath/**
+  push:
+    branches: [main]
+    paths:
+      - .github/scripts/*WindowsSigning.ps1
+      - .github/workflows/release.yml
+      - .github/workflows/windows-signing-checks.yml
+      - .signpath/**
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify Windows signature gates
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check signature verification and reject invalid artifacts
+        shell: pwsh
+        run: .github/scripts/Test-WindowsSigning.ps1
