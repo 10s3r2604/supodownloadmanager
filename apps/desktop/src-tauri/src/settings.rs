@@ -16,6 +16,9 @@ pub const DEFAULT_BRIDGE_PORT: u16 = 17360;
 pub struct Settings {
     /// Where downloads are saved.
     pub download_dir: PathBuf,
+    /// Persistent temporary data for unfinished HTTP and media downloads.
+    /// Changing this affects new downloads; existing records retain their root.
+    pub temp_dir: PathBuf,
     /// Save into `Video`, `Music`, ... sub-folders.
     pub category_folders: bool,
     /// Connections per download.
@@ -65,6 +68,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             download_dir: PathBuf::new(),
+            temp_dir: PathBuf::new(),
             category_folders: true,
             connections: 8,
             max_parallel: 3,

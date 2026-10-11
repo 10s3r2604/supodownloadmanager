@@ -36,10 +36,11 @@ using System.Threading;
 class MediaFixture {
   static int Main(string[] args) {
     Console.OutputEncoding = new UTF8Encoding(false);
-    string directory = null, name = null, url = null;
+    string directory = null, temporary = null, name = null, url = null;
     bool probe = false;
     for (int i = 0; i < args.Length; i++) {
       if (args[i] == "-P" && args[i + 1].StartsWith("home:")) directory = args[i + 1].Substring(5);
+      if (args[i] == "-P" && args[i + 1].StartsWith("temp:")) temporary = args[i + 1].Substring(5);
       if (args[i] == "-o") name = args[i + 1].Replace("%(ext)s", "mp4").Replace("%%", "%");
       if (args[i] == "--") url = args[i + 1];
       if (args[i] == "-J") probe = true;
@@ -61,6 +62,8 @@ class MediaFixture {
       return 1;
     }
     Console.WriteLine("SDMP downloading 5 27 NA 10 18");
+    Directory.CreateDirectory(temporary);
+    File.WriteAllText(Path.Combine(temporary, "fixture.part"), "partial-media");
     Thread.Sleep(1000);
     Directory.CreateDirectory(directory);
     string file = Path.Combine(directory, name);
@@ -124,7 +127,7 @@ const server=http.createServer((req,res)=>{
     const next=Math.min(end,offset+64_000);
     res.write(bytes.subarray(offset,next)); offset=next;
     if(offset===end) { clearInterval(timer); res.end(); }
-  },req.url==='/slow.bin'?2_000:200);
+  },req.url==='/slow.bin'||req.url.startsWith('/temp-')?2_000:200);
   res.on('close',()=>clearInterval(timer));
 });
 
@@ -333,6 +336,10 @@ const server=http.createServer((req,res)=>{
       const d=await invoke('get_download',{id:media.id}); return d?.state==='completed'?d:null;
     },'Native media did not complete');
     assert.equal(fs.readFileSync(mediaFile.path,'utf8'),'native-media-progress-smoke');
+    const mediaStored=JSON.parse(fs.readFileSync(path.join(data,'downloads.json'),'utf8')).find(d=>d.id===media.id);
+    assert(mediaStored.tempDir);
+    assert(!fs.readdirSync(mediaStored.tempDir).some(name=>name.startsWith('download-')),
+      'Successful media left its temporary workspace behind');
     report.push({name:'native-media-content',passed:true});
     await closeProgress(window);
 
@@ -368,6 +375,67 @@ const server=http.createServer((req,res)=>{
     const settings=await invoke('get_settings');
     await invoke('save_settings',{settings:{...settings,maxParallel:2}});
     await progress(queuedId,'6-settings-start-queued');
+
+    // Configure the actual General settings form and exercise both the saved
+    // root and per-download roots through real native IPC and filesystem I/O.
+    const defaults=await invoke('get_settings');
+    assert.equal(defaults.tempDir,path.join(process.env.LOCALAPPDATA,'com.supodownloadmanager.app','temp'));
+    await invoke('save_settings',{settings:{...defaults,progressWindow:false,completeDialog:false}});
+    async function setTempFolder(folder,screenshot) {
+      await main.getByRole('button',{name:'Settings',exact:true}).click();
+      const dialog=main.getByRole('dialog',{name:'Settings',exact:true});
+      await dialog.getByRole('tab',{name:'General',exact:true}).click();
+      await dialog.getByRole('textbox',{name:'Temporary folder',exact:true}).fill(folder);
+      if(screenshot) await main.screenshot({path:path.join(output,screenshot)});
+      await dialog.getByRole('button',{name:'Save',exact:true}).click();
+      await until(async()=>!(await dialog.count()),'Settings did not save or close');
+      assert.equal((await invoke('get_settings')).tempDir,folder);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(data,'settings.json'),'utf8')).tempDir,folder);
+    }
+    const tempA=path.join(process.env.LOCALAPPDATA,'sdm-smoke-temp-a');
+    const tempB=path.join(process.env.RUNNER_TEMP,'sdm-smoke-temp-b');
+    await setTempFolder(tempA,'temporary-folder-settings.png');
+    report.push({name:'settings-custom-temp-folder',passed:true,persisted:true});
+    const valid=await invoke('get_settings');
+    await assert.rejects(invoke('save_settings',{settings:{...valid,tempDir:'relative-temp'}}),/absolute path/i);
+    const blocked=path.join(tempA,'not-a-folder');
+    fs.writeFileSync(blocked,'keep');
+    await assert.rejects(invoke('save_settings',{settings:{...valid,tempDir:blocked}}));
+    assert.equal((await invoke('get_settings')).tempDir,tempA);
+    assert.equal(fs.readFileSync(blocked,'utf8'),'keep');
+    report.push({name:'invalid-temp-settings-keep-previous-folder',passed:true,mainResponsive:true});
+    function workspaces(root) {
+      return fs.existsSync(root)?fs.readdirSync(root).filter(name=>name.startsWith('download-')):[];
+    }
+    const partialId=await invoke('add_download',{request:{url:`${source}/temp-paused.bin`,fileName:'temp-paused.bin',directory,start:true}});
+    await until(async()=>{const d=await invoke('get_download',{id:partialId});return d.downloaded>0;},'Temp fixture did not transfer');
+    await invoke('pause_downloads',{ids:[partialId]});
+    const partial=await until(async()=>{const d=await invoke('get_download',{id:partialId});return d.state==='paused'?d:null;},'Temp fixture did not pause');
+    assert(!fs.existsSync(`${partial.path}.sdm-part`));
+    assert(!fs.existsSync(`${partial.path}.sdm-state`));
+    assert.equal(workspaces(tempA).length,1);
+    const workspaceA=path.join(tempA,workspaces(tempA)[0]);
+    assert(fs.existsSync(path.join(workspaceA,'temp-paused.bin.sdm-part')));
+    assert(fs.existsSync(path.join(workspaceA,'temp-paused.bin.sdm-state')));
+    const stored=JSON.parse(fs.readFileSync(path.join(data,'downloads.json'),'utf8')).find(d=>d.id===partialId);
+    assert.equal(stored.tempDir,tempA);
+    await setTempFolder(tempB);
+    assert(fs.existsSync(workspaceA),'Changing the root deleted paused data');
+    await invoke('resume_downloads',{ids:[partialId]});
+    const resumed=await until(async()=>{const d=await invoke('get_download',{id:partialId});return d.state==='completed'?d:null;},'Paused data did not resume after temp change');
+    assert.equal(sha(fs.readFileSync(resumed.path)),sha(bytes));
+    assert(!fs.existsSync(workspaceA));
+    assert(!fs.existsSync(path.join(directory,'.sdm-finalizing')));
+    assert.equal(fs.readFileSync(blocked,'utf8'),'keep');
+    report.push({name:'temp-root-change-resume-and-completion-cleanup',passed:true,contentVerified:true});
+    const removeId=await invoke('add_download',{request:{url:`${source}/temp-remove.bin`,fileName:'temp-remove.bin',directory,start:true}});
+    await until(async()=>{const d=await invoke('get_download',{id:removeId});return d.downloaded>0;},'Removal fixture did not transfer');
+    assert.equal(workspaces(tempB).length,1);
+    await invoke('remove_downloads',{ids:[removeId],deleteFiles:false});
+    await until(async()=>!(await invoke('get_download',{id:removeId})),'Removed download remained in the list');
+    assert.equal(workspaces(tempB).length,0);
+    assert(!fs.existsSync(path.join(directory,'temp-remove.bin')));
+    report.push({name:'new-temp-root-removal-cleans-unfinished-data',passed:true});
     fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({passed:report.length,report},null,2));
     console.log(JSON.stringify({passed:report.length,report},null,2));
   } catch(e) {

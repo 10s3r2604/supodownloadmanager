@@ -13,7 +13,7 @@ use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Response, StatusCode, Url};
 use serde::Serialize;
 use tokio::fs::{self, File, OpenOptions};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -23,7 +23,7 @@ use crate::filename;
 use crate::limiter::RateLimiter;
 use crate::probe::{self, ContentRange, RemoteInfo};
 use crate::segment::{Scheduler, Segment, lock};
-use crate::state::{self, SavedSegment, SavedState};
+use crate::state::{PartialFiles, SavedSegment, SavedState};
 
 /// Data is collected in memory up to this size before it is written.
 const WRITE_BUFFER: usize = 256 * 1024;
@@ -102,6 +102,9 @@ pub struct DownloadOptions {
     pub speed_limit: Option<u64>,
     /// Replace an existing file instead of choosing another name.
     pub overwrite: bool,
+    /// Keep unfinished data and progress under this root. `None` preserves
+    /// the CLI's sidecar layout. Each destination gets an isolated subfolder.
+    pub temp_dir: Option<PathBuf>,
 }
 
 impl Default for DownloadOptions {
@@ -113,6 +116,7 @@ impl Default for DownloadOptions {
             retry_delay: Duration::from_millis(500),
             speed_limit: None,
             overwrite: false,
+            temp_dir: None,
         }
     }
 }
@@ -601,6 +605,25 @@ impl Drop for PathGuard {
     }
 }
 
+/// Cleans this download's workspace only when no transfer owns its target.
+pub async fn cleanup_partial(path: &Path, temp_dir: Option<&Path>) -> Result<()> {
+    let _guard = PathGuard::try_new(path).ok_or_else(|| Error::InUse(path.to_owned()))?;
+    PartialFiles::new(path, temp_dir).cleanup().await?;
+    let root = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".sdm-finalizing");
+    PartialFiles::new(path, Some(&root)).cleanup().await?;
+    let _ = fs::remove_dir(root).await;
+    Ok(())
+}
+
+/// Moves legacy sidecars without contacting the server or starting a transfer.
+pub async fn migrate_partial(path: &Path, temp_dir: &Path) -> Result<()> {
+    let _guard = PathGuard::try_new(path).ok_or_else(|| Error::InUse(path.to_owned()))?;
+    PartialFiles::new(path, Some(temp_dir)).prepare(path).await
+}
+
 async fn run_task(
     client: Client,
     global: Arc<RateLimiter>,
@@ -642,8 +665,13 @@ async fn run(
         Err(Error::Cancelled) => return Ok(shared.stopped_outcome(None)),
         result => result?,
     };
-    let (path, mut saved, _guard) =
-        resolve_destination(&destination, &info, options.overwrite).await?;
+    let (path, mut saved, _guard, files) = resolve_destination(
+        &destination,
+        &info,
+        options.overwrite,
+        options.temp_dir.as_deref(),
+    )
+    .await?;
     {
         let mut status = lock(&shared.status);
         status.info = Some(info.clone());
@@ -660,8 +688,8 @@ async fn run(
             client: client.clone(),
             url: url.clone(),
             headers: headers.clone(),
-            part: state::part_path(&path),
-            state: state::state_path(&path),
+            part: files.data.clone(),
+            state: files.state.clone(),
             info: info.clone(),
             ranged,
             options: options.clone(),
@@ -673,9 +701,29 @@ async fn run(
             Err(Error::RangeIgnored) if ranged => {
                 tracing::warn!("server ignores byte ranges; continuing with a single connection");
                 ranged = false;
-                remove_if_exists(&state::state_path(&path)).await?;
+                remove_if_exists(&files.state).await?;
             }
-            result => return result,
+            result => {
+                if matches!(
+                    result,
+                    Ok(Outcome::Completed { .. }
+                        | Outcome::Cancelled
+                        | Outcome::Paused {
+                            resumable: false,
+                            ..
+                        })
+                ) {
+                    if let Err(error) = files.cleanup().await {
+                        tracing::warn!(%error, "could not clean download temporary files");
+                    }
+                    if options.temp_dir.is_some()
+                        && let Err(error) = PartialFiles::new(&path, None).cleanup().await
+                    {
+                        tracing::warn!(%error, "could not clean migrated download files");
+                    }
+                }
+                return result;
+            }
         }
     }
 }
@@ -715,20 +763,26 @@ async fn resolve_destination(
     destination: &Destination,
     info: &RemoteInfo,
     overwrite: bool,
-) -> Result<(PathBuf, Option<SavedState>, PathGuard)> {
+    temp_dir: Option<&Path>,
+) -> Result<(PathBuf, Option<SavedState>, PathGuard, PartialFiles)> {
     match destination {
         Destination::File(path) => {
             let guard = PathGuard::try_new(path).ok_or_else(|| Error::InUse(path.clone()))?;
             if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
                 fs::create_dir_all(parent).await?;
             }
-            if let Some(saved) = saved_progress(path, info).await? {
-                return Ok((path.clone(), Some(saved), guard));
+            let files = PartialFiles::new(path, temp_dir);
+            files.prepare(path).await?;
+            if let Some(saved) = saved_progress(&files, info).await? {
+                return Ok((path.clone(), Some(saved), guard, files));
             }
             if !overwrite && fs::try_exists(path).await? {
+                if let Some(directory) = files.directory() {
+                    let _ = fs::remove_dir(directory).await;
+                }
                 return Err(Error::FileExists(path.clone()));
             }
-            Ok((path.clone(), None, guard))
+            Ok((path.clone(), None, guard, files))
         }
         Destination::Directory(dir) => {
             fs::create_dir_all(dir).await?;
@@ -736,10 +790,15 @@ async fn resolve_destination(
                 let Some(guard) = PathGuard::try_new(&candidate) else {
                     continue;
                 };
-                if let Some(saved) = saved_progress(&candidate, info).await? {
-                    return Ok((candidate, Some(saved), guard));
+                let files = PartialFiles::new(&candidate, temp_dir);
+                files.prepare(&candidate).await?;
+                if let Some(saved) = saved_progress(&files, info).await? {
+                    return Ok((candidate, Some(saved), guard, files));
                 }
                 if !overwrite && fs::try_exists(&candidate).await? {
+                    if let Some(directory) = files.directory() {
+                        let _ = fs::remove_dir(directory).await;
+                    }
                     continue;
                 }
                 // Creating the part file reserves the name, so two programs
@@ -747,10 +806,10 @@ async fn resolve_destination(
                 match OpenOptions::new()
                     .write(true)
                     .create_new(true)
-                    .open(state::part_path(&candidate))
+                    .open(&files.data)
                     .await
                 {
-                    Ok(_) => return Ok((candidate, None, guard)),
+                    Ok(_) => return Ok((candidate, None, guard, files)),
                     Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
                     Err(e) => return Err(e.into()),
                 }
@@ -762,10 +821,10 @@ async fn resolve_destination(
 
 /// Loads usable saved progress for `path`. Progress that does not match the
 /// file on the server any more is deleted.
-async fn saved_progress(path: &Path, info: &RemoteInfo) -> Result<Option<SavedState>> {
-    let state_path = state::state_path(path);
-    let part_path = state::part_path(path);
-    let saved = match SavedState::load(&state_path).await {
+async fn saved_progress(files: &PartialFiles, info: &RemoteInfo) -> Result<Option<SavedState>> {
+    let state_path = &files.state;
+    let part_path = &files.data;
+    let saved = match SavedState::load(state_path).await {
         Ok(None) => return Ok(None),
         Ok(Some(saved)) => Some(saved),
         Err(Error::State(error)) => {
@@ -777,13 +836,13 @@ async fn saved_progress(path: &Path, info: &RemoteInfo) -> Result<Option<SavedSt
     if let Some(saved) = saved
         && saved.is_valid()
         && saved.matches(info)
-        && fs::try_exists(&part_path).await?
+        && fs::try_exists(part_path).await?
     {
         return Ok(Some(saved));
     }
-    tracing::warn!(path = %path.display(), "the file changed on the server; starting over");
-    remove_if_exists(&state_path).await?;
-    remove_if_exists(&part_path).await?;
+    tracing::warn!(path = %part_path.display(), "the file changed on the server; starting over");
+    remove_if_exists(state_path).await?;
+    remove_if_exists(part_path).await?;
     Ok(None)
 }
 
@@ -949,12 +1008,73 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
             .set_len(size)
             .await?;
     }
-    fs::rename(&ctx.part, path).await?;
-    remove_if_exists(&ctx.state).await?;
+    // Save complete progress before committing, so disk/copy failures can be
+    // retried without downloading the bytes again.
+    ctx.save_state(&scheduler).await?;
+    if let Err(error) = publish_file(&ctx, path).await {
+        if matches!(error, Error::Cancelled) {
+            return match shared.stop_reason() {
+                CANCEL => Ok(Outcome::Cancelled),
+                _ => Ok(Outcome::Paused {
+                    path: Some(path.to_owned()),
+                    resumable: ctx.ranged,
+                }),
+            };
+        }
+        return Err(error);
+    }
     Ok(Outcome::Completed {
         path: path.to_owned(),
         size,
     })
+}
+
+/// Rename on one volume; copy to a private staging folder on the destination
+/// volume otherwise. The final filename appears only after the copy succeeds.
+async fn publish_file(ctx: &Ctx, path: &Path) -> Result<()> {
+    if ctx.shared.cancel.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+    match fs::rename(&ctx.part, path).await {
+        Ok(()) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {}
+        Err(error) => return Err(error.into()),
+    }
+    let root = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".sdm-finalizing");
+    let staging_files = PartialFiles::new(path, Some(&root));
+    let directory = staging_files.directory().unwrap();
+    fs::create_dir_all(directory).await?;
+    let result = async {
+        let mut source = File::open(&ctx.part).await?;
+        let mut target = File::create(&staging_files.data).await?;
+        let mut buffer = vec![0; WRITE_BUFFER];
+        loop {
+            if ctx.shared.cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            let count = source.read(&mut buffer).await?;
+            if count == 0 {
+                break;
+            }
+            target.write_all(&buffer[..count]).await?;
+        }
+        target.sync_all().await?;
+        drop(target);
+        if ctx.shared.cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        fs::rename(&staging_files.data, path).await?;
+        Ok(())
+    }
+    .await;
+    if let Err(error) = staging_files.cleanup().await {
+        tracing::warn!(%error, "could not clean finalization staging files");
+    }
+    let _ = fs::remove_dir(root).await; // Only remove an empty shared folder.
+    result
 }
 
 /// Splits a fresh download into segments of roughly equal size.

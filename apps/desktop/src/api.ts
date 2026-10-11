@@ -100,6 +100,7 @@ export interface PowerCountdown {
 
 export interface Settings {
   downloadDir: string;
+  tempDir: string;
   categoryFolders: boolean;
   connections: number;
   maxParallel: number;

@@ -9,11 +9,123 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 use crate::probe::RemoteInfo;
 
 const STATE_VERSION: u32 = 1;
+
+/// Files owned by one unfinished download. A configured temp root isolates
+/// them by destination, so equal filenames in different folders never collide.
+#[derive(Debug, Clone)]
+pub struct PartialFiles {
+    pub data: PathBuf,
+    pub state: PathBuf,
+    directory: Option<PathBuf>,
+}
+
+impl PartialFiles {
+    pub fn new(path: &Path, temp_dir: Option<&Path>) -> Self {
+        let directory = temp_dir.map(|root| {
+            let absolute = if path.is_absolute() {
+                path.to_owned()
+            } else {
+                std::env::current_dir().unwrap_or_default().join(path)
+            };
+            let digest = Sha256::digest(absolute.as_os_str().as_encoded_bytes());
+            root.join(format!("download-{digest:x}"))
+        });
+        let base = directory.as_ref().map_or_else(
+            || path.to_owned(),
+            |dir| {
+                dir.join(
+                    path.file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("download")),
+                )
+            },
+        );
+        Self {
+            data: part_path(&base),
+            state: state_path(&base),
+            directory,
+        }
+    }
+
+    pub fn directory(&self) -> Option<&Path> {
+        self.directory.as_deref()
+    }
+
+    pub(crate) async fn prepare(&self, path: &Path) -> Result<()> {
+        if let Some(directory) = &self.directory {
+            tokio::fs::create_dir_all(directory).await?;
+            // Old app versions wrote next to the final file. Keep both halves
+            // recoverable if an offline migration or resume is interrupted.
+            for (old, new) in [
+                (part_path(path), self.data.clone()),
+                (state_path(path), self.state.clone()),
+                (
+                    with_suffix(&state_path(path), ".tmp"),
+                    with_suffix(&self.state, ".tmp"),
+                ),
+            ] {
+                if tokio::fs::try_exists(&old).await? && !tokio::fs::try_exists(&new).await? {
+                    move_partial(&old, &new).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes only this download's files, never the configured temp root.
+    pub async fn cleanup(&self) -> Result<()> {
+        for path in [
+            &self.data,
+            &self.state,
+            &with_suffix(&self.state, ".tmp"),
+            &with_suffix(&self.data, ".migrating"),
+            &with_suffix(&self.state, ".migrating"),
+        ] {
+            match tokio::fs::remove_file(path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if let Some(directory) = &self.directory {
+            match tokio::fs::remove_dir(directory).await {
+                Ok(()) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::NotFound | ErrorKind::DirectoryNotEmpty
+                    ) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+}
+
+async fn move_partial(source: &Path, destination: &Path) -> Result<()> {
+    match tokio::fs::rename(source, destination).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::CrossesDevices => {
+            let staging = with_suffix(destination, ".migrating");
+            tokio::fs::copy(source, &staging).await?;
+            tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(&staging)
+                .await?
+                .sync_all()
+                .await?;
+            tokio::fs::rename(&staging, destination).await?;
+            tokio::fs::remove_file(source).await?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
 
 /// The file that holds the data of an unfinished download of `path`.
 pub fn part_path(path: &Path) -> PathBuf {
@@ -115,7 +227,18 @@ impl SavedState {
 /// Fails when the new address serves a file of another size, or one that
 /// cannot be resumed.
 pub async fn retarget_partial(path: &Path, info: &RemoteInfo) -> Result<Option<u64>> {
-    let state = state_path(path);
+    retarget_partial_in(path, None, info).await
+}
+
+/// Changes an unfinished download's link in its configured temp directory.
+pub async fn retarget_partial_in(
+    path: &Path,
+    temp_dir: Option<&Path>,
+    info: &RemoteInfo,
+) -> Result<Option<u64>> {
+    let files = PartialFiles::new(path, temp_dir);
+    files.prepare(path).await?;
+    let state = files.state;
     let Some(mut saved) = SavedState::load(&state).await? else {
         return Ok(None);
     };

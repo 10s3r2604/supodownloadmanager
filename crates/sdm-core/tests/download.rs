@@ -507,3 +507,172 @@ async fn fetches_small_files_into_memory() {
         .await;
     assert!(matches!(too_big, Err(Error::TooLarge(1000))), "{too_big:?}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn custom_temp_preserves_pause_and_new_link_then_cleans() {
+    let data = test_data(2 * 1024 * 1024);
+    let (base, _) = start_server(data.clone(), 0).await;
+    let output = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let path = output.path().join("data.bin");
+    std::fs::write(temp.path().join("keep.txt"), b"unrelated").unwrap();
+    let mut slow = request(
+        format!("{base}/file/data.bin"),
+        Destination::File(path.clone()),
+    );
+    slow.options.temp_dir = Some(temp.path().into());
+    slow.options.speed_limit = Some(1024 * 1024);
+    let engine = downloader();
+    let handle = engine.start(slow);
+    wait_for_bytes(&handle, 300 * 1024).await;
+    handle.pause();
+    let control = handle.control();
+    assert!(matches!(
+        handle.wait().await.unwrap(),
+        Outcome::Paused {
+            resumable: true,
+            ..
+        }
+    ));
+    let kept = control.progress().downloaded;
+    let files = sdm_core::PartialFiles::new(&path, Some(temp.path()));
+    assert!(files.data.exists() && files.state.exists());
+    assert!(std::fs::read_dir(output.path()).unwrap().next().is_none());
+    let fresh = format!("{base}/file/fresh.bin");
+    let info = engine.probe(&fresh, &[]).await.unwrap();
+    assert_eq!(
+        sdm_core::retarget_partial_in(&path, Some(temp.path()), &info)
+            .await
+            .unwrap(),
+        Some(kept)
+    );
+    let mut resume = request(fresh, Destination::File(path));
+    resume.options.temp_dir = Some(temp.path().into());
+    let handle = engine.start(resume);
+    let control = handle.control();
+    let (done, _) = completed(handle).await;
+    assert_eq!(control.progress().resumed_from, kept);
+    assert_eq!(std::fs::read(done).unwrap(), data);
+    assert!(!files.data.exists() && !files.state.exists());
+    assert!(!files.directory().unwrap().exists());
+    assert_eq!(
+        std::fs::read(temp.path().join("keep.txt")).unwrap(),
+        b"unrelated"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn custom_temp_migrates_legacy_progress_without_redownloading() {
+    check_legacy_migration(None).await;
+}
+
+async fn check_legacy_migration(temp_parent: Option<&Path>) {
+    let data = test_data(2 * 1024 * 1024);
+    let (base, _) = start_server(data.clone(), 0).await;
+    let output = tempfile::tempdir().unwrap();
+    let temp = match temp_parent {
+        Some(parent) => tempfile::tempdir_in(parent).unwrap(),
+        None => tempfile::tempdir().unwrap(),
+    };
+    let path = output.path().join("legacy.bin");
+    let mut slow = request(
+        format!("{base}/file/legacy.bin"),
+        Destination::File(path.clone()),
+    );
+    slow.options.speed_limit = Some(1024 * 1024);
+    let engine = downloader();
+    let handle = engine.start(slow.clone());
+    wait_for_bytes(&handle, 300 * 1024).await;
+    handle.pause();
+    let control = handle.control();
+    assert!(matches!(
+        handle.wait().await.unwrap(),
+        Outcome::Paused { .. }
+    ));
+    let kept = control.progress().downloaded;
+    assert!(sdm_core::partial_state_path(&path).exists());
+    slow.options.temp_dir = Some(temp.path().into());
+    slow.options.speed_limit = None;
+    let handle = engine.start(slow);
+    let control = handle.control();
+    let (done, _) = completed(handle).await;
+    assert_eq!(control.progress().resumed_from, kept);
+    assert_eq!(std::fs::read(done).unwrap(), data);
+    assert!(leftovers(output.path()).is_empty());
+    assert!(std::fs::read_dir(temp.path()).unwrap().next().is_none());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn moves_legacy_and_completed_data_between_real_filesystems() {
+    use std::os::unix::fs::MetadataExt;
+    assert_ne!(
+        std::fs::metadata(std::env::temp_dir()).unwrap().dev(),
+        std::fs::metadata("/dev/shm").unwrap().dev()
+    );
+    check_legacy_migration(Some(Path::new("/dev/shm"))).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn custom_temp_isolates_equal_names_and_cancel_removes_only_its_data() {
+    let data = test_data(2 * 1024 * 1024);
+    let (base, _) = start_server(data.clone(), 0).await;
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let engine = downloader();
+    let mut a = request(
+        format!("{base}/file/same.bin"),
+        Destination::File(first.path().join("same.bin")),
+    );
+    a.options.temp_dir = Some(temp.path().into());
+    a.options.speed_limit = Some(1024 * 1024);
+    let mut b = a.clone();
+    b.destination = Destination::File(second.path().join("same.bin"));
+    let a = engine.start(a);
+    let b = engine.start(b);
+    wait_for_bytes(&a, 100 * 1024).await;
+    wait_for_bytes(&b, 100 * 1024).await;
+    let a_files = sdm_core::PartialFiles::new(&first.path().join("same.bin"), Some(temp.path()));
+    let b_files = sdm_core::PartialFiles::new(&second.path().join("same.bin"), Some(temp.path()));
+    assert_ne!(a_files.data, b_files.data);
+    assert!(a_files.data.exists() && b_files.data.exists());
+    a.cancel();
+    assert_eq!(a.wait().await.unwrap(), Outcome::Cancelled);
+    assert!(!a_files.directory().unwrap().exists());
+    let (path, _) = completed(b).await;
+    assert_eq!(std::fs::read(path).unwrap(), data);
+    assert!(std::fs::read_dir(temp.path()).unwrap().next().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn failed_final_move_keeps_all_bytes_for_retry() {
+    let data = test_data(1024 * 1024);
+    let (base, server) = start_server(data.clone(), 0).await;
+    let output = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let path = output.path().join("blocked.bin");
+    let mut download = request(
+        format!("{base}/file/blocked.bin"),
+        Destination::File(path.clone()),
+    );
+    download.options.temp_dir = Some(temp.path().into());
+    download.options.speed_limit = Some(1024 * 1024);
+    let engine = downloader();
+    let handle = engine.start(download.clone());
+    wait_for_bytes(&handle, 100 * 1024).await;
+    std::fs::create_dir(&path).unwrap();
+    assert!(handle.wait().await.is_err());
+    let files = sdm_core::PartialFiles::new(&path, Some(temp.path()));
+    assert!(files.data.exists() && files.state.exists());
+    let before = server.data_requests.load(Ordering::SeqCst);
+    std::fs::remove_dir(&path).unwrap();
+    download.options.speed_limit = None;
+    let handle = engine.start(download);
+    let control = handle.control();
+    let (done, _) = completed(handle).await;
+    assert_eq!(control.progress().resumed_from, data.len() as u64);
+    assert_eq!(server.data_requests.load(Ordering::SeqCst), before);
+    assert_eq!(std::fs::read(done).unwrap(), data);
+    assert!(!files.directory().unwrap().exists());
+}

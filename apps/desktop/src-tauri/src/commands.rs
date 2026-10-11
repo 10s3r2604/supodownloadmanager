@@ -338,7 +338,33 @@ pub async fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<Settings> {
-    let settings = settings.sanitized();
+    let mut settings = settings.sanitized();
+    if settings.temp_dir.as_os_str().is_empty() {
+        settings.temp_dir = app
+            .path()
+            .app_local_data_dir()
+            .map_err(text_error)?
+            .join("temp");
+    }
+    if !settings.temp_dir.is_absolute() {
+        return Err("Choose an absolute path for the temporary folder".into());
+    }
+    std::fs::create_dir_all(&settings.temp_dir).map_err(text_error)?;
+    let probe = settings.temp_dir.join(format!(
+        ".sdm-write-check-{}-{}.tmp",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(text_error)?;
+    drop(file);
+    std::fs::remove_file(probe).map_err(text_error)?;
     settings
         .save(&state.data_dir.join("settings.json"))
         .map_err(text_error)?;

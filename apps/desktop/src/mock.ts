@@ -9,6 +9,7 @@ const now = Date.now();
 
 const settings: Settings = {
   downloadDir: "/home/demo/Downloads",
+  tempDir: "/home/demo/.local/share/com.supodownloadmanager.app/temp",
   categoryFolders: true,
   connections: 8,
   maxParallel: 3,

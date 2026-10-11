@@ -76,9 +76,13 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
     }
   }
 
-  async function browse() {
-    const folder = await api.pickFolder();
-    if (folder) set("downloadDir", folder);
+  async function browse(key: "downloadDir" | "tempDir") {
+    try {
+      const folder = await api.pickFolder();
+      if (folder) set(key, folder);
+    } catch (error) {
+      onError(errorText(error));
+    }
   }
 
   const number = (value: string, min: number, max: number) =>
@@ -200,11 +204,22 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
             <span>{t("downloadFolder")}</span>
             <div className="input-row">
               <input value={draft.downloadDir} onChange={(e) => set("downloadDir", e.target.value)} />
-              <button type="button" className="button" onClick={browse}>
+              <button type="button" className="button" onClick={() => browse("downloadDir")}>
                 <Icon name="folder" size={16} />
                 {t("browse")}
               </button>
             </div>
+          </div>
+          <div className="field">
+            <span>{t("tempFolder")}</span>
+            <div className="input-row">
+              <input aria-label={t("tempFolder")} value={draft.tempDir} onChange={(e) => set("tempDir", e.target.value)} />
+              <button type="button" className="button" onClick={() => browse("tempDir")}>
+                <Icon name="folder" size={16} />
+                {t("browse")}
+              </button>
+            </div>
+            <small className="hint">{t("tempFolderHint")}</small>
           </div>
           <Check label={t("categoryFolders")} checked={draft.categoryFolders} onChange={(v) => set("categoryFolders", v)} />
           <Check label={t("closeToTray")} checked={draft.closeToTray} onChange={(v) => set("closeToTray", v)} />

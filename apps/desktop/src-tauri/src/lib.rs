@@ -206,6 +206,9 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
     let mut settings = Settings::load(&data_dir.join("settings.json"));
+    if settings.temp_dir.as_os_str().is_empty() {
+        settings.temp_dir = app.path().app_local_data_dir()?.join("temp");
+    }
     if settings.download_dir.as_os_str().is_empty() {
         settings.download_dir = app
             .path()

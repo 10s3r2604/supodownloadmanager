@@ -60,6 +60,13 @@ computer you own, and the code is right here.
 - Automatic retries, a speed limit, proxies (HTTP, HTTPS, SOCKS5) and safe file names.
   Works with servers that allow only one connection or don't say how big the file is.
 - Link expired halfway? Paste a fresh one and the download continues where it stopped.
+- Download data and resume state stay in SDM's own temporary folder, configurable in
+  **Settings → General → Temporary folder** (Windows default:
+  `%LOCALAPPDATA%\com.supodownloadmanager.app\temp`). Completed or removed downloads
+  clean their temporary files; paused and failed downloads keep them for resuming.
+  Changing the folder applies to new downloads. Existing downloads retain their
+  stored folder across restarts, and known legacy sidecars move there at startup.
+  The temporary folder and the saved file can be on different drives.
 
 **Queues and scheduler**
 - Several queues, each with its own number of files at once. Start and stop them at set
