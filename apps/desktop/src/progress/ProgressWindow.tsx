@@ -9,7 +9,7 @@ import { percent } from "../format";
 import { type History, emptyHistory, recordHistory } from "../model";
 import { ClassicView } from "./ClassicView";
 import { GraphView } from "./GraphView";
-import type { PwProps } from "./parts";
+import { type PwProps, WindowControls } from "./parts";
 import { RingView } from "./RingView";
 import "./progress.css";
 
@@ -24,6 +24,9 @@ export function ProgressWindow({ id }: { id: number }) {
   const [whenDone, setWhenDoneState] = useState<WhenDone | null>(null);
   const [details, setDetails] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [speeds, setSpeeds] = useState<number[]>([]);
   const history = useRef<History>(emptyHistory());
   const content = useRef<HTMLDivElement>(null);
@@ -32,10 +35,21 @@ export function ProgressWindow({ id }: { id: number }) {
   const style = settings?.progressStyle ?? "graph";
 
   useEffect(() => {
-    api.getSettings().then(setSettings).catch(() => {});
-    api.getWhenDone(id).then(setWhenDoneState).catch(() => {});
     let alive = true;
+    let polling = false;
+    api.getSettings().then(
+      (next) => {
+        if (alive) {
+          setSettings(next);
+          setSettingsError(null);
+        }
+      },
+      (e) => { if (alive) setSettingsError(errorText(e)); },
+    );
+    api.getWhenDone(id).then((next) => { if (alive) setWhenDoneState(next); }).catch(() => {});
     const poll = async () => {
+      if (polling) return;
+      polling = true;
       try {
         const next = await api.getDownload(id);
         if (!alive) return;
@@ -44,8 +58,11 @@ export function ProgressWindow({ id }: { id: number }) {
           if (next.state !== "completed") setSpeeds((list) => [...list, next.speed].slice(-SAMPLES));
         }
         setDownload(next);
+        setPollError(null);
       } catch (e) {
-        if (alive) setError(errorText(e));
+        if (alive) setPollError(errorText(e));
+      } finally {
+        polling = false;
       }
     };
     poll();
@@ -54,7 +71,7 @@ export function ProgressWindow({ id }: { id: number }) {
       alive = false;
       clearInterval(timer);
     };
-  }, [id]);
+  }, [id, attempt]);
 
   // The taskbar shows "42% ubuntu.iso".
   const value = download ? percent(download.downloaded, download.size) : null;
@@ -70,10 +87,9 @@ export function ProgressWindow({ id }: { id: number }) {
 
   // The window is as tall as what it shows.
   const width = WIDTH[style];
-  const loaded = download !== undefined && settings !== null;
   useLayoutEffect(() => {
     const element = content.current;
-    if (!element || !loaded) return;
+    if (!element) return;
     let last = 0;
     const fit = () => {
       const height = Math.ceil(element.getBoundingClientRect().height);
@@ -86,7 +102,7 @@ export function ProgressWindow({ id }: { id: number }) {
     const observer = new ResizeObserver(fit);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [width, loaded]);
+  }, [width]);
 
   const close = useCallback(() => {
     api.closeWindow().catch(() => window.close());
@@ -139,7 +155,7 @@ export function ProgressWindow({ id }: { id: number }) {
       setCompleteDialog,
       details: showDetails,
       toggleDetails: () => setDetails(!showDetails),
-      error,
+      error: error ?? pollError,
       act: {
         pause: () => run(api.pause([download.id])),
         resume: () => run(api.resume([download.id])),
@@ -151,6 +167,34 @@ export function ProgressWindow({ id }: { id: number }) {
     };
     body =
       style === "ring" ? <RingView {...props} /> : style === "classic" ? <ClassicView {...props} /> : <GraphView {...props} />;
+  } else {
+    const startupError = settingsError ?? pollError;
+    body = (
+      <section className="pw-placeholder">
+        <header className="pw-placeholder-head" data-tauri-drag-region>
+          <strong data-tauri-drag-region>{t("pwTitle")}</strong>
+          <WindowControls onClose={close} />
+        </header>
+        <div className="pw-placeholder-body" role={startupError ? "alert" : "status"}>
+          {startupError ? (
+            <>
+              <strong>{t("pwLoadFailed")}</strong>
+              <p>{startupError}</p>
+              <button type="button" className="button" onClick={() => {
+                setSettingsError(null);
+                setPollError(null);
+                setAttempt((n) => n + 1);
+              }}>{t("pwRetry")}</button>
+            </>
+          ) : (
+            <div className="pw-placeholder-status">
+              <span className="spinner" aria-hidden="true" />
+              <span>{t("pwLoading")}</span>
+            </div>
+          )}
+        </div>
+      </section>
+    );
   }
 
   return (
