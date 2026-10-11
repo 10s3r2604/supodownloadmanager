@@ -91,9 +91,9 @@ computer you own, and the code is right here.
 **Pleasant to use**
 - A small progress window per download, in three styles (speed graph, ring or classic),
   with "open the file when done".
-- A minimal download list, dark by default, with light and system themes.
-  File sizes, progress, speed and actions stay visible; open a file's details
-  for its speed chart, connections and torrent files. English and Vietnamese.
+- Two looks: **Minimal** (the default: dark, light or like the system, with a file's
+  speed chart, connections and torrent files one click away) and **Neon** (dark, with a
+  live speed chart and every connection on screen). English and Vietnamese.
 - Categories with their own folders, clipboard monitoring, tray icon and notifications.
 - An `sdm` command line tool for scripts and servers.
 
@@ -232,9 +232,8 @@ cài trên bao nhiêu máy cũng được, và mã nguồn công khai.
   chọn tệp muốn tải.
 - **Extension** cho Chrome, Edge, Firefox, Cốc Cốc, Brave, Opera, Vivaldi; tải được cả
   link cần đăng nhập.
-- Danh sách tối giản, mặc định nền tối; tùy chọn sáng/theo hệ thống, có tiếng Việt.
-  Hiện dung lượng, tiến độ, tốc độ và thao tác; bấm tên file để xem chi tiết.
-  (vào **Cài đặt → Giao diện → Ngôn ngữ**).
+- Hai giao diện: **Tối giản** (mặc định, nền tối/sáng/theo hệ thống) và **Neon**, có tiếng Việt
+  (vào **Cài đặt → Giao diện**). Bấm tên file để xem biểu đồ tốc độ và chi tiết.
 
 **Cài đặt:** tải bộ cài ở trang [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
 (Windows: `…-setup.exe`; macOS: `.dmg`; Linux: `.deb`, `.rpm`, `.AppImage`), mở SDM rồi

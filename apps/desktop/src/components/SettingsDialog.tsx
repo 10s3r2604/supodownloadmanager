@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { type ProgressStyle, SEED_FOREVER, type Settings, api } from "../api";
+import { type ProgressStyle, SEED_FOREVER, type Settings, type Skin, api } from "../api";
 import { errorText, useI18n } from "../context";
 import type { TextKey } from "../i18n";
 import { Icon } from "../icons";
@@ -42,7 +42,7 @@ const SEED_CHOICES: { value: number; label: TextKey }[] = [
 export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError }: Props) {
   const { t } = useI18n();
   const [tab, setTab] = useState<Tab>("appearance");
-  const [draft, setDraft] = useState<Settings>({ ...settings, skin: "minimal", theme: settings.skin === "neon" ? "dark" : settings.theme });
+  const [draft, setDraft] = useState<Settings>(settings);
   const [proxyMode, setProxyMode] = useState<ProxyMode>(
     settings.proxy === "" ? "system" : settings.proxy === "none" ? "none" : "custom",
   );
@@ -117,11 +117,31 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
 
       {tab === "appearance" && (
         <div className="form">
+          <div className="skins" role="radiogroup" aria-label={t("appearance")}>
+            {(["minimal", "neon"] as Skin[]).map((skin) => (
+              <button
+                key={skin}
+                type="button"
+                role="radio"
+                aria-checked={draft.skin === skin}
+                className={`skin-card${draft.skin === skin ? " on" : ""}`}
+                onClick={() => look({ skin })}
+              >
+                <SkinPreview skin={skin} dark={skin === "minimal" && draft.theme !== "light"} />
+                <strong>
+                  {t(skin === "neon" ? "skinNeon" : "skinMinimal")}
+                  {skin === "minimal" && <em>{t("defaultLabel")}</em>}
+                </strong>
+                <small>{t(skin === "neon" ? "skinNeonHint" : "skinMinimalHint")}</small>
+              </button>
+            ))}
+          </div>
           <div className="field-grid">
-            <label className="field">
+            <label className={`field${draft.skin === "neon" ? " disabled" : ""}`}>
               <span>{t("colorMode")}</span>
               <select
                 value={draft.theme}
+                disabled={draft.skin === "neon"}
                 onChange={(e) => look({ theme: e.target.value as Settings["theme"] })}
               >
                 <option value="system">{t("sameAsSystem")}</option>
@@ -328,6 +348,43 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
         </div>
       )}
     </Dialog>
+  );
+}
+
+/** A tiny drawing of each look for the picker. */
+function SkinPreview({ skin, dark }: { skin: Skin; dark: boolean }) {
+  if (skin === "neon") {
+    return (
+      <span className="skin-preview neon" aria-hidden>
+        <svg viewBox="0 0 100 26" preserveAspectRatio="none">
+          <path d="M0 22 L12 18 L24 20 L36 11 L48 14 L60 6 L72 9 L84 4 L100 7 L100 26 L0 26 Z" fill="currentColor" opacity="0.18" />
+          <path d="M0 22 L12 18 L24 20 L36 11 L48 14 L60 6 L72 9 L84 4 L100 7" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        </svg>
+        <i style={{ top: 44 }}>
+          <b style={{ width: "72%" }} />
+        </i>
+        <i style={{ top: 54 }}>
+          <b style={{ width: "38%" }} />
+        </i>
+        <i style={{ top: 64 }}>
+          <b style={{ width: "91%" }} />
+        </i>
+      </span>
+    );
+  }
+  return (
+    <span className={`skin-preview minimal${dark ? " dark" : ""}`} aria-hidden>
+      <em />
+      <i>
+        <b style={{ width: "64%" }} />
+      </i>
+      <i>
+        <b style={{ width: "30%" }} />
+      </i>
+      <i>
+        <b style={{ width: "100%" }} />
+      </i>
+    </span>
   );
 }
 

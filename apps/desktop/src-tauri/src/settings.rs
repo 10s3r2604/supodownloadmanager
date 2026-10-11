@@ -28,9 +28,9 @@ pub struct Settings {
     pub proxy: String,
     /// `auto`, `en` or `vi`.
     pub language: String,
-    /// `minimal`; old `neon` settings are migrated when loaded.
+    /// Look of the app: `minimal` or `neon`.
     pub skin: String,
-    /// `system`, `light` or `dark`.
+    /// `system`, `light` or `dark` (Neon is always dark).
     pub theme: String,
     /// Open a progress window for every download that starts.
     pub progress_window: bool,
@@ -113,11 +113,9 @@ impl Settings {
         if !["auto", "en", "vi"].contains(&self.language.as_str()) {
             self.language = "en".into();
         }
-        // Neon always displayed dark, including when its saved theme was light.
-        if self.skin == "neon" {
-            self.theme = "dark".into();
+        if !["minimal", "neon"].contains(&self.skin.as_str()) {
+            self.skin = "minimal".into();
         }
-        self.skin = "minimal".into();
         if !["graph", "ring", "classic"].contains(&self.progress_style.as_str()) {
             self.progress_style = "graph".into();
         }
@@ -243,26 +241,16 @@ mod tests {
     }
 
     #[test]
-    fn migrates_neon_without_changing_download_preferences() {
+    fn keeps_both_looks_and_their_themes() {
         for theme in ["system", "light", "dark"] {
-            let old = Settings {
+            let neon = Settings {
                 skin: "neon".into(),
                 theme: theme.into(),
-                download_dir: PathBuf::from("downloads"),
-                connections: 16,
-                max_parallel: 5,
-                proxy: "none".into(),
-                progress_window: false,
                 ..Settings::default()
-            };
-            let migrated = old.clone().sanitized();
-            assert_eq!(migrated.skin, "minimal");
-            assert_eq!(migrated.theme, "dark");
-            assert_eq!(migrated.download_dir, old.download_dir);
-            assert_eq!(migrated.connections, old.connections);
-            assert_eq!(migrated.max_parallel, old.max_parallel);
-            assert_eq!(migrated.proxy, old.proxy);
-            assert_eq!(migrated.progress_window, old.progress_window);
+            }
+            .sanitized();
+            assert_eq!(neon.skin, "neon");
+            assert_eq!(neon.theme, theme);
         }
         for theme in ["light", "system"] {
             let settings = Settings {

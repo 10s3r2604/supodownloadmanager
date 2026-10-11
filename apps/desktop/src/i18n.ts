@@ -157,6 +157,10 @@ const en = {
   port: "Bridge port",
   portHint: "Takes effect after restarting SDM",
   save: "Save",
+  skinNeon: "Neon",
+  skinNeonHint: "Dark and detailed: live speed chart, segments, connections",
+  skinMinimal: "Minimal",
+  skinMinimalHint: "Calm and simple, dark, light or like the system",
 
   batch: "Batch download…",
   batchTitle: "Batch download",
@@ -513,6 +517,10 @@ const vi: Record<TextKey, string> = {
   port: "Cổng kết nối",
   portHint: "Có hiệu lực sau khi khởi động lại SDM",
   save: "Lưu",
+  skinNeon: "Neon",
+  skinNeonHint: "Nền tối, nhiều thông số: biểu đồ tốc độ, các đoạn, từng kết nối",
+  skinMinimal: "Tối giản",
+  skinMinimalHint: "Gọn gàng, dễ nhìn: nền tối, sáng hoặc theo hệ thống",
 
   batch: "Tải hàng loạt…",
   batchTitle: "Tải hàng loạt",

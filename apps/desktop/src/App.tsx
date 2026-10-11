@@ -30,6 +30,7 @@ import { type Toast, Toasts } from "./components/Toasts";
 import { I18nContext, copyText, errorText } from "./context";
 import { type Filter, type History, type TypeFilter, emptyHistory, matches, matchesType, recordHistory, totals } from "./model";
 import { MinimalView } from "./skins/Minimal";
+import { NeonView } from "./skins/Neon";
 import type { RowActions, ViewProps } from "./views";
 
 type DialogState =
@@ -80,7 +81,7 @@ export default function App() {
   const [countdown, setCountdown] = useState<PowerCountdown | null>(null);
   const anchor = useRef<number | null>(null);
 
-  const { i18n, dark } = useAppearance(preview ?? settings);
+  const { i18n, skin, dark } = useAppearance(preview ?? settings);
   const { t } = i18n;
 
   const toast = useCallback((kind: Toast["kind"], text: string, url?: string) => {
@@ -301,7 +302,7 @@ export default function App() {
 
   return (
     <I18nContext.Provider value={i18n}>
-      {view && <MinimalView {...view} dark={dark} />}
+      {view && (skin === "neon" ? <NeonView {...view} /> : <MinimalView {...view} dark={dark} />)}
 
       {dialog?.kind === "details" && view && (
         <DownloadDetails d={downloads.find((d) => d.id === dialog.id)} history={history} actions={actions} onClose={closeDialog} />
