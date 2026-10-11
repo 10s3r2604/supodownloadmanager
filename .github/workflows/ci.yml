@@ -79,6 +79,21 @@ jobs:
       - name: Build the native Windows app
         if: runner.os == 'Windows'
         run: cargo build -p sdm-desktop --locked
+      - name: Ensure WebView2 is installed for the native app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $runtimeRoots = @("${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application", "$env:ProgramFiles\Microsoft\EdgeWebView\Application", "$env:LOCALAPPDATA\Microsoft\EdgeWebView\Application")
+          $runtime = Get-ChildItem $runtimeRoots -Recurse -Filter msedgewebview2.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $runtime) {
+            $bootstrapper = Join-Path $env:RUNNER_TEMP "MicrosoftEdgeWebview2Setup.exe"
+            Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $bootstrapper
+            $install = Start-Process $bootstrapper -ArgumentList "/silent /install" -Wait -PassThru
+            if ($install.ExitCode -ne 0) { throw "WebView2 installer exited with $($install.ExitCode)" }
+            $runtime = Get-ChildItem $runtimeRoots -Recurse -Filter msedgewebview2.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $runtime) { throw "The WebView2 runtime was not found" }
+          Write-Host "WebView2: $($runtime.FullName)"
       - name: Test native Windows progress windows
         if: runner.os == 'Windows'
         shell: pwsh

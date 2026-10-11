@@ -81,6 +81,7 @@ async function bounded(promise, message, timeout=8_000) {
 function child(exe, args, name, env=process.env) {
   const log=fs.openSync(path.join(output,`${name}.log`),'w');
   const processHandle=spawn(exe,args,{cwd:root,env,stdio:['ignore',log,log]});
+  processHandle.on('exit',(code,signal)=>console.log(`${name} exited: ${code} ${signal||''}`));
   children.push(processHandle);
   return processHandle;
 }
@@ -197,6 +198,10 @@ const server=http.createServer((req,res)=>{
     console.log(JSON.stringify({passed:report.length,report},null,2));
   } catch(e) {
     fs.writeFileSync(path.join(output,'failure.txt'),e.stack||String(e));
+    for(const name of ['desktop','vite']) {
+      const log=path.join(output,`${name}.log`);
+      if(fs.existsSync(log)) console.error(`${name} log:\n${fs.readFileSync(log,'utf8')}`);
+    }
     if(browser) for(const [index,page] of browser.contexts().flatMap(c=>c.pages()).entries()) {
       await page.screenshot({path:path.join(output,`failure-${index}.png`),timeout:3_000}).catch(()=>{});
     }
