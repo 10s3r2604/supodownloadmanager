@@ -12,6 +12,10 @@ const extension = path.join(root, 'extension/dist/chromium');
 const output = process.env.SDM_SMOKE_OUTPUT || path.join(root, 'download-smoke');
 fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'sdm-download-smoke-'));
+fs.mkdirSync(path.join(profile, 'Default'));
+fs.writeFileSync(path.join(profile, 'Default/Preferences'), JSON.stringify({
+  download: { default_directory: path.join(profile, 'files'), prompt_for_download: false },
+}));
 const executablePath = process.env.SDM_SMOKE_BROWSER || [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA]
   .filter(Boolean).map(p => path.join(p, 'Google/Chrome/Application/chrome.exe')).find(p => fs.existsSync(p));
 assert(executablePath, 'Google Chrome is required for download capture checks.');
@@ -69,13 +73,18 @@ async function until(fn, message, timeout = 20_000) {
       args: ['--no-sandbox', '--lang=en-US', '--enable-unsafe-extension-debugging'],
     });
     const loader = await context.browser().newBrowserCDPSession();
+    // Playwright normally uses allowAndName, replacing attachment names with
+    // GUIDs. Use Chrome's native filename determination and download events.
+    await loader.send('Browser.setDownloadBehavior', { behavior: 'default' });
+    console.log('Browser:', (await loader.send('Browser.getVersion')).product);
     const installed = await loader.send('Extensions.loadUnpacked', { path: extension });
     popup = await context.newPage();
     await popup.goto(`chrome-extension://${installed.id}/popup.html`);
-    await popup.evaluate(async port => {
+    const status = await popup.evaluate(async port => {
       await chrome.storage.local.set({ port });
-      await chrome.runtime.sendMessage({ type: 'status' });
+      return chrome.runtime.sendMessage({ type: 'status' });
     }, server.address().port);
+    assert(status?.enabled, 'The installed extension must connect to the bridge fixture');
     const downloads = () => popup.evaluate(() => chrome.downloads.search({}));
     const configure = values => popup.evaluate(async values => {
       await chrome.storage.local.set(values);
@@ -141,6 +150,7 @@ async function until(fn, message, timeout = 20_000) {
     fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(result, null, 2));
     console.log(JSON.stringify(result, null, 2));
   } catch (error) {
+    console.error(`::error::${error.message.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`);
     console.error('Handover count:', calls.length);
     if (popup) console.error('Download states:', await popup.evaluate(async () => (await chrome.downloads.search({})).map(d => ({ state: d.state, error: d.error, name: d.filename.split(/[\\/]/).at(-1), host: new URL(d.url).hostname }))).catch(e => String(e)));
     if (page) await page.screenshot({ path: path.join(output, 'failure.png'), timeout: 3000 }).catch(() => {});
