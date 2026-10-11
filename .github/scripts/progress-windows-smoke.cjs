@@ -25,6 +25,9 @@ fs.writeFileSync(path.join(data, 'settings.json'), JSON.stringify({
 const tools=path.join(data,'tools');
 fs.mkdirSync(tools,{recursive:true});
 const fixture=path.join(output,'MediaFixture.cs');
+const probeInfo=JSON.stringify({title:'Media progress smoke',duration:10,extractor_key:'Twitter',
+  formats:[{format_id:'18',ext:'mp4',height:720,fps:30,vcodec:'avc1.64001f',acodec:'mp4a.40.2',filesize:27}],
+}).replaceAll('"','""');
 fs.writeFileSync(fixture,`
 using System;
 using System.IO;
@@ -34,10 +37,24 @@ class MediaFixture {
   static int Main(string[] args) {
     Console.OutputEncoding = new UTF8Encoding(false);
     string directory = null, name = null, url = null;
+    bool probe = false;
     for (int i = 0; i < args.Length; i++) {
       if (args[i] == "-P" && args[i + 1].StartsWith("home:")) directory = args[i + 1].Substring(5);
       if (args[i] == "-o") name = args[i + 1].Replace("%(ext)s", "mp4").Replace("%%", "%");
       if (args[i] == "--") url = args[i + 1];
+      if (args[i] == "-J") probe = true;
+    }
+    if (probe) {
+      string marker = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "probe.pid");
+      if (url.Contains("/status/987") && !File.Exists(marker)) {
+        File.WriteAllText(marker, System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
+        Console.Error.WriteLine("[twitter] Reading stalled post");
+        Thread.Sleep(30000);
+      }
+      Console.Error.WriteLine("[twitter] Reading video formats");
+      Thread.Sleep(1500);
+      Console.WriteLine(@"${probeInfo}");
+      return 0;
     }
     if (url != null && url.Contains("broken")) {
       Console.Error.WriteLine("ERROR: media smoke fixture failure");
@@ -108,7 +125,7 @@ const server=http.createServer((req,res)=>{
       const response=await fetch('http://127.0.0.1:1420/',{signal:AbortSignal.timeout(1_000)});
       return response.ok;
     },'Vite did not start');
-    child(path.join(root,'target/debug/sdm-desktop.exe'),[],'desktop',{
+    const desktop=child(path.join(root,'target/debug/sdm-desktop.exe'),[],'desktop',{
       ...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9222',
     });
     await until(async()=>{
@@ -138,18 +155,60 @@ const server=http.createServer((req,res)=>{
       ]);
     }
 
-    // Stub only metadata discovery. The Download now button still invokes
-    // native add_media and the real manager creates its progress WebView.
-    // The subprocess fixture supplies deterministic native media progress.
-    await main.evaluate(async(directory)=>{
-      const resource=performance.getEntriesByType('resource').find(r=>new URL(r.name).pathname==='/src/api.ts');
-      const {api}=await import(resource.name);
-      const option={id:'720',kind:'video',height:720,fps:30,ext:'mp4',vcodec:'H.264',acodec:'AAC',size:1_234,needsFfmpeg:false,format:'18',merge:null,audio:null};
-      api.mediaTools=async()=>({ytdlp:true,ffmpeg:true,ffmpegInstallable:false,ytdlpSizeMb:0,ffmpegSizeMb:0});
-      api.mediaProbe=async()=>({title:'Media progress smoke',thumbnail:null,duration:10,site:'Test',url:'https://example.invalid/video',options:[option],default:option.id,videoDir:directory,audioDir:directory});
-      await window.__TAURI_INTERNALS__.invoke('plugin:event|emit',{event:'sdm:media-prompt',payload:{pageUrl:'https://example.invalid/video',title:'Media progress smoke'}});
-    },directory);
-    await main.locator('.media-option').waitFor({timeout:10_000});
+    function nativeResponsive() {
+      // WM_NULL reaches the actual Windows message loop. JavaScript alone
+      // can keep responding while a synchronous native IPC handler is stuck.
+      execFileSync('powershell.exe',['-NoProfile','-Command',`
+        Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class UiProbe { [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, IntPtr l, uint f, uint t, out UIntPtr result); }';
+        $h = (Get-Process -Id ${desktop.pid}).MainWindowHandle;
+        if ($h -eq 0) { throw 'Main native window was not found' };
+        $result = [UIntPtr]::Zero;
+        if ([UiProbe]::SendMessageTimeout($h, 0, [UIntPtr]::Zero, [IntPtr]::Zero, 2, 1000, [ref]$result) -eq [IntPtr]::Zero) { throw 'Native Windows message loop stopped responding' }
+      `],{timeout:10_000,stdio:'pipe'});
+    }
+    async function prompt(pageUrl) {
+      await invoke('plugin:event|emit',{event:'sdm:media-prompt',payload:{pageUrl,title:'Home / X'}});
+    }
+
+    // The old extension sent Home rather than the post. Fail promptly with
+    // an actionable message, without starting an extractor for the feed.
+    await prompt('https://x.com/home');
+    await main.getByText('Open the X post containing the video',{exact:false}).waitFor({timeout:8_000});
+    nativeResponsive();
+    await main.getByRole('button',{name:'Cancel',exact:true}).click();
+    report.push({name:'x-home-error',passed:true,nativeResponsive:true});
+
+    // Real native media_probe runs a deliberately stalled subprocess. Check
+    // status IPC, the Windows message loop, Cancel, process exit, and retry.
+    await prompt('https://x.com/author/status/987');
+    const pidFile=path.join(tools,'probe.pid');
+    await until(()=>fs.existsSync(pidFile),'Stalled probe did not start');
+    await until(async()=>Boolean(await invoke('media_probe_stage',{pageUrl:'https://x.com/author/status/987'})),'Probe stage was not readable');
+    await invoke('list_downloads');
+    await invoke('get_settings');
+    nativeResponsive();
+    await main.screenshot({path:path.join(output,'0-stalled-probe.png')});
+    await main.getByRole('button',{name:'Cancel',exact:true}).click();
+    await main.getByRole('dialog').waitFor({state:'hidden',timeout:3_000});
+    const probePid=Number(fs.readFileSync(pidFile,'utf8'));
+    assert(Number.isSafeInteger(probePid)&&probePid>0);
+    await until(()=>{
+      try {
+        execFileSync('powershell.exe',['-NoProfile','-Command',`if (Get-Process -Id ${probePid} -ErrorAction SilentlyContinue) { exit 1 }`],{timeout:3_000,stdio:'pipe'});
+        return true;
+      } catch { return false; }
+    },'Cancel left the extractor running',8_000);
+    report.push({name:'stalled-probe-cancel',passed:true,nativeResponsive:true,childStopped:true});
+    await prompt('https://x.com/author/status/987');
+    await main.locator('.media-option').first().waitFor({timeout:8_000});
+    nativeResponsive();
+    await main.getByRole('button',{name:'Cancel',exact:true}).click();
+    report.push({name:'probe-retry-after-cancel',passed:true,nativeResponsive:true});
+
+    // Discovery and Download now both use native IPC; only yt-dlp's external
+    // service is replaced by the deterministic executable fixture.
+    await prompt('https://x.com/author/status/123');
+    await main.locator('.media-option').first().waitFor({timeout:10_000});
     await main.getByRole('button',{name:'Download now',exact:true}).click();
     await main.getByRole('dialog').waitFor({state:'hidden',timeout:10_000});
     const media=(await invoke('list_downloads')).find(d=>d.fileName==='Media progress smoke.mp4');

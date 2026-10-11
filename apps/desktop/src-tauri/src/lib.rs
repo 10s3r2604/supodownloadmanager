@@ -95,6 +95,7 @@ pub fn run() {
             commands::media_prepare,
             commands::media_probe,
             commands::media_probe_stage,
+            commands::cancel_media_probe,
             commands::add_media,
             commands::inspect_torrent,
             commands::cancel_torrent_inspect,

@@ -291,6 +291,7 @@ export interface Api {
   mediaProbe(source: MediaSource): Promise<MediaInfo>;
   /** What yt-dlp is doing while it reads the page. */
   mediaProbeStage(pageUrl: string): Promise<string | null>;
+  cancelMediaProbe(pageUrl: string): Promise<void>;
   addMedia(request: AddMediaRequest): Promise<number>;
   onMediaPrompt(handler: (source: MediaSource) => void): Promise<UnlistenFn>;
   inspectTorrent(source: TorrentSource): Promise<TorrentInfo>;
@@ -348,6 +349,7 @@ const tauriApi: Api = {
   mediaPrepare: (ffmpeg) => invoke("media_prepare", { ffmpeg }),
   mediaProbe: (source) => invoke("media_probe", { source }),
   mediaProbeStage: (pageUrl) => invoke("media_probe_stage", { pageUrl }),
+  cancelMediaProbe: (pageUrl) => invoke("cancel_media_probe", { pageUrl }),
   addMedia: (request) => invoke("add_media", { request }),
   onMediaPrompt: (handler) => listen<MediaSource>("sdm:media-prompt", (e) => handler(e.payload)),
   inspectTorrent: (source) => invoke("inspect_torrent", { source }),

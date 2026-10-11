@@ -26,13 +26,15 @@ fn text_error(error: impl std::fmt::Display) -> String {
 }
 
 #[tauri::command]
-pub fn list_downloads(state: State<'_, AppState>) -> Vec<DownloadView> {
-    state.manager.list()
+pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadView>> {
+    // Background jobs may hold the manager lock while saving to disk.
+    // Keep frequent UI polls off the Windows message loop.
+    Ok(state.manager.list())
 }
 
 #[tauri::command]
-pub fn get_download(state: State<'_, AppState>, id: u64) -> Option<DownloadView> {
-    state.manager.get(id)
+pub async fn get_download(state: State<'_, AppState>, id: u64) -> Result<Option<DownloadView>> {
+    Ok(state.manager.get(id))
 }
 
 /// Opens the progress window of a download.
@@ -43,8 +45,11 @@ pub async fn open_progress_window(app: AppHandle, id: u64) {
 
 /// Which of yt-dlp and ffmpeg are ready.
 #[tauri::command]
-pub fn media_tools(state: State<'_, AppState>) -> ToolStatus {
-    state.tools.status()
+pub async fn media_tools(state: State<'_, AppState>) -> Result<ToolStatus> {
+    let tools = state.tools.clone();
+    tauri::async_runtime::spawn_blocking(move || tools.status())
+        .await
+        .map_err(text_error)
 }
 
 /// Downloads yt-dlp (and ffmpeg when `ffmpeg` is set) if they are missing,
@@ -94,8 +99,18 @@ pub async fn media_probe(
 
 /// What yt-dlp is doing while it reads a page.
 #[tauri::command]
-pub fn media_probe_stage(state: State<'_, AppState>, page_url: String) -> Option<String> {
-    state.prober.stage(&page_url)
+pub async fn media_probe_stage(
+    state: State<'_, AppState>,
+    page_url: String,
+) -> Result<Option<String>> {
+    Ok(state.prober.stage(&page_url))
+}
+
+/// Stops discovery for this page, including any browser prefetch sharing it.
+#[tauri::command]
+pub async fn cancel_media_probe(state: State<'_, AppState>, page_url: String) -> Result<()> {
+    state.prober.cancel(&page_url);
+    Ok(())
 }
 
 /// Adds a video in the chosen quality to the download list.
@@ -227,8 +242,8 @@ pub fn show_in_folder(app: AppHandle, state: State<'_, AppState>, id: u64) -> Re
 }
 
 #[tauri::command]
-pub fn get_settings(state: State<'_, AppState>) -> Settings {
-    state.manager.settings()
+pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings> {
+    Ok(state.manager.settings())
 }
 
 #[tauri::command]
