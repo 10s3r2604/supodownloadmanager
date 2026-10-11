@@ -174,6 +174,10 @@ const en = {
   download: "Download",
   dismiss: "Dismiss",
 
+  pwTitle: "Download progress",
+  pwLoading: "Loading download progress…",
+  pwLoadFailed: "Could not load download progress.",
+  pwRetry: "Try again",
   pwDone: "Download complete",
   pwFailed: "Download failed",
   pwPaused: "Paused",
@@ -456,6 +460,10 @@ const vi: Record<TextKey, string> = {
   download: "Tải",
   dismiss: "Bỏ qua",
 
+  pwTitle: "Tiến độ tải",
+  pwLoading: "Đang lấy tiến độ tải…",
+  pwLoadFailed: "Không lấy được tiến độ tải.",
+  pwRetry: "Thử lại",
   pwDone: "Đã tải xong",
   pwFailed: "Tải không thành công",
   pwPaused: "Đã tạm dừng",

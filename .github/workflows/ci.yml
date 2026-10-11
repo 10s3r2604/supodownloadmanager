@@ -76,3 +76,22 @@ jobs:
           npm ci
           npm run build
       - run: cargo test -p sdm-desktop --locked
+      - name: Build the native Windows app
+        if: runner.os == 'Windows'
+        run: cargo build -p sdm-desktop --locked
+      - name: Test native Windows progress windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $testDeps = Join-Path $env:RUNNER_TEMP "sdm-progress-test"
+          npm install --prefix $testDeps --no-save --package-lock=false playwright-core@1.57.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:SDM_SMOKE_NODE_MODULES = Join-Path $testDeps "node_modules"
+          node .github/scripts/progress-windows-smoke.cjs
+      - name: Upload native Windows progress checks
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-progress-smoke
+          path: progress-smoke/
+          if-no-files-found: ignore

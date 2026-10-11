@@ -34,6 +34,30 @@
   display: flow-root;
 }
 
+.pw-placeholder-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pw-placeholder-body {
+  min-height: 100px;
+  padding: 20px 18px;
+}
+
+.pw-placeholder-body p {
+  margin: 10px 0 16px;
+  overflow-wrap: anywhere;
+}
+
+.pw-placeholder-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .pw-controls {
   display: flex;
   gap: 2px;

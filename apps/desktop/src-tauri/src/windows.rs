@@ -29,6 +29,8 @@ fn size_of(style: &str) -> (f64, f64) {
 }
 
 /// Shows the progress window of a download, creating it when needed.
+/// Call from an async command or a worker: WebView2 creation deadlocks in a
+/// synchronous command on the Windows UI thread.
 pub fn open_progress(app: &AppHandle, id: u64) {
     if let Some(window) = app.get_webview_window(&label(id)) {
         let _ = window.unminimize();

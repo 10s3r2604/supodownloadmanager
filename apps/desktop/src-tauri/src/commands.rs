@@ -99,8 +99,9 @@ pub fn media_probe_stage(state: State<'_, AppState>, page_url: String) -> Option
 }
 
 /// Adds a video in the chosen quality to the download list.
+/// Scheduling may create a WebView2 window, so this must run off the UI thread.
 #[tauri::command]
-pub fn add_media(state: State<'_, AppState>, request: AddMediaRequest) -> Result<u64> {
+pub async fn add_media(state: State<'_, AppState>, request: AddMediaRequest) -> Result<u64> {
     state.manager.add_media(request)
 }
 
@@ -121,7 +122,7 @@ pub fn cancel_torrent_inspect(state: State<'_, AppState>) {
 
 /// Adds the chosen files of a torrent to the download list.
 #[tauri::command]
-pub fn add_torrent(state: State<'_, AppState>, request: AddTorrentRequest) -> Result<u64> {
+pub async fn add_torrent(state: State<'_, AppState>, request: AddTorrentRequest) -> Result<u64> {
     state.manager.add_torrent(request)
 }
 
@@ -178,8 +179,9 @@ pub fn pause_downloads(state: State<'_, AppState>, ids: Vec<u64>) {
 }
 
 #[tauri::command]
-pub fn resume_downloads(state: State<'_, AppState>, ids: Vec<u64>) {
+pub async fn resume_downloads(state: State<'_, AppState>, ids: Vec<u64>) -> Result<()> {
     state.manager.resume(&ids);
+    Ok(())
 }
 
 #[tauri::command]
@@ -193,8 +195,9 @@ pub fn pause_all(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-pub fn resume_all(state: State<'_, AppState>) {
+pub async fn resume_all(state: State<'_, AppState>) -> Result<()> {
     state.manager.resume_all();
+    Ok(())
 }
 
 /// Opens a finished file with its default program.
@@ -229,7 +232,7 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 }
 
 #[tauri::command]
-pub fn save_settings(
+pub async fn save_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     settings: Settings,
