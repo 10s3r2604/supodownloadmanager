@@ -169,6 +169,17 @@ function fixture(content) {
     report.push({ name: 'context-menu-opens-in-page', passed: true });
     await page.keyboard.press('Escape');
 
+    await page.setViewportSize({ width: 320, height: 360 });
+    await open(0);
+    const narrowMenu = await nodeWhere((n, a) => a.class === 'menu' && !('hidden' in a));
+    const { model: narrowBox } = await cdp.send('DOM.getBoxModel', { nodeId: narrowMenu.nodeId });
+    assert(Math.min(narrowBox.border[0], narrowBox.border[6]) >= -0.5);
+    assert(Math.max(narrowBox.border[2], narrowBox.border[4]) <= 320.5);
+    assert(narrowBox.border[1] >= -0.5 && narrowBox.border[5] <= 360.5);
+    await page.screenshot({ path: path.join(output, 'x-feed-narrow-menu.png') });
+    report.push({ name: 'narrow-menu-stays-in-viewport', passed: true });
+    await page.keyboard.press('Escape');
+
     html = fixture('<div data-testid="cellInnerDiv"><video></video></div>');
     await page.reload();
     const before = probes().length;
