@@ -149,6 +149,12 @@ const server=http.createServer((req,res)=>{
     const pages=()=>browser.contexts().flatMap(context=>context.pages());
     const main=await until(()=>pages().find(page=>!page.url().includes('#')&&page.url().includes(':1420')),'Main WebView was not found');
     await main.getByRole('button',{name:'Settings',exact:true}).waitFor({timeout:20_000});
+    // Remember the actual main HWND before opening auxiliary windows.
+    // Process.MainWindowHandle can later select one of the small windows.
+    const mainWindowHandle=execFileSync('powershell.exe',['-NoProfile','-Command',
+      `(Get-Process -Id ${desktop.pid}).MainWindowHandle.ToInt64()`
+    ],{encoding:'utf8',timeout:10_000}).trim();
+    assert(/^\d+$/.test(mainWindowHandle) && Number(mainWindowHandle)>0);
     async function invoke(command,args={}) {
       return bounded(main.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args}),`${command} blocked the Windows UI thread`);
     }
@@ -173,7 +179,7 @@ const server=http.createServer((req,res)=>{
       // can keep responding while a synchronous native IPC handler is stuck.
       execFileSync('powershell.exe',['-NoProfile','-Command',`
         Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class UiProbe { [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, IntPtr l, uint f, uint t, out UIntPtr result); }';
-        $h = (Get-Process -Id ${desktop.pid}).MainWindowHandle;
+        $h = [IntPtr]${mainWindowHandle};
         if ($h -eq 0) { throw 'Main native window was not found' };
         $result = [UIntPtr]::Zero;
         if ([UiProbe]::SendMessageTimeout($h, 0, [UIntPtr]::Zero, [IntPtr]::Zero, 2, 1000, [ref]$result) -eq [IntPtr]::Zero) { throw 'Native Windows message loop stopped responding' }
@@ -270,11 +276,12 @@ const server=http.createServer((req,res)=>{
     assert.equal(request.headers['user-agent'],'SDM-native-browser-fixture');
     await closeProgress(await progress(downloaded.id,'browser-confirmed-download'));
     report.push({name:'browser-confirmed-download-content-and-auth',passed:true});
+    console.log(JSON.stringify({browserConfirmationChecks:report},null,2));
     // Restore through a native user action after testing that capture leaves
     // it minimized; these checks never grant an extra application permission.
     execFileSync('powershell.exe',['-NoProfile','-Command',`
       Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class RestoreSdm { [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int command); }';
-      [RestoreSdm]::ShowWindowAsync((Get-Process -Id ${desktop.pid}).MainWindowHandle,9) | Out-Null;
+      [RestoreSdm]::ShowWindowAsync([IntPtr]${mainWindowHandle},9) | Out-Null;
     `],{timeout:10_000,stdio:'pipe'});
     await until(async()=>!await invoke('plugin:window|is_minimized',{label:'main'}),'Main window did not restore');
 
