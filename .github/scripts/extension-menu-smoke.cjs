@@ -64,14 +64,12 @@ function fixture(content) {
     context = await chromium.launchPersistentContext(profile, {
       executablePath, headless: true, viewport: { width: 1000, height: 800 },
       ignoreDefaultArgs: ['--disable-extensions'],
-      args: ['--no-sandbox', '--lang=en-US', '--enable-unsafe-extension-debugging', `--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+      args: ['--no-sandbox', '--lang=en-US', '--enable-unsafe-extension-debugging'],
     });
     // Current Chromium disables --load-extension in regular builds. The
     // explicit extension-debugging API loads this test bundle in isolation.
     const loader = await context.browser().newBrowserCDPSession();
-    await loader.send('Extensions.loadUnpacked', { path: extension }).catch(error => {
-      if (!context.serviceWorkers().length) throw error;
-    });
+    const installed = await loader.send('Extensions.loadUnpacked', { path: extension });
     worker = context.serviceWorkers().find(w => w.url().endsWith('/background.js'))
       || await context.waitForEvent('serviceworker', { predicate: w => w.url().endsWith('/background.js'), timeout: 15_000 });
     await worker.evaluate(async port => {
@@ -163,14 +161,19 @@ function fixture(content) {
     report.push({ name: 'inline-error-and-retry', passed: true });
     await page.keyboard.press('Escape');
 
-    // Send the context menu's frame message through the actual service
-    // worker/content-script channel, preserving the right-clicked player.
+    // Send the context menu's frame message from a real extension page.
+    // A service worker may have idled by now; its old debugger handle is
+    // not a reliable way to send an extension message.
     await page.locator('video').nth(0).click({ button: 'right' });
     await page.keyboard.press('Escape');
-    await worker.evaluate(async () => {
-      const [tab] = await chrome.tabs.query({ url: 'https://x.com/home' });
-      await chrome.tabs.sendMessage(tab.id, { type: 'video-open-menu' }, { frameId: 0 });
-    });
+    const popup = await context.newPage();
+    try {
+      await popup.goto(`chrome-extension://${installed.id}/popup.html`);
+      await popup.evaluate(async () => {
+        const [tab] = await chrome.tabs.query({ url: 'https://x.com/home' });
+        await chrome.tabs.sendMessage(tab.id, { type: 'video-open-menu' }, { frameId: 0 });
+      });
+    } finally { await popup.close(); }
     await until(async () => (await menuText()).includes('1080p60'), 'Context-menu quality selection did not open');
     report.push({ name: 'context-menu-opens-in-page', passed: true });
     await page.keyboard.press('Escape');
