@@ -145,9 +145,12 @@ jobs:
           $result = $stdout.GetAwaiter().GetResult()
           "bundled yt-dlp + deno: {0:N1} s, exit: {1}" -f $sw.Elapsed.TotalSeconds, $probe.ExitCode | Tee-Object -Append shots/bundled-video.txt
           if ($probe.ExitCode -ne 0) { throw "Bundled yt-dlp could not read the video page" }
-          $formats = ($result | ConvertFrom-Json).formats.Count
-          "formats: $formats" | Tee-Object -Append shots/bundled-video.txt
-          if ($formats -lt 1) { throw "Bundled yt-dlp returned no formats" }
+          # A page with one plain video has no "formats" list, only its "url";
+          # a page with several has "entries".
+          $info = $result | ConvertFrom-Json
+          $formats = ($info.formats | Measure-Object).Count + ($info.entries | Measure-Object).Count + [int][bool]$info.url
+          "title: $($info.title), formats: $formats" | Tee-Object -Append shots/bundled-video.txt
+          if ($formats -lt 1) { throw "Bundled yt-dlp found no video on the page" }
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -156,8 +159,11 @@ jobs:
           path: shots
 
   # How long yt-dlp takes to read a video page, in the ways SDM can run it.
+  # Informational: YouTube may ask GitHub's servers to sign in, which is
+  # not something SDM can change, so this job never fails the run.
   ytdlp-timing:
     runs-on: windows-latest
+    continue-on-error: true
     steps:
       - name: Time yt-dlp
         shell: pwsh
