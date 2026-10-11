@@ -1,5 +1,7 @@
 // Tiny SVG charts for speeds.
 
+import "./charts.css";
+
 function points(values: number[], width: number, height: number, max: number, pad = 2) {
   const n = Math.max(values.length, 2);
   return values.map((v, i) => {

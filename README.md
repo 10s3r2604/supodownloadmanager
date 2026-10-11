@@ -57,9 +57,17 @@ computer you own, and the code is right here.
 - Pause and resume any time, even after closing the app or restarting the computer. SDM
   checks the file's size, `ETag` and date with the server first, so a changed file starts
   over instead of being mixed.
-- Automatic retries, a download queue, a speed limit, proxies (HTTP, HTTPS, SOCKS5) and
-  safe file names. Works with servers that allow only one connection or don't say how
-  big the file is.
+- Automatic retries, a speed limit, proxies (HTTP, HTTPS, SOCKS5) and safe file names.
+  Works with servers that allow only one connection or don't say how big the file is.
+- Link expired halfway? Paste a fresh one and the download continues where it stopped.
+
+**Queues and scheduler**
+- Several queues, each with its own number of files at once. Start and stop them at set
+  times, once, every day or on chosen days, for example overnight.
+- When a queue (or everything) is done, SDM can quit, put the computer to sleep,
+  hibernate or shut it down, after a one-minute countdown you can cancel.
+- Batch downloads from numbered addresses like `img[001-120].jpg`, and "Download all
+  links" on any web page, with the links sorted by type so you pick only what you want.
 
 **Videos from web pages**
 - Hover a video in your browser and click **Download this video**, or paste a link. Pick
@@ -83,8 +91,9 @@ computer you own, and the code is right here.
 **Pleasant to use**
 - A small progress window per download, in three styles (speed graph, ring or classic),
   with "open the file when done".
-- Two looks: **Neon** (dark, with a live speed chart and every connection) and
-  **Minimal** (light or dark). English and Vietnamese.
+- Two looks: **Minimal** (the default: dark, light or like the system, with a file's
+  speed chart, connections and torrent files one click away) and **Neon** (dark, with a
+  live speed chart and every connection on screen). English and Vietnamese.
 - Categories with their own folders, clipboard monitoring, tray icon and notifications.
 - An `sdm` command line tool for scripts and servers.
 
@@ -97,7 +106,7 @@ computer you own, and the code is right here.
   </tr>
   <tr>
     <td><img src="docs/images/sdm-minimal-en.png" alt="Minimal look"><br><sub><b>Minimal</b> look, light</sub></td>
-    <td><img src="docs/images/sdm-minimal-dark-en.png" alt="Minimal look, dark"><br><sub><b>Minimal</b> look, dark</sub></td>
+    <td><img src="docs/images/sdm-minimal-dark-en.png" alt="Minimal look, dark"><br><sub><b>Minimal</b> look, dark (default)</sub></td>
   </tr>
   <tr>
     <td><img src="docs/images/video-button-en.png" alt="Download this video button"><br><sub>The <b>Download this video</b> button</sub></td>
@@ -215,13 +224,16 @@ Tại sao phải trả **phí thuê bao hằng năm** cho một trình tải fil
 cài trên bao nhiêu máy cũng được, và mã nguồn công khai.
 
 - **Tải nhanh** bằng tối đa 32 kết nối, tạm dừng và tải tiếp kể cả sau khi tắt máy.
+- **Hàng đợi và hẹn giờ**: nhiều hàng đợi, tự chạy/dừng theo giờ, tắt máy hoặc cho máy ngủ
+  khi tải xong; tải hàng loạt theo mẫu `img[001-120].jpg` và tải tất cả link trên trang.
+- **Link hết hạn** giữa chừng? Dán link mới, file tải tiếp từ chỗ đang dừng.
 - **Tải video** trên khoảng 1.800 trang web, chọn chất lượng 4K, 1080p, 720p hoặc chỉ âm thanh.
 - **Torrent và link magnet**: bấm link magnet, mở file `.torrent` hoặc kéo thả vào cửa sổ,
   chọn tệp muốn tải.
 - **Extension** cho Chrome, Edge, Firefox, Cốc Cốc, Brave, Opera, Vivaldi; tải được cả
   link cần đăng nhập.
-- Cửa sổ tiến độ cho từng file, hai giao diện Neon và Tối giản, có tiếng Việt
-  (vào **Cài đặt → Giao diện → Ngôn ngữ**).
+- Hai giao diện: **Tối giản** (mặc định, nền tối/sáng/theo hệ thống) và **Neon**, có tiếng Việt
+  (vào **Cài đặt → Giao diện**). Bấm tên file để xem biểu đồ tốc độ và chi tiết.
 
 **Cài đặt:** tải bộ cài ở trang [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
 (Windows: `…-setup.exe`; macOS: `.dmg`; Linux: `.deb`, `.rpm`, `.AppImage`), mở SDM rồi

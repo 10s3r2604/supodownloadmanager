@@ -1,4 +1,4 @@
-// View logic shared by both looks: filters, groups, totals and speed history.
+// Download filters, totals and speed history.
 
 import type { Category, Download, Settings } from "./api";
 
@@ -11,7 +11,14 @@ export type Filter =
   | "completed"
   | "failed"
   | "unfinished"
+  | "attention"
   | `cat:${Category}`;
+
+export type TypeFilter = "all" | "torrent" | Category;
+
+export function matchesType(filter: TypeFilter, d: Download): boolean {
+  return filter === "all" || (filter === "torrent" ? d.torrent : d.category === filter);
+}
 
 export const CATEGORIES: Category[] = ["video", "music", "document", "compressed", "program", "image", "other"];
 
@@ -23,6 +30,8 @@ export function matches(filter: Filter, d: Download): boolean {
       return d.state === "downloading" || d.state === "queued";
     case "unfinished":
       return d.state !== "completed";
+    case "attention":
+      return d.state === "paused" || d.state === "failed";
     case "downloading":
     case "queued":
     case "paused":
@@ -83,7 +92,6 @@ export interface Totals {
 export function totals(downloads: Download[], settings: Settings | null): Totals {
   const running = downloads.filter((d) => d.state === "downloading");
   const speed = running.reduce((sum, d) => sum + d.speed, 0);
-  const left = running.reduce((sum, d) => sum + (d.size == null ? 0 : Math.max(0, d.size - d.downloaded)), 0);
   const today = new Date().toDateString();
   const finishedToday = downloads
     .filter((d) => d.state === "completed" && d.completedAt && new Date(d.completedAt).toDateString() === today)
@@ -92,7 +100,8 @@ export function totals(downloads: Download[], settings: Settings | null): Totals
     active: running.length,
     speed,
     connections: running.reduce((sum, d) => sum + d.connections, 0),
-    remaining: speed > 0 ? left / speed : null,
+    remaining: running.length > 0 && running.every((d) => d.size != null && d.eta != null && !d.checking && !d.processing)
+      ? Math.max(...running.map((d) => d.eta!)) : null,
     downloadedToday: finishedToday + running.reduce((sum, d) => sum + d.downloaded, 0),
     speedLimit: settings && settings.speedLimit > 0 ? settings.speedLimit : null,
   };

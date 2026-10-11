@@ -28,9 +28,9 @@ pub struct Settings {
     pub proxy: String,
     /// `auto`, `en` or `vi`.
     pub language: String,
-    /// Look of the app: `neon` or `minimal`.
+    /// Look of the app: `minimal` or `neon`.
     pub skin: String,
-    /// `system`, `light` or `dark` (the minimal skin has both).
+    /// `system`, `light` or `dark` (Neon is always dark).
     pub theme: String,
     /// Open a progress window for every download that starts.
     pub progress_window: bool,
@@ -71,8 +71,8 @@ impl Default for Settings {
             speed_limit: 0,
             proxy: String::new(),
             language: "en".into(),
-            skin: "neon".into(),
-            theme: "system".into(),
+            skin: "minimal".into(),
+            theme: "dark".into(),
             progress_window: true,
             progress_style: "graph".into(),
             complete_dialog: true,
@@ -113,14 +113,14 @@ impl Settings {
         if !["auto", "en", "vi"].contains(&self.language.as_str()) {
             self.language = "en".into();
         }
-        if !["neon", "minimal"].contains(&self.skin.as_str()) {
-            self.skin = "neon".into();
+        if !["minimal", "neon"].contains(&self.skin.as_str()) {
+            self.skin = "minimal".into();
         }
         if !["graph", "ring", "classic"].contains(&self.progress_style.as_str()) {
             self.progress_style = "graph".into();
         }
         if !["system", "light", "dark"].contains(&self.theme.as_str()) {
-            self.theme = "system".into();
+            self.theme = "dark".into();
         }
         self.proxy = self.proxy.trim().to_owned();
         if self.torrent_port < 1024 {
@@ -207,7 +207,7 @@ mod tests {
         assert_eq!(settings.max_parallel, 16);
         assert_eq!(settings.bridge_port, DEFAULT_BRIDGE_PORT);
         assert_eq!(settings.language, "en");
-        assert_eq!(settings.skin, "neon");
+        assert_eq!(settings.skin, "minimal");
         assert_eq!(settings.progress_style, "graph");
         assert_eq!(settings.capture_extensions, ["zip"]);
     }
@@ -236,6 +236,30 @@ mod tests {
         assert_eq!(settings.connections, 4);
         assert_eq!(settings.max_parallel, 3);
         assert!(settings.browser_integration);
+        assert_eq!(settings.skin, "minimal");
+        assert_eq!(settings.theme, "dark");
+    }
+
+    #[test]
+    fn keeps_both_looks_and_their_themes() {
+        for theme in ["system", "light", "dark"] {
+            let neon = Settings {
+                skin: "neon".into(),
+                theme: theme.into(),
+                ..Settings::default()
+            }
+            .sanitized();
+            assert_eq!(neon.skin, "neon");
+            assert_eq!(neon.theme, theme);
+        }
+        for theme in ["light", "system"] {
+            let settings = Settings {
+                theme: theme.into(),
+                ..Settings::default()
+            }
+            .sanitized();
+            assert_eq!(settings.theme, theme);
+        }
     }
 
     #[test]

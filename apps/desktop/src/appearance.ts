@@ -16,8 +16,9 @@ export function useAppearance(settings: Settings | null) {
     return () => media.removeEventListener("change", update);
   }, []);
 
-  const skin = settings?.skin ?? "neon";
-  const theme = settings?.theme ?? "system";
+  const skin = settings?.skin === "neon" ? "neon" : "minimal";
+  const theme = settings?.theme ?? "dark";
+  // Neon is always dark.
   const dark = skin === "neon" || theme === "dark" || (theme === "system" && systemDark);
 
   useEffect(() => {

@@ -64,6 +64,33 @@ impl BrowserDownload {
     }
 }
 
+/// The links of a web page, for "download all links".
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageLinks {
+    pub page_url: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub links: Vec<PageLink>,
+    /// Cookies of the page's site; only sent to links on that site.
+    #[serde(default)]
+    pub cookies: Option<String>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageLink {
+    pub url: String,
+    /// The link's text or the image's description.
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+/// The most links one page may send.
+pub const MAX_PAGE_LINKS: usize = 5000;
+
 /// What the extension needs to know.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +109,8 @@ pub trait Handler: Send + Sync + 'static {
     fn probe_media(&self, source: MediaSource) -> BoxFuture<Result<MediaInfo, String>>;
     /// Starts downloading a video in one of the qualities found.
     fn add_media(&self, source: MediaSource, option: String) -> BoxFuture<Result<u64, String>>;
+    /// The links of a page, for the user to pick from.
+    fn links(&self, links: PageLinks);
 }
 
 /// Asks for the qualities of a video page.
@@ -117,6 +146,8 @@ struct Ping {
     media: bool,
     /// The app takes magnet links in `/api/download`.
     torrent: bool,
+    /// The app takes the links of a page (`/api/links`).
+    links: bool,
     #[serde(flatten)]
     config: BridgeConfig,
 }
@@ -146,7 +177,8 @@ impl Bridge {
             .route("/api/media", post(media))
             .route("/api/media/probe", post(media_probe))
             .route("/api/media/add", post(media_add))
-            .layer(DefaultBodyLimit::max(512 * 1024))
+            .route("/api/links", post(links))
+            .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
             .with_state(self)
     }
 
@@ -199,6 +231,7 @@ async fn ping(State(bridge): State<Arc<Bridge>>, headers: HeaderMap) -> Response
         version: env!("CARGO_PKG_VERSION"),
         media: true,
         torrent: true,
+        links: true,
         config: bridge.handler.config(),
     })
     .into_response()
@@ -299,6 +332,25 @@ async fn media_add(
     }
 }
 
+async fn links(
+    State(bridge): State<Arc<Bridge>>,
+    headers: HeaderMap,
+    Json(mut request): Json<PageLinks>,
+) -> Response {
+    if let Some(refused) = refuse_media(&bridge, &headers, &request.page_url) {
+        return refused;
+    }
+    request.links.retain(|link| {
+        url::Url::parse(&link.url).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+    });
+    request.links.truncate(MAX_PAGE_LINKS);
+    if request.links.is_empty() {
+        return (StatusCode::BAD_REQUEST, "no links to download").into_response();
+    }
+    bridge.handler.links(request);
+    StatusCode::ACCEPTED.into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use axum::body::Body;
@@ -312,6 +364,7 @@ mod tests {
         enabled: bool,
         received: Arc<Mutex<Vec<BrowserDownload>>>,
         videos: Arc<Mutex<Vec<MediaSource>>>,
+        pages: Arc<Mutex<Vec<PageLinks>>>,
     }
 
     impl Handler for Recorder {
@@ -360,6 +413,10 @@ mod tests {
                 }
             })
         }
+
+        fn links(&self, links: PageLinks) {
+            self.pages.lock().unwrap().push(links);
+        }
     }
 
     fn bridge(enabled: bool) -> (Arc<Bridge>, Arc<Mutex<Vec<BrowserDownload>>>) {
@@ -368,8 +425,53 @@ mod tests {
             enabled,
             received: received.clone(),
             videos: Arc::default(),
+            pages: Arc::default(),
         });
         (bridge, received)
+    }
+
+    #[tokio::test]
+    async fn takes_the_links_of_a_page() {
+        let pages = Arc::new(Mutex::new(Vec::new()));
+        let bridge = Bridge::new(Recorder {
+            enabled: true,
+            pages: pages.clone(),
+            ..Recorder::default()
+        });
+        let post = |body: &str| {
+            Request::post("/api/links")
+                .header("content-type", "application/json")
+                .header(CLIENT_HEADER, "extension")
+                .body(Body::from(body.to_owned()))
+                .unwrap()
+        };
+        let body = r#"{"pageUrl":"https://files.example.com/","links":[
+            {"url":"https://files.example.com/a.zip","text":"A"},
+            {"url":"javascript:alert(1)"},
+            {"url":"mailto:me@example.com"},
+            {"url":"https://cdn.example.net/b.mp4"}]}"#;
+        let response = bridge.clone().router().oneshot(post(body)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let got = pages.lock().unwrap().clone();
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            got[0]
+                .links
+                .iter()
+                .map(|l| l.url.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "https://files.example.com/a.zip",
+                "https://cdn.example.net/b.mp4"
+            ]
+        );
+
+        let none = r#"{"pageUrl":"https://files.example.com/","links":[{"url":"ftp://x/y"}]}"#;
+        let response = bridge.clone().router().oneshot(post(none)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let page = r#"{"pageUrl":"file:///etc/","links":[{"url":"https://x.org/a"}]}"#;
+        let response = bridge.router().oneshot(post(page)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     fn post(origin: Option<&str>, client: bool, body: &str) -> Request<Body> {
@@ -500,8 +602,8 @@ mod tests {
         let videos = Arc::new(Mutex::new(Vec::new()));
         let bridge = Bridge::new(Recorder {
             enabled: true,
-            received: Arc::default(),
             videos: videos.clone(),
+            ..Recorder::default()
         });
         let body = r#"{"pageUrl":"https://www.youtube.com/watch?v=x","title":"Clip",
             "cookies":[{"name":"SID","value":"1","domain":".youtube.com","secure":true}]}"#;

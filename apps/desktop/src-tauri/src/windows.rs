@@ -29,6 +29,8 @@ fn size_of(style: &str) -> (f64, f64) {
 }
 
 /// Shows the progress window of a download, creating it when needed.
+/// Call from an async command or a worker: WebView2 creation deadlocks in a
+/// synchronous command on the Windows UI thread.
 pub fn open_progress(app: &AppHandle, id: u64) {
     if let Some(window) = app.get_webview_window(&label(id)) {
         let _ = window.unminimize();
@@ -41,7 +43,7 @@ pub fn open_progress(app: &AppHandle, id: u64) {
     let url = WebviewUrl::App(format!("index.html#progress/{id}").into());
     // No system title bar: the page draws its own, so the window looks the
     // same everywhere. The shadow also gives rounded corners on Windows 11.
-    let result = WebviewWindowBuilder::new(app, label(id), url)
+    let builder = WebviewWindowBuilder::new(app, label(id), url)
         .title("Supo Download Manager")
         .inner_size(width, height)
         // Resizable only so the page can fit the height (GTK refuses to
@@ -51,8 +53,15 @@ pub fn open_progress(app: &AppHandle, id: u64) {
         .maximizable(false)
         .decorations(false)
         .shadow(true)
-        .center()
-        .build();
+        .center();
+    // Make the native debug check's browser arguments explicit for every
+    // WebView. Release builds always keep the default browser configuration.
+    #[cfg(all(debug_assertions, target_os = "windows"))]
+    let builder = match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+        Ok(args) => builder.additional_browser_args(&args),
+        Err(_) => builder,
+    };
+    let result = builder.build();
     if let Err(error) = result {
         tracing::warn!(%error, id, "could not open the progress window");
     }

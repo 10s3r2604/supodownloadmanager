@@ -1,193 +1,491 @@
-// Minimal: calm and typographic. No boxes, just type, hairlines and thin progress lines.
+import { useRef, useEffect, useState } from "react";
 
-import type { Download } from "../api";
+import type { Download, PowerAction } from "../api";
 import { wordmark } from "../brand";
 import { useI18n } from "../context";
-import { formatBytes, formatDuration, formatHuman, formatSpeed, percent } from "../format";
+import { formatBytes, formatHuman, formatSpeed, percent } from "../format";
 import type { TextKey } from "../i18n";
-import { Icon, categoryIcon } from "../icons";
-import { CATEGORIES, type Filter, type Group, groupOf, hostOf, matches } from "../model";
+import { Icon } from "../icons";
+import {
+  CATEGORIES,
+  type Filter,
+  type TypeFilter,
+  hostOf,
+  matches,
+  matchesType,
+} from "../model";
 import type { ViewProps } from "../views";
+import { AreaChart, niceMax } from "../components/Charts";
+import { POWER_ACTIONS, queueName } from "../components/SchedulerDialog";
 import "./minimal.css";
-
-const GROUPS: { key: Group; label: TextKey }[] = [
-  { key: "active", label: "groupActive" },
-  { key: "today", label: "groupToday" },
-  { key: "yesterday", label: "groupYesterday" },
-  { key: "older", label: "groupOlder" },
-];
 
 export function MinimalView(p: ViewProps & { dark: boolean }) {
   const { t, language } = useI18n();
-  const count = (f: Filter) => p.downloads.filter((d) => matches(f, d)).length;
-  const tabs: Filter[] = ["all", "active", "completed", "unfinished"];
-  const categories = CATEGORIES.filter((c) => count(`cat:${c}`) > 0);
-  const hasPaused = p.downloads.some((d) => d.state === "paused" || d.state === "failed");
-  const now = new Date();
+  const [graph, setGraph] = useState(false);
+  const count = (f: Filter) =>
+    p.downloads.filter((d) => matchesType(p.typeFilter, d) && matches(f, d))
+      .length;
+  const tabs: Filter[] = ["all", "active", "completed", "attention"];
+  const chosen = p.visible.filter((d) => p.selected.includes(d.id));
+  const canPause = chosen.some(
+    (d) => d.state === "downloading" || d.state === "queued",
+  );
+  const canResume = chosen.some(
+    (d) => d.state === "paused" || d.state === "failed",
+  );
+  const hasPaused = p.downloads.some(
+    (d) => d.state === "paused" || d.state === "failed",
+  );
+  const hasActive = p.downloads.some(
+    (d) => d.state === "downloading" || d.state === "queued",
+  );
+  const all = p.visible.length > 0 && chosen.length === p.visible.length;
+  const selectAll = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAll.current)
+      selectAll.current.indeterminate = chosen.length > 0 && !all;
+  }, [all, chosen.length]);
 
   return (
-    <div className="minimal">
+    <main className="minimal">
       <header className="mn-head">
-        <img src={wordmark(p.dark ? "#fafaf7" : "#141413")} height={24} alt="supo" />
+        <img
+          src={wordmark(p.dark ? "#eef4ef" : "#20332a")}
+          height={48}
+          alt="supo"
+        />
         <span className="mn-space" />
-        <button type="button" className="mn-link strong" onClick={p.onAdd}>
-          <Icon name="plus" size={16} /> {t("add")} <kbd>Ctrl N</kbd>
-        </button>
         <button type="button" className="mn-link" onClick={p.onBrowsers}>
-          <Icon name="globe" size={16} /> {t("browsers")}
-          {p.info?.bridgeError && <span className="mn-warn-dot" title={t("bridgeError", { error: p.info.bridgeError })} />}
+          {t("browsers")}
+          {p.info?.bridgeError && (
+            <span
+              className="mn-warn-dot"
+              title={t("bridgeError", { error: p.info.bridgeError })}
+            />
+          )}
+        </button>
+        <button type="button" className="mn-link" onClick={p.onScheduler}>
+          {t("scheduler")}
         </button>
         <button type="button" className="mn-link" onClick={p.onSettings}>
-          <Icon name="settings" size={16} /> {t("settings")}
+          {t("settings")}
+        </button>
+        <button
+          type="button"
+          className="button primary mn-add"
+          onClick={p.onAdd}
+          title={`${t("add")} (Ctrl+N)`}
+        >
+          <Icon name="plus" size={18} /> {t("add")}
         </button>
       </header>
 
       <section className="mn-hero">
-        <h1>
-          {p.totals.active > 0 && <span className="mn-live" />}
-          {p.totals.active > 0 ? t("headingActive", { n: p.totals.active }) : p.downloads.length === 0 ? t("emptyTitle") : t("headingIdle")}
-        </h1>
+        <h1>{t("downloadsTitle")}</h1>
         <p className="mn-lead">
           {p.totals.active > 0 ? (
             <>
-              <b>{formatSpeed(p.totals.speed, language)}</b>
+              <span className="mn-live" />{" "}
+              {t("downloadingCount", { n: p.totals.active })}
               {" · "}
-              {t("leadActive", {
-                time: formatHuman(p.totals.remaining, language) || "—",
-                today: formatBytes(p.totals.downloadedToday, language),
-              })}
+              {formatSpeed(p.totals.speed, language)}
+              {p.totals.remaining != null && (
+                <>
+                  {" "}
+                  ·{" "}
+                  {t("aboutRemaining", {
+                    time: formatHuman(p.totals.remaining, language),
+                  })}
+                </>
+              )}
             </>
           ) : p.downloads.length === 0 ? (
             t("emptyBody")
           ) : (
-            t("leadIdle", { count: p.downloads.length, today: formatBytes(p.totals.downloadedToday, language) })
+            t("leadIdle", {
+              count: p.downloads.length,
+              today: formatBytes(p.totals.downloadedToday, language),
+            })
+          )}
+          {p.totals.speedLimit != null && (
+            <>
+              {" "}
+              · {t("limit")}: {formatSpeed(p.totals.speedLimit, language)}
+            </>
           )}
         </p>
-        {(p.totals.active > 0 || hasPaused) && (
-          <div className="mn-bulk">
-            {p.totals.active > 0 && (
-              <button type="button" className="mn-link" onClick={p.onPauseAll}>
-                {t("pauseAll")}
+      </section>
+
+      <div className="mn-filters">
+        <nav className="mn-tabs" aria-label={t("colStatus")}>
+          {tabs.map((f) => (
+            <button
+              type="button"
+              key={f}
+              aria-current={p.filter === f ? "true" : undefined}
+              className={p.filter === f ? "on" : ""}
+              onClick={() => p.setFilter(f)}
+            >
+              {t(`tab.${f}` as TextKey)} <span>{count(f)}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="mn-tools">
+          {p.queues.length > 1 && (
+            <label className="mn-type">
+              <select
+                aria-label={t("queue")}
+                value={p.queueFilter}
+                onChange={(e) => p.setQueueFilter(e.target.value)}
+              >
+                <option value="all">{t("allQueues")}</option>
+                {p.queues.map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {queueName(q, t)}
+                  </option>
+                ))}
+              </select>
+              <Icon name="chevron" size={14} />
+            </label>
+          )}
+          <label className="mn-type">
+            <select
+              aria-label={t("categories")}
+              value={p.typeFilter}
+              onChange={(e) => p.setTypeFilter(e.target.value as TypeFilter)}
+            >
+              <option value="all">{t("allCategories")}</option>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {t(`cat.${c}` as TextKey)}
+                </option>
+              ))}
+              <option value="torrent">{t("bittorrent")}</option>
+            </select>
+            <Icon name="chevron" size={14} />
+          </label>
+          <label className="mn-search">
+            <Icon name="search" size={16} />
+            <input
+              type="search"
+              aria-label={t("search")}
+              value={p.query}
+              placeholder={t("search")}
+              onChange={(e) => p.setQuery(e.target.value)}
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="mn-list-head">
+        <label className="mn-select-all" title={t("selectAllVisible")}>
+          <input
+            ref={selectAll}
+            type="checkbox"
+            aria-label={t("selectAllVisible")}
+            checked={all}
+            disabled={!p.visible.length}
+            onChange={() =>
+              p.actions.selectAll(all ? [] : p.visible.map((d) => d.id))
+            }
+          />
+          <span>
+            {chosen.length
+              ? t("selectedCount", { n: chosen.length })
+              : t("yourDownloads")}
+          </span>
+        </label>
+        <div className="mn-bulk">
+          {chosen.length > 0 ? (
+            <>
+              {canPause && (
+                <button
+                  type="button"
+                  className="mn-link"
+                  onClick={() => p.actions.pause(p.selected)}
+                >
+                  {t("pause")}
+                </button>
+              )}
+              {canResume && (
+                <button
+                  type="button"
+                  className="mn-link"
+                  onClick={() => p.actions.resume(p.selected)}
+                >
+                  {t("resume")}
+                </button>
+              )}
+              <button
+                type="button"
+                className="mn-link"
+                onClick={() => p.actions.remove(p.selected)}
+              >
+                {t("delete")}
               </button>
-            )}
-            {hasPaused && (
-              <button type="button" className="mn-link" onClick={p.onResumeAll}>
-                {t("resumeAll")}
+              <button
+                type="button"
+                className="mn-link"
+                onClick={() => p.actions.selectAll([])}
+              >
+                {t("clearSelection")}
+              </button>
+            </>
+          ) : (
+            <>
+              {p.queueFilter !== "all" && (
+                <>
+                  <button
+                    type="button"
+                    className="mn-link"
+                    onClick={() => p.onStartQueue(p.queueFilter)}
+                  >
+                    {t("startQueue")}
+                  </button>
+                  <button
+                    type="button"
+                    className="mn-link"
+                    onClick={() => p.onStopQueue(p.queueFilter)}
+                  >
+                    {t("stopQueue")}
+                  </button>
+                </>
+              )}
+              {(hasActive || p.afterAll !== "nothing") && (
+                <label
+                  className={`mn-type mn-when${p.afterAll !== "nothing" ? " on" : ""}`}
+                  title={t("whenAllDone")}
+                >
+                  <Icon name="power" size={14} />
+                  <select
+                    aria-label={t("whenAllDone")}
+                    value={p.afterAll}
+                    onChange={(e) =>
+                      p.setAfterAll(e.target.value as PowerAction)
+                    }
+                  >
+                    {POWER_ACTIONS.map((action) => (
+                      <option key={action} value={action}>
+                        {action === "nothing"
+                          ? t("whenAllDone")
+                          : t(`power.${action}` as TextKey)}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon name="chevron" size={14} />
+                </label>
+              )}
+              {hasActive && (
+                <button
+                  type="button"
+                  className="mn-link"
+                  onClick={p.onPauseAll}
+                >
+                  {t("pauseAll")}
+                </button>
+              )}
+              {hasPaused && (
+                <button
+                  type="button"
+                  className="mn-link"
+                  onClick={p.onResumeAll}
+                >
+                  {t("resumeAll")}
+                </button>
+              )}
+              <button
+                type="button"
+                className="mn-link"
+                aria-expanded={graph}
+                onClick={() => setGraph(!graph)}
+              >
+                {t(graph ? "hideSpeedGraph" : "showSpeedGraph")}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {graph && (
+        <div
+          className="mn-graph"
+          role="img"
+          aria-label={`${t("totalSpeed")}: ${formatSpeed(p.totals.speed, language)}`}
+        >
+          <AreaChart
+            values={p.history.total}
+            max={niceMax(Math.max(0, ...p.history.total))}
+            slots={100}
+            id="total-speed"
+          />
+          <span>
+            {t("totalSpeed")} · {formatSpeed(p.totals.speed, language)}
+          </span>
+          <small>{t("lastMinute")}</small>
+        </div>
+      )}
+      <div className="mn-list" aria-label={t("downloadsTitle")}>
+        {p.visible.length === 0 && (
+          <div className="mn-empty">
+            <Icon name="download" size={28} />
+            <h2>{t(p.downloads.length === 0 ? "emptyTitle" : "noMatch")}</h2>
+            {p.downloads.length === 0 && (
+              <button
+                type="button"
+                className="button primary"
+                onClick={p.onAdd}
+              >
+                {t("add")}
               </button>
             )}
           </div>
         )}
-      </section>
-
-      <nav className="mn-filters">
-        {tabs.map((f) => (
-          <button type="button" key={f} className={p.filter === f ? "on" : ""} onClick={() => p.setFilter(f)}>
-            {t(`tab.${f}` as TextKey)}
-            <i>{count(f)}</i>
-          </button>
+        {p.visible.map((d) => (
+          <MinimalRow key={d.id} d={d} {...p} />
         ))}
-        {categories.map((c) => (
-          <button type="button" key={c} className={p.filter === `cat:${c}` ? "on" : ""} onClick={() => p.setFilter(`cat:${c}`)}>
-            {t(`cat.${c}` as TextKey)}
-          </button>
-        ))}
-        <label className="mn-search">
-          <Icon name="search" size={15} />
-          <input value={p.query} placeholder={t("search")} onChange={(e) => p.setQuery(e.target.value)} />
-        </label>
-      </nav>
-
-      <div className="mn-list">
-        {p.visible.length === 0 && p.downloads.length > 0 && <p className="mn-empty">{t("noMatch")}</p>}
-        {GROUPS.map(({ key, label }) => {
-          const items = p.visible.filter((d) => groupOf(d, now) === key);
-          if (items.length === 0) return null;
-          return (
-            <section key={key}>
-              <h2>{t(label)}</h2>
-              {items.map((d) => (
-                <MinimalRow key={d.id} d={d} {...p} />
-              ))}
-            </section>
-          );
-        })}
       </div>
-    </div>
+    </main>
   );
 }
 
 function MinimalRow({ d, selected, actions }: { d: Download } & ViewProps) {
   const { t, language } = useI18n();
   const isSelected = selected.includes(d.id);
-  const value = percent(d.downloaded, d.size);
+  const value = d.state === "completed" ? 100 : percent(d.downloaded, d.size);
   const running = d.state === "downloading";
-
-  // Torrents show their peers where files show their server.
-  const source = d.torrent && running && d.connections > 0 ? t("peersShort", { n: d.connections }) : hostOf(d.url);
-  let meta: string;
-  if (d.stopping) meta = t("stopping");
-  else if (d.seeding) meta = `${t("seeding")} · ↑ ${formatSpeed(d.uploadSpeed, language)}`;
-  else if (running && d.checking) meta = `${t("checkingData")} · ${hostOf(d.url)}`;
-  else if (running && d.processing) meta = `${t("processing")} · ${hostOf(d.url)}`;
-  else if (running) meta = d.eta != null ? `${t("timeLeftShort", { t: formatDuration(d.eta) })} · ${source}` : `${t("connecting")} · ${source}`;
-  else if (d.state === "queued") meta = `${t("state.queued")} · ${hostOf(d.url)}`;
-  else meta = hostOf(d.url);
-
-  const action = running || d.state === "queued" ? t("actPause") : d.state === "completed" ? t("actOpen") : d.state === "failed" ? t("actRetry") : t("actResume");
+  const source =
+    d.torrent && running
+      ? t("peersShort", { n: d.connections })
+      : hostOf(d.url);
+  const status = d.stopping
+    ? t("stopping")
+    : d.seeding
+      ? t("seeding")
+      : running && d.checking
+        ? t("checkingData")
+        : running && d.processing
+          ? t("processing")
+          : running && d.eta != null
+            ? t("timeLeftShort", { t: formatHuman(d.eta, language) })
+            : running
+              ? t("connecting")
+              : t(`state.${d.state}`);
+  const size =
+    d.state === "completed"
+      ? formatBytes(d.size ?? d.downloaded, language)
+      : `${formatBytes(d.downloaded, language)} / ${d.size == null ? t("unknownSize") : formatBytes(d.size, language)}`;
+  const ext = d.fileName.match(/\.([a-z0-9]{1,8})$/i)?.[1].toUpperCase();
+  const action =
+    running || d.state === "queued"
+      ? t("actPause")
+      : d.state === "completed"
+        ? t("actOpen")
+        : d.state === "failed"
+          ? t("actRetry")
+          : t("actResume");
 
   return (
     <div
       className={`mn-row ${d.state}${isSelected ? " sel" : ""}`}
       onMouseDown={(e) => {
-        if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
-        actions.select(d.id, e.shiftKey ? "range" : e.ctrlKey || e.metaKey ? "toggle" : "single");
+        if (
+          e.button !== 0 ||
+          (e.target as HTMLElement).closest("button, input, label")
+        )
+          return;
+        actions.select(
+          d.id,
+          e.shiftKey ? "range" : e.ctrlKey || e.metaKey ? "toggle" : "single",
+        );
       }}
-      onDoubleClick={() => (running || d.state === "queued" ? actions.openProgress(d) : actions.primary(d))}
       onContextMenu={(e) => {
         e.preventDefault();
         if (!isSelected) actions.select(d.id, "single");
         actions.menu(e, d);
       }}
     >
-      <Icon name={d.torrent ? "magnet" : categoryIcon[d.category]} size={18} />
+      <label
+        className="mn-select"
+        title={t("selectDownload", { name: d.fileName })}
+      >
+        <input
+          type="checkbox"
+          aria-label={t("selectDownload", { name: d.fileName })}
+          checked={isSelected}
+          onChange={() => actions.select(d.id, "toggle")}
+        />
+        <span aria-hidden="true">
+          {d.torrent ? (
+            <Icon name="magnet" size={18} />
+          ) : (
+            ext || <Icon name="file" size={18} />
+          )}
+        </span>
+      </label>
       <div className="mn-main">
-        <div className="mn-name" title={d.fileName}>
+        <button
+          type="button"
+          className="mn-name"
+          title={`${d.fileName} — ${t("pwDetails")}`}
+          onClick={() => actions.details(d)}
+        >
           {d.fileName}
-        </div>
+        </button>
         <div className="mn-meta">
-          {meta}
-          {d.error && <span className="mn-error"> · {d.error}</span>}
+          <span className="mn-source" title={`${status} · ${source}`}>
+            <span className={d.state === "failed" ? "mn-error" : ""}>
+              {status}
+            </span>{" "}
+            · {source}
+          </span>
+          <span className="mn-size">{size}</span>
         </div>
-        {d.state !== "completed" && (
-          <div className="mn-line">
-            <i style={{ width: `${value ?? 0}%` }} />
-          </div>
-        )}
+        <div
+          className={`mn-line${value == null && running ? " indeterminate" : ""}`}
+          role="progressbar"
+          aria-label={d.fileName}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={value ?? undefined}
+          aria-valuetext={
+            value == null ? t("unknownSize") : `${Math.floor(value)}%`
+          }
+        >
+          <i style={{ width: `${value ?? 0}%` }} />
+        </div>
       </div>
       <div className="mn-num">
-        {d.state === "completed" ? (
-          formatBytes(d.size, language)
-        ) : (
-          <>
-            <b>{value == null ? "—" : `${Math.floor(value)}%`}</b>
-            {running ? formatSpeed(d.speed, language) : d.state === "paused" ? t("pausedLower") : d.state === "failed" ? t("failedLower") : ""}
-          </>
-        )}
+        <b>{value == null ? "—" : `${Math.floor(value)}%`}</b>
+        <span>
+          {d.seeding
+            ? `↑ ${formatSpeed(d.uploadSpeed, language)}`
+            : running
+              ? formatSpeed(d.speed, language)
+              : "—"}
+        </span>
       </div>
       <div className="mn-actions">
-        <button type="button" className="mn-act" onClick={() => actions.primary(d)}>
+        <button
+          type="button"
+          className="mn-act"
+          disabled={d.stopping}
+          onClick={() => actions.primary(d)}
+        >
           {action}
         </button>
         <button
           type="button"
           className="mn-more"
-          aria-label={t("more")}
+          aria-label={`${t("more")}: ${d.fileName}`}
+          aria-haspopup="menu"
           onClick={(e) => {
-            const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            actions.menu({ clientX: box.left - 180, clientY: box.bottom + 4 }, d);
+            const box = e.currentTarget.getBoundingClientRect();
+            actions.menu(
+              { clientX: box.right - 220, clientY: box.bottom + 4 },
+              d,
+            );
           }}
         >
-          <Icon name="more" size={16} />
+          <Icon name="more" size={18} />
         </button>
       </div>
     </div>

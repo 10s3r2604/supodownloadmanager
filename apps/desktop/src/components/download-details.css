@@ -1,0 +1,167 @@
+.download-details {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.download-details h3 {
+  margin: 0;
+  color: var(--strong);
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.download-details h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.download-kv {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.download-kv dt {
+  color: var(--muted);
+}
+
+.download-kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.download-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.download-chart {
+  position: relative;
+  height: 90px;
+  color: var(--accent);
+}
+
+.download-chart span {
+  position: absolute;
+  top: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.download-connection {
+  display: grid;
+  grid-template-columns: 32px 1fr 100px;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.download-connection .bar,
+.torrent-file .bar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--track);
+}
+
+.download-connection .bar b,
+.torrent-file .bar b {
+  display: block;
+  height: 100%;
+  background: var(--good);
+}
+
+.segment-map {
+  position: relative;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--track);
+}
+
+.segment-map i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-right: 3px solid var(--panel);
+}
+
+.segment-map b {
+  display: block;
+  height: 100%;
+  background: var(--good);
+}
+
+.segment-map.failed b {
+  background: var(--danger);
+}
+
+.torrent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.torrent-panel h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.torrent-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.torrent-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.torrent-files {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.torrent-file {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 90px 70px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.torrent-file .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.torrent-file .size {
+  color: var(--muted);
+  text-align: right;
+}
+
+@media (max-width: 500px) {
+  .download-kv {
+    grid-template-columns: 80px minmax(0, 1fr);
+  }
+  .torrent-file {
+    grid-template-columns: 14px minmax(0, 1fr) 70px;
+  }
+  .torrent-file .bar {
+    display: none;
+  }
+}

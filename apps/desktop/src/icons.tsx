@@ -7,6 +7,7 @@ import type { Category } from "./api";
 const paths: Record<string, ReactNode> = {
   plus: <path d="M12 5v14M5 12h14" />,
   minus: <path d="M5 12h14" />,
+  power: <path d="M12 2v10M18.4 6.6a9 9 0 1 1-12.8 0" />,
   tick: <path d="M20 6 9 17l-5-5" />,
   play: <path d="M7 4.5v15l12-7.5z" />,
   pause: (

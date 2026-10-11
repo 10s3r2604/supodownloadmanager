@@ -1,17 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AddPrompt, type AppInfo, type Download, type MediaSource, type Settings, type TorrentSource, api } from "./api";
+import {
+  type AddPrompt,
+  type AppInfo,
+  type Download,
+  type LinksPrompt,
+  type MediaSource,
+  type PowerAction,
+  type PowerCountdown,
+  type Queue,
+  type Settings,
+  type TorrentSource,
+  api,
+} from "./api";
 import { useAppearance } from "./appearance";
 import { AddDialog } from "./components/AddDialog";
+import { AddressDialog } from "./components/AddressDialog";
+import { BatchDialog } from "./components/BatchDialog";
 import { BrowsersDialog } from "./components/BrowsersDialog";
 import { ContextMenu } from "./components/ContextMenu";
 import { DeleteDialog } from "./components/DeleteDialog";
+import { DownloadDetails } from "./components/DownloadDetails";
 import { MediaDialog } from "./components/MediaDialog";
+import { PowerDialog } from "./components/PowerDialog";
+import { SchedulerDialog } from "./components/SchedulerDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TorrentDialog } from "./components/TorrentDialog";
 import { type Toast, Toasts } from "./components/Toasts";
 import { I18nContext, copyText, errorText } from "./context";
-import { type Filter, type History, emptyHistory, matches, recordHistory, totals } from "./model";
+import { type Filter, type History, type TypeFilter, emptyHistory, matches, matchesType, recordHistory, totals } from "./model";
 import { MinimalView } from "./skins/Minimal";
 import { NeonView } from "./skins/Neon";
 import type { RowActions, ViewProps } from "./views";
@@ -22,7 +39,11 @@ type DialogState =
   | { kind: "torrent"; source: TorrentSource }
   | { kind: "settings" }
   | { kind: "browsers" }
-  | { kind: "delete"; ids: number[] };
+  | { kind: "scheduler" }
+  | { kind: "batch"; page?: LinksPrompt }
+  | { kind: "address"; id: number }
+  | { kind: "delete"; ids: number[] }
+  | { kind: "details"; id: number };
 
 interface Menu {
   x: number;
@@ -47,12 +68,17 @@ export default function App() {
   const [history, setHistory] = useState<History>(emptyHistory);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<number[]>([]);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
-  const [prompts, setPrompts] = useState<(AddPrompt | MediaSource | TorrentSource)[]>([]);
+  const [prompts, setPrompts] = useState<(AddPrompt | MediaSource | TorrentSource | LinksPrompt)[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [queues, setQueues] = useState<Queue[]>([]);
+  const [queueFilter, setQueueFilter] = useState("all");
+  const [afterAll, setAfterAllState] = useState<PowerAction>("nothing");
+  const [countdown, setCountdown] = useState<PowerCountdown | null>(null);
   const anchor = useRef<number | null>(null);
 
   const { i18n, skin, dark } = useAppearance(preview ?? settings);
@@ -61,7 +87,7 @@ export default function App() {
   const toast = useCallback((kind: Toast["kind"], text: string, url?: string) => {
     const id = Date.now() + Math.random();
     setToasts((list) => [...list.filter((item) => !(url && item.url === url)), { id, kind, text, url }]);
-    setTimeout(() => setToasts((list) => list.filter((item) => item.id !== id)), kind === "error" ? 7000 : 15000);
+    setTimeout(() => setToasts((list) => list.filter((item) => item.id !== id)), kind === "clipboard" ? 15000 : 7000);
   }, []);
   const showError = useCallback((message: string) => toast("error", message), [toast]);
 
@@ -69,7 +95,10 @@ export default function App() {
   useEffect(() => {
     api.getSettings().then(setSettings).catch((e) => showError(errorText(e)));
     let alive = true;
+    let refreshing = false;
     const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
       try {
         const list = await api.listDownloads();
         if (!alive) return;
@@ -77,9 +106,16 @@ export default function App() {
         setHistory((before) => recordHistory(before, list));
       } catch (error) {
         console.error(error);
+      } finally {
+        refreshing = false;
       }
     };
-    const refreshInfo = () => api.appInfo().then((value) => alive && setInfo(value)).catch(() => {});
+    const refreshInfo = () => {
+      api.appInfo().then((value) => alive && setInfo(value)).catch(() => {});
+      // Schedules turn themselves off and "when all are done" resets.
+      api.listQueues().then((value) => alive && setQueues(value)).catch(() => {});
+      api.getAfterAll().then((value) => alive && setAfterAllState(value)).catch(() => {});
+    };
     refresh();
     refreshInfo();
     const timers = [setInterval(refresh, POLL_MS), setInterval(refreshInfo, 5000)];
@@ -94,6 +130,7 @@ export default function App() {
     const stops = [
       api.onAddPrompt((prompt) => setPrompts((queue) => [...queue, prompt])),
       api.onMediaPrompt((source) => setPrompts((queue) => [...queue, source])),
+      api.onLinksPrompt((page) => setPrompts((queue) => [...queue, page])),
       api.onTorrentPrompt((source) => setPrompts((queue) => [...queue, source])),
       api.takePendingTorrents().then((sources) => {
         setPrompts((queue) => [...queue, ...sources]);
@@ -104,6 +141,11 @@ export default function App() {
         setPrompts((queue) => [...queue, ...torrents]);
       }),
       api.onClipboardLink((url) => toast("clipboard", t("clipboardFound"), url)),
+      api.onPowerCountdown(setCountdown),
+      api.powerCountdown().then((value) => {
+        if (value) setCountdown(value);
+        return () => {};
+      }),
     ];
     return () => stops.forEach((stop) => stop.then((unlisten) => unlisten()));
   }, [toast, t]);
@@ -113,7 +155,9 @@ export default function App() {
     if (!dialog && prompts.length > 0 && settings) {
       const next = prompts[0];
       setDialog(
-        "pageUrl" in next
+        "links" in next
+          ? { kind: "batch", page: next }
+          : "pageUrl" in next
           ? { kind: "media", source: next }
           : "url" in next
             ? { kind: "add", prompt: next }
@@ -127,17 +171,28 @@ export default function App() {
     const q = query.trim().toLowerCase();
     return downloads
       .filter((d) => matches(filter, d))
+      .filter((d) => matchesType(typeFilter, d))
+      .filter((d) => queueFilter === "all" || d.queue === queueFilter)
       .filter((d) => !q || d.fileName.toLowerCase().includes(q) || d.url.toLowerCase().includes(q))
       .sort((a, b) => b.addedAt - a.addedAt);
-  }, [downloads, filter, query]);
+  }, [downloads, filter, typeFilter, queueFilter, query]);
 
-  // Forget selected rows that are gone.
+  // A deleted queue can no longer be shown.
+  useEffect(() => {
+    if (queueFilter !== "all" && queues.length > 0 && !queues.some((q) => q.id === queueFilter)) setQueueFilter("all");
+  }, [queues, queueFilter]);
+
+  const reloadQueues = useCallback(() => {
+    api.listQueues().then(setQueues).catch(() => {});
+  }, []);
+
+  // Bulk actions apply only to rows the user can see in the current filter.
   useEffect(() => {
     setSelected((ids) => {
-      const kept = ids.filter((id) => downloads.some((d) => d.id === id));
+      const kept = ids.filter((id) => visible.some((d) => d.id === id));
       return kept.length === ids.length ? ids : kept;
     });
-  }, [downloads]);
+  }, [visible]);
 
   const run = useCallback(
     (action: Promise<unknown>) => action.catch((error) => showError(errorText(error))),
@@ -145,6 +200,8 @@ export default function App() {
   );
 
   const actions: RowActions = {
+    selectAll: setSelected,
+    details: (d) => setDialog({ kind: "details", id: d.id }),
     select(id, mode) {
       if (mode === "toggle") {
         setSelected((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
@@ -170,6 +227,8 @@ export default function App() {
     copyLink: (d) => run(copyText(d.url)),
     remove: (ids) => setDialog({ kind: "delete", ids }),
     openProgress: (d) => run(api.openProgressWindow(d.id)),
+    moveToQueue: (ids, queue) => run(api.moveToQueue(ids, queue)),
+    newAddress: (d) => setDialog({ kind: "address", id: d.id }),
     menu: (event, download) => setMenu({ x: event.clientX, y: event.clientY, download }),
   };
 
@@ -213,6 +272,8 @@ export default function App() {
     visible,
     filter,
     setFilter,
+    typeFilter,
+    setTypeFilter,
     query,
     setQuery,
     selected,
@@ -226,11 +287,26 @@ export default function App() {
     onPauseAll: () => run(api.pauseAll()),
     onSettings: () => setDialog({ kind: "settings" }),
     onBrowsers: () => setDialog({ kind: "browsers" }),
+    queues,
+    queueFilter,
+    setQueueFilter,
+    afterAll,
+    setAfterAll: (action) => {
+      setAfterAllState(action);
+      run(api.setAfterAll(action));
+    },
+    onScheduler: () => setDialog({ kind: "scheduler" }),
+    onStartQueue: (queue) => run(api.startQueue(queue)),
+    onStopQueue: (queue) => run(api.stopQueue(queue)),
   };
 
   return (
     <I18nContext.Provider value={i18n}>
-      {view && (skin === "minimal" ? <MinimalView {...view} dark={dark} /> : <NeonView {...view} />)}
+      {view && (skin === "neon" ? <NeonView {...view} /> : <MinimalView {...view} dark={dark} />)}
+
+      {dialog?.kind === "details" && view && (
+        <DownloadDetails d={downloads.find((d) => d.id === dialog.id)} history={history} actions={actions} onClose={closeDialog} />
+      )}
 
       {menu && (
         <ContextMenu
@@ -238,6 +314,7 @@ export default function App() {
           y={menu.y}
           download={downloads.find((d) => d.id === menu.download.id) ?? menu.download}
           selected={selected}
+          queues={queues}
           actions={actions}
           onClose={closeMenu}
         />
@@ -248,10 +325,12 @@ export default function App() {
           prompt={dialog.prompt}
           initialUrl={dialog.url}
           settings={settings}
+          queues={queues}
           onClose={closeDialog}
           onError={showError}
           onMedia={(pageUrl) => setDialog({ kind: "media", source: { pageUrl } })}
           onTorrent={(source) => setDialog({ kind: "torrent", source })}
+          onBatch={() => setDialog({ kind: "batch" })}
         />
       )}
       {dialog?.kind === "torrent" && settings && (
@@ -262,6 +341,7 @@ export default function App() {
           onError={showError}
           onShowExisting={(id) => {
             setFilter("all");
+            setTypeFilter("all");
             setQuery("");
             setSelected([id]);
           }}
@@ -294,6 +374,28 @@ export default function App() {
         />
       )}
       {dialog?.kind === "browsers" && <BrowsersDialog info={info} onClose={closeDialog} onError={showError} />}
+      {dialog?.kind === "scheduler" && settings && (
+        <SchedulerDialog
+          queues={queues}
+          downloads={downloads}
+          settings={settings}
+          onClose={closeDialog}
+          onError={showError}
+          onChanged={reloadQueues}
+          onSettings={setSettings}
+        />
+      )}
+      {dialog?.kind === "batch" && settings && (
+        <BatchDialog page={dialog.page} settings={settings} queues={queues} onClose={closeDialog} onError={showError} />
+      )}
+      {dialog?.kind === "address" && downloads.some((d) => d.id === dialog.id) && (
+        <AddressDialog
+          download={downloads.find((d) => d.id === dialog.id)!}
+          onClose={closeDialog}
+          onDone={(text) => toast("info", text)}
+        />
+      )}
+      {countdown && <PowerDialog countdown={countdown} onError={showError} />}
       {dialog?.kind === "delete" && (
         <DeleteDialog
           count={dialog.ids.length}

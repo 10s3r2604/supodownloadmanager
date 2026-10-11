@@ -47,7 +47,7 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 
 ## Phase 4: Looks, progress windows and videos ✅ (v0.3)
 
-- [x] Two looks, switchable in Settings: Neon (live speed chart, segments, connections) and Minimal (light or dark)
+- [x] Minimal download list, dark by default; light/system themes and on-demand speed charts, connections and torrent details
 - [x] A progress window for every download, in three styles (speed graph, ring, classic)
 - [x] "Show a dialog when done" and "Open the file when done" per download, "Don't show this dialog again"
 - [x] Video grabber: YouTube, Facebook, X, TikTok and ~1800 other sites through yt-dlp, with a quality picker
@@ -71,13 +71,13 @@ Built on [librqbit](https://github.com/ikatson/rqbit), a BitTorrent engine in Ru
 - [ ] Per-torrent peer list and piece map
 - [ ] Creating torrents
 
-## Phase 6: Power features
+## Phase 6: Power features (in progress, v0.6)
 
-- [ ] Scheduler: start and stop at set times, shut down or sleep when done
-- [ ] Several queues with their own limits
+- [x] Scheduler: start and stop at set times, shut down or sleep when done
+- [x] Several queues with their own limits
 - [ ] Saved logins per site
-- [ ] Refresh expired download links without losing progress
-- [ ] "Download all links" on a page, batch downloads with numbered patterns
+- [x] Refresh expired download links without losing progress
+- [x] "Download all links" on a page, batch downloads with numbered patterns
 
 ## Phase 7: Distribution
 

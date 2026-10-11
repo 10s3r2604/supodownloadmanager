@@ -118,7 +118,7 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
       {tab === "appearance" && (
         <div className="form">
           <div className="skins" role="radiogroup" aria-label={t("appearance")}>
-            {(["neon", "minimal"] as Skin[]).map((skin) => (
+            {(["minimal", "neon"] as Skin[]).map((skin) => (
               <button
                 key={skin}
                 type="button"
@@ -127,18 +127,21 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
                 className={`skin-card${draft.skin === skin ? " on" : ""}`}
                 onClick={() => look({ skin })}
               >
-                <SkinPreview skin={skin} dark={skin === "minimal" && draft.theme === "dark"} />
-                <strong>{t(skin === "neon" ? "skinNeon" : "skinMinimal")}</strong>
+                <SkinPreview skin={skin} dark={skin === "minimal" && draft.theme !== "light"} />
+                <strong>
+                  {t(skin === "neon" ? "skinNeon" : "skinMinimal")}
+                  {skin === "minimal" && <em>{t("defaultLabel")}</em>}
+                </strong>
                 <small>{t(skin === "neon" ? "skinNeonHint" : "skinMinimalHint")}</small>
               </button>
             ))}
           </div>
           <div className="field-grid">
-            <label className={`field${draft.skin === "minimal" ? "" : " disabled"}`}>
+            <label className={`field${draft.skin === "neon" ? " disabled" : ""}`}>
               <span>{t("colorMode")}</span>
               <select
                 value={draft.theme}
-                disabled={draft.skin !== "minimal"}
+                disabled={draft.skin === "neon"}
                 onChange={(e) => look({ theme: e.target.value as Settings["theme"] })}
               >
                 <option value="system">{t("sameAsSystem")}</option>

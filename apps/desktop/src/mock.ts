@@ -1,7 +1,7 @@
 // A simulated backend so the interface can be developed and tested in a
 // normal browser (`npm run dev`). It is never used inside the real app.
 
-import type { Api, Browser, Category, Download, MediaInfo, MediaOption, Settings, ToolStatus, TorrentFile, TorrentInfo, WhenDone } from "./api";
+import type { Api, Browser, Category, Download, MediaInfo, MediaOption, PowerAction, PowerCountdown, Queue, Settings, ToolStatus, TorrentFile, TorrentInfo, WhenDone } from "./api";
 import { categoryOf } from "./model";
 
 const MB = 1024 * 1024;
@@ -15,8 +15,8 @@ const settings: Settings = {
   speedLimit: 0,
   proxy: "",
   language: (new URLSearchParams(location.search).get("lang") as Settings["language"]) ?? "en",
-  skin: (new URLSearchParams(location.search).get("skin") as Settings["skin"]) || "neon",
-  theme: (new URLSearchParams(location.search).get("theme") as Settings["theme"]) || "system",
+  skin: (new URLSearchParams(location.search).get("skin") as Settings["skin"]) || "minimal",
+  theme: (new URLSearchParams(location.search).get("theme") as Settings["theme"]) || "dark",
   progressWindow: true,
   progressStyle: (new URLSearchParams(location.search).get("pstyle") as Settings["progressStyle"]) || "graph",
   completeDialog: true,
@@ -83,6 +83,7 @@ function make(
     checking: false,
     uploadSpeed: 0,
     uploaded: 0,
+    queue: "main",
     ...extra,
   };
 }
@@ -127,6 +128,24 @@ const downloads: Download[] = [
 ];
 
 const whenDone = new Map<number, WhenDone>();
+
+const queues: Queue[] = [
+  { id: "main", name: "", maxParallel: 3, schedule: { enabled: false, start: null, stop: null, days: [] }, whenDone: "nothing" },
+  {
+    id: "q1",
+    name: "Night",
+    maxParallel: 2,
+    schedule: { enabled: true, start: "01:00", stop: "06:30", days: [0, 1, 2, 3, 4, 5, 6] },
+    whenDone: "shutdown",
+  },
+];
+downloads[5].queue = "q1";
+downloads[7].queue = "q1";
+let afterAll: PowerAction = "nothing";
+const powerParam = new URLSearchParams(location.search).get("power");
+let countdown: PowerCountdown | null = powerParam
+  ? { action: powerParam as PowerAction, queue: "Night", at: Date.now() + 60_000 }
+  : null;
 
 const speeds = new Map<number, number>([
   [1, 9.4 * MB],
@@ -290,6 +309,22 @@ if (query.get("torrent")) {
   }, 800);
 }
 
+if (query.get("links")) {
+  setTimeout(() => {
+    const page = "https://files.example.org/releases/";
+    const names = ["setup-2.4.exe", "setup-2.4.dmg", "notes.pdf", "manual.pdf", "logo.png", "demo.mp4", "theme.mp3", "source-2.4.tar.gz", "about.html"];
+    window.dispatchEvent(
+      new CustomEvent("sdm:links-prompt", {
+        detail: {
+          pageUrl: page,
+          title: "Releases · Example",
+          links: names.map((name) => ({ url: page + name, text: name.replace(/[-.]/g, " "), headers: [["Referer", page]] })),
+        },
+      }),
+    );
+  }, 800);
+}
+
 if (query.get("media")) {
   setTimeout(() => {
     window.dispatchEvent(
@@ -400,7 +435,7 @@ export const mockApi: Api = {
   },
   async openExtensionFolder() {},
   async appInfo() {
-    return { version: "0.5.0", bridgePort: 17360, bridgeError: null };
+    return { version: "0.6.0", bridgePort: 17360, bridgeError: null };
   },
   async onAddPrompt(handler) {
     const listener = (event: Event) => handler((event as CustomEvent).detail);
@@ -436,6 +471,7 @@ export const mockApi: Api = {
   async mediaProbeStage() {
     return "[youtube] zoEtcR5EW08: Downloading tv client config";
   },
+  async cancelMediaProbe() {},
   async addMedia(request) {
     const d = make(`${request.title}.${request.option.ext}`, new URL(request.source.pageUrl).host, request.option.size, request.start ? "downloading" : "paused", 0, 0, {
       url: request.source.pageUrl,
@@ -497,5 +533,85 @@ export const mockApi: Api = {
     const listener = (event: Event) => handler((event as CustomEvent).detail);
     window.addEventListener("sdm:tool-progress", listener);
     return () => window.removeEventListener("sdm:tool-progress", listener);
+  },
+  async expandBatch(pattern) {
+    const match = pattern.match(/\[(\d+)-(\d+)\]/);
+    if (!match) return [pattern.trim()];
+    const [from, to] = [Number(match[1]), Number(match[2])];
+    if (Math.abs(to - from) > 10_000) throw new Error("this pattern makes more than 10000 links; use a smaller range");
+    const width = match[1].length > 1 && match[1].startsWith("0") ? match[1].length : 0;
+    const out: string[] = [];
+    for (let n = from; n <= to; n++) out.push(pattern.trim().replace(match[0], String(n).padStart(width, "0")));
+    return out;
+  },
+  async addBatch(request) {
+    const ids = [];
+    for (const link of request.links) {
+      const name = link.fileName || decodeURIComponent(new URL(link.url).pathname.split("/").pop() || "") || "download";
+      const d = make(name, new URL(link.url).host, null, request.start ? "queued" : "paused", 0, 0, {
+        url: link.url,
+        queue: request.queue ?? "main",
+      });
+      downloads.push(d);
+      ids.push(d.id);
+    }
+    return ids;
+  },
+  async changeAddress(id, url) {
+    await wait(500);
+    const d = downloads.find((x) => x.id === id);
+    if (!d) throw new Error("this download is no longer in the list");
+    if (/other/.test(url)) throw new Error("the new link is for a different file (12 bytes instead of 3366010880)");
+    Object.assign(d, { url, error: null, state: d.state === "failed" ? "paused" : d.state });
+  },
+  async onLinksPrompt(handler) {
+    const listener = (event: Event) => handler((event as CustomEvent).detail);
+    window.addEventListener("sdm:links-prompt", listener);
+    return () => window.removeEventListener("sdm:links-prompt", listener);
+  },
+  async listQueues() {
+    return clone(queues);
+  },
+  async saveQueue(queue) {
+    const saved = clone(queue);
+    if (!saved.id) {
+      saved.id = `q${queues.length}`;
+      queues.push(saved);
+    } else {
+      queues[queues.findIndex((q) => q.id === saved.id)] = saved;
+    }
+    return clone(saved);
+  },
+  async deleteQueue(id) {
+    if (id === "main") return;
+    queues.splice(queues.findIndex((q) => q.id === id), 1);
+    for (const d of downloads.filter((d) => d.queue === id)) d.queue = "main";
+  },
+  async startQueue(id) {
+    await this.resume(downloads.filter((d) => d.queue === id).map((d) => d.id));
+  },
+  async stopQueue(id) {
+    await this.pause(downloads.filter((d) => d.queue === id).map((d) => d.id));
+  },
+  async moveToQueue(ids, queue) {
+    for (const d of byIds(ids)) d.queue = queue;
+  },
+  async getAfterAll() {
+    return afterAll;
+  },
+  async setAfterAll(action) {
+    afterAll = action;
+  },
+  async powerCountdown() {
+    return countdown;
+  },
+  async cancelPowerAction() {
+    countdown = null;
+    window.dispatchEvent(new CustomEvent("sdm:power", { detail: null }));
+  },
+  async onPowerCountdown(handler) {
+    const listener = (event: Event) => handler((event as CustomEvent).detail);
+    window.addEventListener("sdm:power", listener);
+    return () => window.removeEventListener("sdm:power", listener);
   },
 };

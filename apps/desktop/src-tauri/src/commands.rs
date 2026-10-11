@@ -9,15 +9,16 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::AppState;
 use crate::browsers::{self, Browser, Engine, InstallInfo};
 use crate::category::Category;
-use crate::manager::{AddRequest, DownloadView, State as DownloadState};
+use crate::manager::{AddRequest, BatchRequest, DownloadView, State as DownloadState};
 use crate::media::{AddMediaRequest, MediaInfo, MediaSource, ToolStatus};
+use crate::queue::{PowerAction, Queue};
 use crate::settings::Settings;
 use crate::torrent::{AddTorrentRequest, TorrentFile, TorrentInfo, TorrentSource};
 use crate::tray;
 use crate::windows::WhenDone;
+use crate::{AppState, PowerCountdown};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -26,13 +27,15 @@ fn text_error(error: impl std::fmt::Display) -> String {
 }
 
 #[tauri::command]
-pub fn list_downloads(state: State<'_, AppState>) -> Vec<DownloadView> {
-    state.manager.list()
+pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadView>> {
+    // Background jobs may hold the manager lock while saving to disk.
+    // Keep frequent UI polls off the Windows message loop.
+    Ok(state.manager.list())
 }
 
 #[tauri::command]
-pub fn get_download(state: State<'_, AppState>, id: u64) -> Option<DownloadView> {
-    state.manager.get(id)
+pub async fn get_download(state: State<'_, AppState>, id: u64) -> Result<Option<DownloadView>> {
+    Ok(state.manager.get(id))
 }
 
 /// Opens the progress window of a download.
@@ -43,8 +46,11 @@ pub async fn open_progress_window(app: AppHandle, id: u64) {
 
 /// Which of yt-dlp and ffmpeg are ready.
 #[tauri::command]
-pub fn media_tools(state: State<'_, AppState>) -> ToolStatus {
-    state.tools.status()
+pub async fn media_tools(state: State<'_, AppState>) -> Result<ToolStatus> {
+    let tools = state.tools.clone();
+    tauri::async_runtime::spawn_blocking(move || tools.status())
+        .await
+        .map_err(text_error)
 }
 
 /// Downloads yt-dlp (and ffmpeg when `ffmpeg` is set) if they are missing,
@@ -94,13 +100,24 @@ pub async fn media_probe(
 
 /// What yt-dlp is doing while it reads a page.
 #[tauri::command]
-pub fn media_probe_stage(state: State<'_, AppState>, page_url: String) -> Option<String> {
-    state.prober.stage(&page_url)
+pub async fn media_probe_stage(
+    state: State<'_, AppState>,
+    page_url: String,
+) -> Result<Option<String>> {
+    Ok(state.prober.stage(&page_url))
+}
+
+/// Stops discovery for this page, including any browser prefetch sharing it.
+#[tauri::command]
+pub async fn cancel_media_probe(state: State<'_, AppState>, page_url: String) -> Result<()> {
+    state.prober.cancel(&page_url);
+    Ok(())
 }
 
 /// Adds a video in the chosen quality to the download list.
+/// Scheduling may create a WebView2 window, so this must run off the UI thread.
 #[tauri::command]
-pub fn add_media(state: State<'_, AppState>, request: AddMediaRequest) -> Result<u64> {
+pub async fn add_media(state: State<'_, AppState>, request: AddMediaRequest) -> Result<u64> {
     state.manager.add_media(request)
 }
 
@@ -121,7 +138,7 @@ pub fn cancel_torrent_inspect(state: State<'_, AppState>) {
 
 /// Adds the chosen files of a torrent to the download list.
 #[tauri::command]
-pub fn add_torrent(state: State<'_, AppState>, request: AddTorrentRequest) -> Result<u64> {
+pub async fn add_torrent(state: State<'_, AppState>, request: AddTorrentRequest) -> Result<u64> {
     state.manager.add_torrent(request)
 }
 
@@ -134,6 +151,77 @@ pub fn get_when_done(state: State<'_, AppState>, id: u64) -> WhenDone {
 #[tauri::command]
 pub fn set_when_done(state: State<'_, AppState>, id: u64, choice: WhenDone) {
     state.when_done.set(id, choice);
+}
+
+/// The links a batch pattern stands for.
+#[tauri::command]
+pub fn expand_batch(pattern: String) -> Result<Vec<String>> {
+    crate::batch::expand(&pattern)
+}
+
+/// Adds many links at once.
+#[tauri::command]
+pub fn add_batch(state: State<'_, AppState>, request: BatchRequest) -> Result<Vec<u64>> {
+    state.manager.add_batch(request)
+}
+
+/// Gives an unfinished download a new link, keeping what was downloaded.
+#[tauri::command]
+pub async fn change_address(state: State<'_, AppState>, id: u64, url: String) -> Result<()> {
+    state.manager.change_address(id, url, None).await
+}
+
+#[tauri::command]
+pub fn list_queues(state: State<'_, AppState>) -> Vec<Queue> {
+    state.manager.queues()
+}
+
+/// Adds a queue (with an empty id) or changes one.
+#[tauri::command]
+pub fn save_queue(state: State<'_, AppState>, queue: Queue) -> Result<Queue> {
+    state.manager.save_queue(queue)
+}
+
+#[tauri::command]
+pub fn delete_queue(state: State<'_, AppState>, id: String) {
+    state.manager.delete_queue(&id);
+}
+
+#[tauri::command]
+pub fn start_queue(state: State<'_, AppState>, id: String) {
+    state.manager.start_queue(&id);
+}
+
+#[tauri::command]
+pub fn stop_queue(state: State<'_, AppState>, id: String) {
+    state.manager.stop_queue(&id);
+}
+
+#[tauri::command]
+pub fn move_to_queue(state: State<'_, AppState>, ids: Vec<u64>, queue: String) {
+    state.manager.move_to_queue(&ids, &queue);
+}
+
+/// What happens once every download is done.
+#[tauri::command]
+pub fn get_after_all(state: State<'_, AppState>) -> PowerAction {
+    state.manager.after_all()
+}
+
+#[tauri::command]
+pub fn set_after_all(state: State<'_, AppState>, action: PowerAction) {
+    state.manager.set_after_all(action);
+}
+
+/// The power action counting down, if any.
+#[tauri::command]
+pub fn power_countdown(state: State<'_, AppState>) -> Option<PowerCountdown> {
+    state.power.lock().ok().and_then(|slot| slot.clone())
+}
+
+#[tauri::command]
+pub fn cancel_power_action(app: AppHandle) {
+    crate::cancel_power_action(&app);
 }
 
 #[derive(Serialize)]
@@ -178,8 +266,9 @@ pub fn pause_downloads(state: State<'_, AppState>, ids: Vec<u64>) {
 }
 
 #[tauri::command]
-pub fn resume_downloads(state: State<'_, AppState>, ids: Vec<u64>) {
+pub async fn resume_downloads(state: State<'_, AppState>, ids: Vec<u64>) -> Result<()> {
     state.manager.resume(&ids);
+    Ok(())
 }
 
 #[tauri::command]
@@ -193,8 +282,9 @@ pub fn pause_all(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-pub fn resume_all(state: State<'_, AppState>) {
+pub async fn resume_all(state: State<'_, AppState>) -> Result<()> {
     state.manager.resume_all();
+    Ok(())
 }
 
 /// Opens a finished file with its default program.
@@ -224,12 +314,12 @@ pub fn show_in_folder(app: AppHandle, state: State<'_, AppState>, id: u64) -> Re
 }
 
 #[tauri::command]
-pub fn get_settings(state: State<'_, AppState>) -> Settings {
-    state.manager.settings()
+pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings> {
+    Ok(state.manager.settings())
 }
 
 #[tauri::command]
-pub fn save_settings(
+pub async fn save_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     settings: Settings,

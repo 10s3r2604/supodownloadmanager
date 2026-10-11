@@ -97,6 +97,7 @@ async fn read_page(
     source: &MediaSource,
     proxy: &str,
     stage: &std::sync::Mutex<String>,
+    cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<MediaInfo, String> {
     let ytdlp = tools.ytdlp().ok_or("yt-dlp is not installed")?;
     let work = tools.scratch_dir()?;
@@ -135,7 +136,7 @@ async fn read_page(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     job::hide_window(&mut command);
-    let result = run_probe(command, stage).await;
+    let result = run_probe(command, stage, cancelled, PROBE_TIMEOUT).await;
     let _ = std::fs::remove_dir_all(&work);
     let stdout = result?;
     let mut info = formats::parse(&stdout)?;
@@ -153,6 +154,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 async fn run_probe(
     mut command: tokio::process::Command,
     stage: &std::sync::Mutex<String>,
+    mut cancelled: tokio::sync::watch::Receiver<bool>,
+    timeout: Duration,
 ) -> Result<String, String> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
@@ -180,16 +183,36 @@ async fn run_probe(
     };
     let work = async {
         let mut out = String::new();
-        stdout
-            .read_to_string(&mut out)
-            .await
-            .map_err(|e| e.to_string())?;
-        let status = child.wait().await.map_err(|e| e.to_string())?;
+        let (_, status, ()) = tokio::try_join!(
+            async {
+                stdout
+                    .read_to_string(&mut out)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+            async { child.wait().await.map_err(|e| e.to_string()) },
+            async {
+                reader.await;
+                Ok::<_, String>(())
+            },
+        )?;
         Ok::<_, String>((out, status))
     };
-    let (finished, ()) = tokio::join!(tokio::time::timeout(PROBE_TIMEOUT, work), async {
-        let _ = tokio::time::timeout(PROBE_TIMEOUT + Duration::from_secs(2), reader).await;
-    });
+    // Dropping a pending read alone leaves yt-dlp running until kill_on_drop.
+    // Kill and reap it before releasing the scratch directory/cookies.
+    let finished = tokio::select! {
+        biased;
+        _ = async {
+            if !*cancelled.borrow() { let _ = cancelled.changed().await; }
+        } => {
+            let _ = child.kill().await;
+            return Err("video discovery cancelled".into());
+        }
+        result = tokio::time::timeout(timeout, work) => result,
+    };
+    if !matches!(finished, Ok(Ok(_))) {
+        let _ = child.kill().await;
+    }
     let lines = last
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -227,6 +250,7 @@ struct Probe {
     /// The last thing yt-dlp said, while it works.
     stage: std::sync::Mutex<String>,
     result: tokio::sync::OnceCell<Result<MediaInfo, String>>,
+    cancel: tokio::sync::watch::Sender<bool>,
 }
 
 /// How long a page's formats stay valid; their addresses expire.
@@ -241,6 +265,7 @@ impl Prober {
         source: &MediaSource,
         proxy: &str,
     ) -> Result<MediaInfo, String> {
+        validate_page(&source.page_url)?;
         let key = page_key(&source.page_url);
         let entry = {
             let mut pages = self
@@ -255,13 +280,14 @@ impl Prober {
                         started: std::time::Instant::now(),
                         stage: std::sync::Mutex::new(String::new()),
                         result: tokio::sync::OnceCell::new(),
+                        cancel: tokio::sync::watch::channel(false).0,
                     })
                 })
                 .clone()
         };
         let result = entry
             .result
-            .get_or_init(|| read_page(tools, source, proxy, &entry.stage))
+            .get_or_init(|| read_page(tools, source, proxy, &entry.stage, entry.cancel.subscribe()))
             .await
             .clone();
         if result.is_err() {
@@ -282,6 +308,17 @@ impl Prober {
 }
 
 impl Prober {
+    pub fn cancel(&self, page_url: &str) {
+        let probe = self
+            .pages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&page_key(page_url));
+        if let Some(probe) = probe {
+            probe.cancel.send_replace(true);
+        }
+    }
+
     /// What yt-dlp is doing for a page being read, for the user to see.
     pub fn stage(&self, page_url: &str) -> Option<String> {
         let pages = self
@@ -303,4 +340,195 @@ impl Prober {
 /// Pages that differ only in their fragment are the same video.
 fn page_key(url: &str) -> String {
     url.split('#').next().unwrap_or(url).to_owned()
+}
+
+/// X timelines do not identify the video under the pointer. Old extensions
+/// sent /home; asking yt-dlp to extract that page cannot select the right post.
+fn validate_page(page_url: &str) -> Result<(), String> {
+    let url = url::Url::parse(page_url).map_err(|_| "invalid video URL")?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("only http and https video links are supported".into());
+    }
+    if matches!(
+        url.host_str(),
+        Some("x.com" | "www.x.com" | "twitter.com" | "www.twitter.com" | "mobile.twitter.com")
+    ) {
+        let parts: Vec<_> = url.path_segments().into_iter().flatten().collect();
+        if !parts.windows(2).any(|pair| {
+            pair[0] == "status"
+                && !pair[1].is_empty()
+                && pair[1].bytes().all(|c| c.is_ascii_digit())
+        }) {
+            return Err("Open the X post containing the video and try again; the Home timeline is not a video link.".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn x_requires_a_post_instead_of_a_timeline() {
+        for page in [
+            "https://x.com/home",
+            "https://twitter.com/search?q=video",
+            "https://x.com/person",
+            "https://x.com/person/status/not-a-post",
+        ] {
+            assert!(validate_page(page).unwrap_err().contains("Open the X post"));
+        }
+        for page in [
+            "https://x.com/person/status/123/video/1",
+            "https://twitter.com/person/status/456?ref=home",
+            "https://x.com/i/web/status/789",
+            "https://example.org/video",
+        ] {
+            assert!(validate_page(page).is_ok());
+        }
+        assert!(validate_page("file:///tmp/video").is_err());
+    }
+
+    #[cfg(unix)]
+    fn command(script: &str) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new("sh");
+        command
+            .args(["-c", script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        command
+    }
+
+    #[cfg(unix)]
+    fn assert_reaped(stage: &std::sync::Mutex<String>) {
+        let pid: i32 = stage
+            .lock()
+            .unwrap()
+            .strip_prefix("PID ")
+            .unwrap()
+            .parse()
+            .unwrap();
+        // SAFETY: signal zero only checks whether the child is still alive.
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancellation_reaps_a_stalled_probe() {
+        let (cancel, receiver) = tokio::sync::watch::channel(false);
+        let stage = std::sync::Mutex::new(String::new());
+        let cancel_after_start = async {
+            while stage.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            cancel.send_replace(true);
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::join!(
+                run_probe(
+                    command("echo PID $$ >&2; exec sleep 30"),
+                    &stage,
+                    receiver,
+                    PROBE_TIMEOUT
+                ),
+                cancel_after_start
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap_err(), "video discovery cancelled");
+        assert_reaped(&stage);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeout_reaps_child_and_keeps_last_stage() {
+        let (_cancel, receiver) = tokio::sync::watch::channel(false);
+        let stage = std::sync::Mutex::new(String::new());
+        let error = run_probe(
+            command("echo PID $$ >&2; exec sleep 30"),
+            &stage,
+            receiver,
+            Duration::from_millis(250),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("site took too long"));
+        assert!(error.contains(&*stage.lock().unwrap()));
+        assert_reaped(&stage);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_collects_both_pipes_and_reports_failure() {
+        let (_cancel, receiver) = tokio::sync::watch::channel(false);
+        let stage = std::sync::Mutex::new(String::new());
+        let output = run_probe(
+            command("echo reading >&2; printf '{\"title\":\"Clip\"}'"),
+            &stage,
+            receiver.clone(),
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output, r#"{"title":"Clip"}"#);
+        let error = run_probe(
+            command("echo 'ERROR: private video' >&2; exit 1"),
+            &stage,
+            receiver,
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "private video");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelled_shared_probe_cleans_up_and_can_retry() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = dir.path().join("yt-dlp");
+        std::fs::write(&fixture, "#!/bin/sh\necho reading >&2\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&fixture, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let tools = Tools::with_ytdlp(dir.path(), fixture.clone());
+        let prober = Prober::default();
+        let source = MediaSource {
+            page_url: "https://x.com/author/status/123".into(),
+            ..MediaSource::default()
+        };
+        let cancel = async {
+            while prober.stage(&source.page_url).is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            prober.cancel(&format!("{}#player", source.page_url));
+        };
+        let (first, second, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::join!(
+                prober.probe(&tools, &source, "none"),
+                prober.probe(&tools, &source, "none"),
+                cancel
+            )
+        })
+        .await
+        .unwrap();
+        assert!(first.unwrap_err().contains("cancelled"));
+        assert!(second.unwrap_err().contains("cancelled"));
+        assert_eq!(prober.stage(&source.page_url), None);
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("media")).unwrap().count(),
+            0
+        );
+        std::fs::write(fixture, "#!/bin/sh\necho '{\"title\":\"Retry clip\",\"formats\":[{\"format_id\":\"0\",\"ext\":\"mp4\"}]}'\n").unwrap();
+        let info = prober.probe(&tools, &source, "none").await.unwrap();
+        assert_eq!(info.title, "Retry clip");
+        assert!(!info.options.is_empty());
+    }
 }

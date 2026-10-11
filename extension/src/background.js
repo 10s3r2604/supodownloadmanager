@@ -253,6 +253,37 @@ function giveBack(url) {
   chrome.downloads.download({ url }).catch(() => {});
 }
 
+/**
+ * Sends the links of a page (or of the selected part) to the app, which
+ * lets the user pick the ones to download.
+ */
+async function handOverLinks(tabId, { frameId = 0, selection = false } = {}) {
+  const page = await chrome.tabs
+    .sendMessage(tabId, { type: "collect-links", selection }, { frameId })
+    .catch(() => null);
+  if (!page) return { ok: false, error: chrome.i18n.getMessage("linksReload") };
+  if (!page.links?.length) return { ok: false, error: chrome.i18n.getMessage("linksNone") };
+  const status = await ping(true);
+  if (!status?.enabled || !status?.links) return { ok: false, error: chrome.i18n.getMessage("statusOffline") };
+  try {
+    const response = await callApp(
+      "/api/links",
+      {
+        pageUrl: page.pageUrl,
+        title: page.title || undefined,
+        links: page.links,
+        cookies: await cookieHeader(page.pageUrl),
+        userAgent: navigator.userAgent,
+      },
+      10_000,
+    );
+    if (!response.ok) throw new Error((await response.text()) || chrome.i18n.getMessage("statusOffline"));
+    return { ok: true, count: page.links.length };
+  } catch (error) {
+    return { ok: false, error: error instanceof TypeError ? chrome.i18n.getMessage("statusOffline") : error.message };
+  }
+}
+
 chrome.downloads.onCreated.addListener(async (item) => {
   const settings = await prefs();
   if (!settings.capture || item.state !== "in_progress") return;
@@ -291,6 +322,16 @@ function createMenus() {
       title: chrome.i18n.getMessage("menuVideo"),
       contexts: ["video", "page", "frame"],
     });
+    chrome.contextMenus.create({
+      id: "sdm-all-links",
+      title: chrome.i18n.getMessage("menuAllLinks"),
+      contexts: ["page", "frame"],
+    });
+    chrome.contextMenus.create({
+      id: "sdm-selected-links",
+      title: chrome.i18n.getMessage("menuSelectedLinks"),
+      contexts: ["selection"],
+    });
   });
 }
 
@@ -315,6 +356,12 @@ if (NO_VIDEO_SITES.length > 0) {
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === "sdm-all-links" || info.menuItemId === "sdm-selected-links") {
+    if (tab?.id != null) {
+      await handOverLinks(tab.id, { frameId: info.frameId ?? 0, selection: info.menuItemId === "sdm-selected-links" });
+    }
+    return;
+  }
   if (info.menuItemId === "sdm-video") {
     const pageUrl = info.frameUrl || info.pageUrl || tab?.url;
     if (!pageUrl || !/^https?:/i.test(pageUrl)) return;
@@ -371,6 +418,14 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       mediaUrl: message.mediaUrl,
       referrer: sender.tab?.url !== message.pageUrl ? sender.tab?.url : undefined,
     }).then((ok) => reply({ ok }));
+    return true;
+  }
+  if (message?.type === "page-links") {
+    chrome.tabs
+      .query({ active: true, currentWindow: true })
+      .then(([tab]) => (tab?.id != null ? handOverLinks(tab.id) : { ok: false, error: chrome.i18n.getMessage("linksNone") }))
+      .then(reply)
+      .catch(() => reply({ ok: false, error: chrome.i18n.getMessage("statusOffline") }));
     return true;
   }
   if (["video-prefetch", "video-probe", "video-add"].includes(message?.type)) {

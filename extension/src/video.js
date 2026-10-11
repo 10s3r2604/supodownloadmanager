@@ -1,4 +1,32 @@
 // Offers video qualities on the page, using SDM's cached yt-dlp results.
+
+// On X, each player in a timeline belongs to a different post. Find the
+// nearest post link instead of asking yt-dlp to read the Home timeline.
+function sdmVideoSource(video, pageUrl, title) {
+  const src = video ? video.currentSrc || video.src : "";
+  const page = new URL(pageUrl);
+  if (["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"].includes(page.hostname)) {
+    const article = video?.closest("article");
+    for (let scope = video?.parentElement; article && scope; scope = scope.parentElement) {
+      const links = [...scope.querySelectorAll('a[href]')];
+      // The timestamp is the post's own permalink, ahead of quoted links.
+      links.sort((a, b) => Number(Boolean(b.querySelector("time"))) - Number(Boolean(a.querySelector("time"))));
+      const post = links.flatMap((link) => {
+        try { return [new URL(link.getAttribute("href"), pageUrl)]; } catch { return []; }
+      })
+        .find((url) => ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"].includes(url.hostname)
+          && /^\/(?:[^/]+\/status|i\/web\/status)\/\d+(?:\/|$)/.test(url.pathname)
+          && ["http:", "https:"].includes(url.protocol));
+      if (post) {
+        pageUrl = `${post.origin}${post.pathname.replace(/\/(?:video|photo)\/\d+.*$/, "")}`;
+        break;
+      }
+      if (scope.tagName === "ARTICLE") break;
+    }
+  }
+  return { pageUrl, title, mediaUrl: /^https?:/i.test(src) ? src : null };
+}
+
 (() => {
   if (window.__sdmVideoButton) return;
   window.__sdmVideoButton = true;
@@ -106,15 +134,15 @@
   }
 
   function source() {
-    const src = current ? current.currentSrc || current.src : "";
-    return { pageUrl: location.href, title: document.title, mediaUrl: /^https?:/i.test(src) ? src : null };
+    return sdmVideoSource(current, location.href, document.title);
   }
 
   function prefetch() {
-    const page = location.href.split("#")[0];
+    const selected = source();
+    const page = selected.pageUrl.split("#")[0];
     if (prefetched.page === page && Date.now() - prefetched.at < 60_000) return;
     prefetched = { page, at: Date.now() };
-    chrome.runtime.sendMessage({ type: "video-prefetch", ...source() }).catch(() => {});
+    chrome.runtime.sendMessage({ type: "video-prefetch", ...selected }).catch(() => {});
   }
 
   function visibleVideoAt(x, y) {

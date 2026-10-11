@@ -8,6 +8,7 @@ pub struct Texts {
     pub quit: &'static str,
     pub completed: &'static str,
     pub failed: &'static str,
+    pub main_queue: &'static str,
 }
 
 pub fn texts(language: &str) -> &'static Texts {
@@ -24,6 +25,7 @@ static ENGLISH: Texts = Texts {
     quit: "Quit",
     completed: "Download complete",
     failed: "Download failed",
+    main_queue: "Main queue",
 };
 
 static VIETNAMESE: Texts = Texts {
@@ -33,4 +35,5 @@ static VIETNAMESE: Texts = Texts {
     quit: "Thoát",
     completed: "Đã tải xong",
     failed: "Tải không thành công",
+    main_queue: "Hàng đợi chính",
 };

@@ -85,5 +85,28 @@
   },
   "videoUnavailable": {
     "message": "Video downloads are not available on this page."
+  },
+  "menuAllLinks": {
+    "message": "Download all links with SDM"
+  },
+  "menuSelectedLinks": {
+    "message": "Download selected links with SDM"
+  },
+  "popupAllLinks": {
+    "message": "Download all links on this page"
+  },
+  "linksSent": {
+    "message": "Sent $COUNT$ links to SDM. Pick the ones you want there.",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "linksNone": {
+    "message": "No links to download on this page."
+  },
+  "linksReload": {
+    "message": "Reload the page, then try again."
   }
 }

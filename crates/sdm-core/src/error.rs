@@ -53,6 +53,11 @@ pub enum Error {
     #[error("I/O error: {0}")]
     Io(std::io::Error),
 
+    /// A new address for an unfinished download does not serve the same
+    /// file in a way that lets it continue.
+    #[error("{0}")]
+    NotSameFile(String),
+
     /// The saved progress of a download could not be read.
     #[error("corrupt download state: {0}")]
     State(String),

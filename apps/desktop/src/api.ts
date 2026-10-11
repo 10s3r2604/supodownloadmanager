@@ -61,6 +61,41 @@ export interface Download {
   uploadSpeed: number;
   /** Bytes sent to other peers. */
   uploaded: number;
+  /** The queue it waits in. */
+  queue: string;
+}
+
+/** The queue every download is in unless another one is chosen. */
+export const MAIN_QUEUE = "main";
+
+export type PowerAction = "nothing" | "quit" | "sleep" | "hibernate" | "shutdown";
+
+export interface Schedule {
+  enabled: boolean;
+  /** "HH:MM", local time. */
+  start: string | null;
+  stop: string | null;
+  /** 0 = Monday … 6 = Sunday; empty = once. */
+  days: number[];
+}
+
+export interface Queue {
+  /** Empty for a new queue. */
+  id: string;
+  /** Empty for the main queue. */
+  name: string;
+  /** Downloads at the same time; the main queue uses the setting instead. */
+  maxParallel: number;
+  schedule: Schedule;
+  whenDone: PowerAction;
+}
+
+/** A power action that happens at `at` unless cancelled. */
+export interface PowerCountdown {
+  action: PowerAction;
+  /** The queue that finished, or null for all downloads. */
+  queue: string | null;
+  at: number;
 }
 
 export interface Settings {
@@ -111,6 +146,32 @@ export interface AddRequest {
   fileName?: string;
   directory?: string;
   start: boolean;
+  queue?: string;
+}
+
+/** One of many links added at once. */
+export interface BatchLink {
+  url: string;
+  fileName?: string | null;
+  /** Extra headers for this link, such as the cookies of its site. */
+  headers?: Headers;
+  /** The link's text on the page. */
+  text?: string | null;
+}
+
+export interface BatchRequest {
+  links: BatchLink[];
+  headers?: Headers;
+  directory?: string;
+  start: boolean;
+  queue?: string;
+}
+
+/** The links of a web page, sent by the browser extension. */
+export interface LinksPrompt {
+  pageUrl: string;
+  title: string | null;
+  links: BatchLink[];
 }
 
 /** A download offered by the browser extension. */
@@ -291,6 +352,7 @@ export interface Api {
   mediaProbe(source: MediaSource): Promise<MediaInfo>;
   /** What yt-dlp is doing while it reads the page. */
   mediaProbeStage(pageUrl: string): Promise<string | null>;
+  cancelMediaProbe(pageUrl: string): Promise<void>;
   addMedia(request: AddMediaRequest): Promise<number>;
   onMediaPrompt(handler: (source: MediaSource) => void): Promise<UnlistenFn>;
   inspectTorrent(source: TorrentSource): Promise<TorrentInfo>;
@@ -305,6 +367,25 @@ export interface Api {
   /** Files dropped on the window. */
   onFileDrop(handler: (paths: string[]) => void): Promise<UnlistenFn>;
   onToolProgress(handler: (progress: ToolProgress) => void): Promise<UnlistenFn>;
+  /** The links a pattern such as `file[1-10].zip` stands for. */
+  expandBatch(pattern: string): Promise<string[]>;
+  addBatch(request: BatchRequest): Promise<number[]>;
+  /** Gives an unfinished download a new link, keeping its progress. */
+  changeAddress(id: number, url: string): Promise<void>;
+  onLinksPrompt(handler: (prompt: LinksPrompt) => void): Promise<UnlistenFn>;
+  listQueues(): Promise<Queue[]>;
+  /** Adds a queue (with an empty id) or changes one. */
+  saveQueue(queue: Queue): Promise<Queue>;
+  deleteQueue(id: string): Promise<void>;
+  startQueue(id: string): Promise<void>;
+  stopQueue(id: string): Promise<void>;
+  moveToQueue(ids: number[], queue: string): Promise<void>;
+  /** What happens once every download is done. */
+  getAfterAll(): Promise<PowerAction>;
+  setAfterAll(action: PowerAction): Promise<void>;
+  powerCountdown(): Promise<PowerCountdown | null>;
+  cancelPowerAction(): Promise<void>;
+  onPowerCountdown(handler: (countdown: PowerCountdown | null) => void): Promise<UnlistenFn>;
 }
 
 const tauriApi: Api = {
@@ -348,6 +429,7 @@ const tauriApi: Api = {
   mediaPrepare: (ffmpeg) => invoke("media_prepare", { ffmpeg }),
   mediaProbe: (source) => invoke("media_probe", { source }),
   mediaProbeStage: (pageUrl) => invoke("media_probe_stage", { pageUrl }),
+  cancelMediaProbe: (pageUrl) => invoke("cancel_media_probe", { pageUrl }),
   addMedia: (request) => invoke("add_media", { request }),
   onMediaPrompt: (handler) => listen<MediaSource>("sdm:media-prompt", (e) => handler(e.payload)),
   inspectTorrent: (source) => invoke("inspect_torrent", { source }),
@@ -363,6 +445,21 @@ const tauriApi: Api = {
       if (event.payload.type === "drop") handler(event.payload.paths);
     }),
   onToolProgress: (handler) => listen<ToolProgress>("sdm:tool-progress", (e) => handler(e.payload)),
+  expandBatch: (pattern) => invoke("expand_batch", { pattern }),
+  addBatch: (request) => invoke("add_batch", { request }),
+  changeAddress: (id, url) => invoke("change_address", { id, url }),
+  onLinksPrompt: (handler) => listen<LinksPrompt>("sdm:links-prompt", (e) => handler(e.payload)),
+  listQueues: () => invoke("list_queues"),
+  saveQueue: (queue) => invoke("save_queue", { queue }),
+  deleteQueue: (id) => invoke("delete_queue", { id }),
+  startQueue: (id) => invoke("start_queue", { id }),
+  stopQueue: (id) => invoke("stop_queue", { id }),
+  moveToQueue: (ids, queue) => invoke("move_to_queue", { ids, queue }),
+  getAfterAll: () => invoke("get_after_all"),
+  setAfterAll: (action) => invoke("set_after_all", { action }),
+  powerCountdown: () => invoke("power_countdown"),
+  cancelPowerAction: () => invoke("cancel_power_action"),
+  onPowerCountdown: (handler) => listen<PowerCountdown | null>("sdm:power", (e) => handler(e.payload)),
 };
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

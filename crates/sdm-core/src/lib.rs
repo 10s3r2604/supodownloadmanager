@@ -45,4 +45,6 @@ pub use engine::{
 pub use error::{Error, Result};
 pub use filename::{candidates as path_candidates, sanitize as sanitize_file_name};
 pub use probe::RemoteInfo;
-pub use state::{part_path as partial_data_path, state_path as partial_state_path};
+pub use state::{
+    part_path as partial_data_path, retarget_partial, state_path as partial_state_path,
+};

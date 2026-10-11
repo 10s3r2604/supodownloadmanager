@@ -76,3 +76,42 @@ jobs:
           npm ci
           npm run build
       - run: cargo test -p sdm-desktop --locked
+      - name: Build the native Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $config = Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $config.app.windows[0] | Add-Member -NotePropertyName additionalBrowserArgs -NotePropertyValue "--remote-debugging-port=9222" -Force
+          $env:TAURI_CONFIG = $config | ConvertTo-Json -Depth 100 -Compress
+          cargo build -p sdm-desktop --locked
+      - name: Ensure WebView2 is installed for the native app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $runtimeRoots = @("${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application", "$env:ProgramFiles\Microsoft\EdgeWebView\Application", "$env:LOCALAPPDATA\Microsoft\EdgeWebView\Application")
+          $runtime = Get-ChildItem $runtimeRoots -Recurse -Filter msedgewebview2.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $runtime) {
+            $bootstrapper = Join-Path $env:RUNNER_TEMP "MicrosoftEdgeWebview2Setup.exe"
+            Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $bootstrapper
+            $install = Start-Process $bootstrapper -ArgumentList "/silent /install" -Wait -PassThru
+            if ($install.ExitCode -ne 0) { throw "WebView2 installer exited with $($install.ExitCode)" }
+            $runtime = Get-ChildItem $runtimeRoots -Recurse -Filter msedgewebview2.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $runtime) { throw "The WebView2 runtime was not found" }
+          Write-Host "WebView2: $($runtime.FullName)"
+      - name: Test native Windows media discovery and progress windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $testDeps = Join-Path $env:RUNNER_TEMP "sdm-progress-test"
+          npm install --prefix $testDeps --no-save --package-lock=false playwright-core@1.57.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:SDM_SMOKE_NODE_MODULES = Join-Path $testDeps "node_modules"
+          node .github/scripts/progress-windows-smoke.cjs
+      - name: Upload native Windows progress checks
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-progress-smoke
+          path: progress-smoke/
+          if-no-files-found: ignore

@@ -1,6 +1,6 @@
 // Picks the quality of a video on a web page ("Download this video").
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { type MediaInfo, type MediaOption, type MediaSource, type Settings, type ToolProgress, type ToolStatus, api } from "../api";
 import { errorText, useI18n } from "../context";
@@ -36,16 +36,29 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
   const [busy, setBusy] = useState(false);
   // What yt-dlp is doing, so a slow site is not a mystery.
   const [ytdlpStage, setYtdlpStage] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const attempt = useRef(0);
   const probing = stage.kind === "probing";
   useEffect(() => {
     if (!probing) {
       setYtdlpStage(null);
       return;
     }
+    const started = Date.now();
+    let alive = true;
+    let polling = false;
+    setElapsed(0);
     const timer = setInterval(() => {
-      api.mediaProbeStage(source.pageUrl).then(setYtdlpStage).catch(() => {});
+      setElapsed(Math.floor((Date.now() - started) / 1000));
+      if (!polling) {
+        polling = true;
+        api.mediaProbeStage(source.pageUrl)
+          .then((value) => { if (alive) setYtdlpStage(value); })
+          .catch(() => {})
+          .finally(() => { polling = false; });
+      }
     }, 700);
-    return () => clearInterval(timer);
+    return () => { alive = false; clearInterval(timer); };
   }, [probing, source.pageUrl]);
 
   // Tool downloads report their progress with events.
@@ -61,28 +74,40 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
   }, []);
 
   const load = useCallback(async () => {
+    const current = ++attempt.current;
+    setStage({ kind: "probing" });
     try {
       let status = await api.mediaTools();
+      if (current !== attempt.current) return;
       setTools(status);
       if (!status.ytdlp) {
         setStage({ kind: "tools", progress: null });
         status = await api.mediaPrepare(false);
+        if (current !== attempt.current) return;
       }
       setTools(status);
       setStage({ kind: "probing" });
       const found = await api.mediaProbe(source);
+      if (current !== attempt.current) return;
       setInfo(found);
       setTitle(found.title);
       setChoice(found.default ?? found.options[0]?.id ?? null);
       setStage({ kind: "ready" });
     } catch (error) {
-      setStage({ kind: "failed", error: errorText(error) });
+      if (current === attempt.current) setStage({ kind: "failed", error: errorText(error) });
     }
   }, [source]);
 
   useEffect(() => {
     load();
+    return () => { ++attempt.current; };
   }, [load]);
+
+  function close() {
+    ++attempt.current;
+    if (stage.kind === "probing") api.cancelMediaProbe(source.pageUrl).catch(() => {});
+    onClose();
+  }
 
   const option = info?.options.find((o) => o.id === choice) ?? null;
   const ffmpegMissing = Boolean(option?.needsFfmpeg && tools && !tools.ffmpeg);
@@ -109,7 +134,7 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
         directory: directory ?? undefined,
         start,
       });
-      onClose();
+      close();
     } catch (error) {
       onError(errorText(error));
       setStage({ kind: "ready" });
@@ -123,11 +148,11 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
   return (
     <Dialog
       title={t("mediaTitle")}
-      onClose={onClose}
+      onClose={close}
       wide
       footer={
         <>
-          <button type="button" className="button" onClick={onClose}>
+          <button type="button" className="button" onClick={close}>
             {t("cancel")}
           </button>
           {ready && (
@@ -159,7 +184,8 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
           <div>
             <strong>{t("mediaProbing")}</strong>
             <div className="muted">{source.title || hostOf(source.pageUrl)}</div>
-            {ytdlpStage && <div className="media-stage">{ytdlpStage}</div>}
+            <div className="muted">{t("mediaElapsed", { time: formatDuration(elapsed) })}</div>
+            {ytdlpStage && <details className="media-log"><summary>{t("pwDetails")}</summary><div className="media-stage">{ytdlpStage}</div></details>}
           </div>
         </div>
       ) : stage.kind === "failed" ? (
@@ -204,7 +230,7 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
               </div>
             </div>
 
-            <div className="media-options" role="radiogroup">
+            <div className="media-options" role="radiogroup" aria-label={t("mediaTitle")}>
               {(["video", "audio"] as const).map((kind) => {
                 const list = info.options.filter((o) => o.kind === kind);
                 if (list.length === 0) return null;
@@ -229,7 +255,7 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
             <label className="field">
               <span>{t("fileName")}</span>
               <div className="input-row">
-                <input autoFocus value={title} spellCheck={false} onChange={(e) => setTitle(e.target.value)} />
+                <input value={title} spellCheck={false} onChange={(e) => setTitle(e.target.value)} />
                 <span className="media-ext">.{option?.ext ?? "mp4"}</span>
               </div>
             </label>
@@ -283,7 +309,7 @@ function OptionRow(props: {
   const detail = [o.vcodec, o.acodec, o.kind === "video" ? o.ext.toUpperCase() : null].filter(Boolean).join(" · ");
   return (
     <label className={`media-option${props.selected ? " on" : ""}${props.unavailable ? " off" : ""}`}>
-      <input type="radio" name="media-option" checked={props.selected} disabled={props.unavailable} onChange={props.onSelect} />
+      <input type="radio" name="media-option" autoFocus={props.selected && !props.unavailable} checked={props.selected} disabled={props.unavailable} onChange={props.onSelect} />
       <span className="media-label">
         {label}
         {badge && <em>{badge}</em>}

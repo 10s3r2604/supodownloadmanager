@@ -23,6 +23,7 @@ tauri-build = { version = "2", features = [] }
 sdm-core.workspace = true
 anyhow.workspace = true
 axum = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 flate2 = "1"
 librqbit = { version = "9.0.1", default-features = false, features = ["rust-tls"] }
 percent-encoding.workspace = true

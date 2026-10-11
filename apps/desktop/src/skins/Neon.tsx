@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 
-import type { Download } from "../api";
+import type { Download, PowerAction } from "../api";
 import { logoSmall } from "../brand";
 import { AreaChart, SegmentBlocks, Sparkline, niceMax } from "../components/Charts";
+import { POWER_ACTIONS, queueName } from "../components/SchedulerDialog";
 import { TorrentPanel } from "../components/TorrentPanel";
 import { useI18n } from "../context";
 import { formatBytes, formatDuration, formatHuman, formatSpeed, percent } from "../format";
@@ -46,6 +47,7 @@ export function NeonView(p: ViewProps) {
           active={Boolean(category) || categoriesOpen}
           onClick={() => setCategoriesOpen((open) => !open)}
         />
+        <RailButton icon="clock" label={t("scheduler")} onClick={p.onScheduler} />
         <span className="neon-rail-space" />
         <RailButton
           icon="globe"
@@ -109,12 +111,48 @@ export function NeonView(p: ViewProps) {
             <Icon name="search" size={14} />
             <input value={p.query} placeholder={t("filterPlaceholder")} onChange={(e) => p.setQuery(e.target.value)} />
           </label>
-          <button type="button" className="neon-icon-btn" title={t("resumeAll")} onClick={p.onResumeAll}>
-            <Icon name="playAll" size={16} />
-          </button>
-          <button type="button" className="neon-icon-btn" title={t("pauseAll")} onClick={p.onPauseAll}>
-            <Icon name="pauseAll" size={16} />
-          </button>
+          {p.queues.length > 1 && (
+            <label className="neon-select">
+              <Icon name="clock" size={14} />
+              <select aria-label={t("queue")} value={p.queueFilter} onChange={(e) => p.setQueueFilter(e.target.value)}>
+                <option value="all">{t("allQueues")}</option>
+                {p.queues.map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {queueName(q, t)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className={`neon-select${p.afterAll !== "nothing" ? " on" : ""}`} title={t("whenAllDone")}>
+            <Icon name="power" size={14} />
+            <select aria-label={t("whenAllDone")} value={p.afterAll} onChange={(e) => p.setAfterAll(e.target.value as PowerAction)}>
+              {POWER_ACTIONS.map((action) => (
+                <option key={action} value={action}>
+                  {action === "nothing" ? t("whenAllDone") : t(`power.${action}` as TextKey)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {p.queueFilter === "all" ? (
+            <>
+              <button type="button" className="neon-icon-btn" title={t("resumeAll")} onClick={p.onResumeAll}>
+                <Icon name="playAll" size={16} />
+              </button>
+              <button type="button" className="neon-icon-btn" title={t("pauseAll")} onClick={p.onPauseAll}>
+                <Icon name="pauseAll" size={16} />
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="neon-icon-btn" title={t("startQueue")} onClick={() => p.onStartQueue(p.queueFilter)}>
+                <Icon name="playAll" size={16} />
+              </button>
+              <button type="button" className="neon-icon-btn" title={t("stopQueue")} onClick={() => p.onStopQueue(p.queueFilter)}>
+                <Icon name="pauseAll" size={16} />
+              </button>
+            </>
+          )}
           <button type="button" className="neon-add" onClick={p.onAdd}>
             <Icon name="plus" size={15} /> {t("add")}
           </button>

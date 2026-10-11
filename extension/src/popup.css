@@ -149,3 +149,19 @@ input[type="number"] {
 .switch:checked::after {
   transform: translateX(16px);
 }
+
+button.wide {
+  width: 100%;
+  margin: 8px 0 6px;
+  padding: 8px 10px;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.hint.error {
+  color: var(--off);
+}
