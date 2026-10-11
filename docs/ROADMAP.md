@@ -71,13 +71,13 @@ Built on [librqbit](https://github.com/ikatson/rqbit), a BitTorrent engine in Ru
 - [ ] Per-torrent peer list and piece map
 - [ ] Creating torrents
 
-## Phase 6: Power features
+## Phase 6: Power features (in progress, v0.6)
 
-- [ ] Scheduler: start and stop at set times, shut down or sleep when done
-- [ ] Several queues with their own limits
+- [x] Scheduler: start and stop at set times, shut down or sleep when done
+- [x] Several queues with their own limits
 - [ ] Saved logins per site
-- [ ] Refresh expired download links without losing progress
-- [ ] "Download all links" on a page, batch downloads with numbered patterns
+- [x] Refresh expired download links without losing progress
+- [x] "Download all links" on a page, batch downloads with numbered patterns
 
 ## Phase 7: Distribution
 

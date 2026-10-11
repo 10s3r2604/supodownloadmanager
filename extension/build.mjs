@@ -40,6 +40,12 @@ const base = {
       all_frames: true,
       run_at: "document_idle",
     },
+    {
+      matches: ["http://*/*", "https://*/*"],
+      js: ["links.js"],
+      all_frames: true,
+      run_at: "document_idle",
+    },
   ],
 };
 

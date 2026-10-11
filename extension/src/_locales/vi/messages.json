@@ -85,5 +85,28 @@
   },
   "videoUnavailable": {
     "message": "Không thể tải video trên trang này."
+  },
+  "menuAllLinks": {
+    "message": "Tải tất cả link bằng SDM"
+  },
+  "menuSelectedLinks": {
+    "message": "Tải các link đang chọn bằng SDM"
+  },
+  "popupAllLinks": {
+    "message": "Tải tất cả link trên trang này"
+  },
+  "linksSent": {
+    "message": "Đã gửi $COUNT$ link sang SDM. Chọn những file bạn muốn ở đó.",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "linksNone": {
+    "message": "Trang này không có link nào để tải."
+  },
+  "linksReload": {
+    "message": "Hãy tải lại trang rồi thử lại."
   }
 }

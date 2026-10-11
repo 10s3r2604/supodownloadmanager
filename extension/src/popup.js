@@ -69,6 +69,20 @@ $("grant").addEventListener("click", async () => {
   showPermission();
 });
 
+$("allLinks").addEventListener("click", async () => {
+  const button = $("allLinks");
+  const result = $("linksResult");
+  button.disabled = true;
+  const answer = await chrome.runtime.sendMessage({ type: "page-links" }).catch(() => null);
+  button.disabled = false;
+  result.hidden = false;
+  result.classList.toggle("error", !answer?.ok);
+  result.textContent = answer?.ok
+    ? chrome.i18n.getMessage("linksSent", [String(answer.count)])
+    : answer?.error || message("statusOffline");
+  if (answer?.ok) setTimeout(() => window.close(), 900);
+});
+
 load();
 showStatus();
 showPermission();

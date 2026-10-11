@@ -57,9 +57,17 @@ computer you own, and the code is right here.
 - Pause and resume any time, even after closing the app or restarting the computer. SDM
   checks the file's size, `ETag` and date with the server first, so a changed file starts
   over instead of being mixed.
-- Automatic retries, a download queue, a speed limit, proxies (HTTP, HTTPS, SOCKS5) and
-  safe file names. Works with servers that allow only one connection or don't say how
-  big the file is.
+- Automatic retries, a speed limit, proxies (HTTP, HTTPS, SOCKS5) and safe file names.
+  Works with servers that allow only one connection or don't say how big the file is.
+- Link expired halfway? Paste a fresh one and the download continues where it stopped.
+
+**Queues and scheduler**
+- Several queues, each with its own number of files at once. Start and stop them at set
+  times, once, every day or on chosen days, for example overnight.
+- When a queue (or everything) is done, SDM can quit, put the computer to sleep,
+  hibernate or shut it down, after a one-minute countdown you can cancel.
+- Batch downloads from numbered addresses like `img[001-120].jpg`, and "Download all
+  links" on any web page, with the links sorted by type so you pick only what you want.
 
 **Videos from web pages**
 - Hover a video in your browser and click **Download this video**, or paste a link. Pick
@@ -216,6 +224,9 @@ Tại sao phải trả **phí thuê bao hằng năm** cho một trình tải fil
 cài trên bao nhiêu máy cũng được, và mã nguồn công khai.
 
 - **Tải nhanh** bằng tối đa 32 kết nối, tạm dừng và tải tiếp kể cả sau khi tắt máy.
+- **Hàng đợi và hẹn giờ**: nhiều hàng đợi, tự chạy/dừng theo giờ, tắt máy hoặc cho máy ngủ
+  khi tải xong; tải hàng loạt theo mẫu `img[001-120].jpg` và tải tất cả link trên trang.
+- **Link hết hạn** giữa chừng? Dán link mới, file tải tiếp từ chỗ đang dừng.
 - **Tải video** trên khoảng 1.800 trang web, chọn chất lượng 4K, 1080p, 720p hoặc chỉ âm thanh.
 - **Torrent và link magnet**: bấm link magnet, mở file `.torrent` hoặc kéo thả vào cửa sổ,
   chọn tệp muốn tải.
