@@ -202,6 +202,11 @@ const server=http.createServer((req,res)=>{
       const log=path.join(output,`${name}.log`);
       if(fs.existsSync(log)) console.error(`${name} log:\n${fs.readFileSync(log,'utf8')}`);
     }
+    try {
+      console.error(execFileSync('powershell.exe',['-NoProfile','-Command',
+        "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('sdm-desktop.exe', 'msedgewebview2.exe') } | Select-Object Name, CommandLine | ConvertTo-Json -Depth 5"
+      ],{encoding:'utf8',timeout:5_000}));
+    } catch {}
     if(browser) for(const [index,page] of browser.contexts().flatMap(c=>c.pages()).entries()) {
       await page.screenshot({path:path.join(output,`failure-${index}.png`),timeout:3_000}).catch(()=>{});
     }
