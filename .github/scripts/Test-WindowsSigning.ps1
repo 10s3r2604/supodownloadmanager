@@ -37,7 +37,14 @@ try {
     [System.IO.File]::WriteAllBytes($tampered, $bytes)
     Assert-Rejected { Assert-WindowsSignature -Path $tampered -Thumbprint $thumbprint } 'Invalid Authenticode signature'
     Assert-Rejected { Assert-SignedWindowsArtifact -Directory $temp -Kind App -Version '0.5.0' -Thumbprint $thumbprint } 'Unexpected signed artifact contents'
-    Write-Output '8 Windows signing checks passed.'
+    $appDirectory = Join-Path $temp 'app'
+    New-Item -ItemType Directory -Path $appDirectory | Out-Null
+    Copy-Item -LiteralPath $fixture -Destination (Join-Path $appDirectory 'sdm-desktop.exe')
+    Assert-Rejected { Assert-SignedWindowsArtifact -Directory $appDirectory -Kind App -Version '0.5.0' -Thumbprint $thumbprint } 'Unexpected product name'
+    $emptyDirectory = Join-Path $temp 'empty'
+    New-Item -ItemType Directory -Path $emptyDirectory | Out-Null
+    Assert-Rejected { Assert-SignedWindowsArtifact -Directory $emptyDirectory -Kind Installers -Version '0.5.0' -Thumbprint $thumbprint } 'Unexpected signed artifact contents'
+    Write-Output '10 Windows signing checks passed.'
 } finally {
     Remove-Item -LiteralPath $temp -Recurse -Force
 }

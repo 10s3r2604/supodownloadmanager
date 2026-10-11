@@ -40,10 +40,9 @@ function Assert-SignedWindowsArtifact {
         [Parameter(Mandatory)][ValidatePattern('^[0-9a-fA-F]{40}$')][string] $Thumbprint
     )
 
-    $expected = if ($Kind -eq 'App') {
-        @('sdm-desktop.exe')
-    } else {
-        @("Supo.Download.Manager_${Version}_x64-setup.exe", "Supo.Download.Manager_${Version}_x64_en-US.msi")
+    $expected = @('sdm-desktop.exe')
+    if ($Kind -eq 'Installers') {
+        $expected = @("Supo.Download.Manager_${Version}_x64-setup.exe", "Supo.Download.Manager_${Version}_x64_en-US.msi")
     }
     $root = (Resolve-Path -LiteralPath $Directory).Path
     $files = @(Get-ChildItem -LiteralPath $root -File -Recurse)
