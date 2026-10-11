@@ -39,7 +39,7 @@ function sdmVideoSource(video, pageUrl, title) {
         pageUrl = post;
         break;
       }
-      if (scope.tagName === "ARTICLE") break;
+      if (scope === article) break;
     }
   }
   return { pageUrl, title, mediaUrl: /^https?:/i.test(src) ? src : null };

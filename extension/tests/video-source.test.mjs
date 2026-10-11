@@ -37,8 +37,10 @@ test("malformed or foreign links cannot replace the X post", () => {
 
 test("does not search other posts when this player has no post link", () => {
   const body = scope([link("/unrelated/status/999", true)]);
-  const article = scope([], body, "ARTICLE");
-  assert.equal(source(player(article, article), "https://x.com/home", "Home").pageUrl, "https://x.com/home");
+  for (const tag of ["ARTICLE", "DIV"]) {
+    const article = scope([], body, tag);
+    assert.equal(source(player(article, article), "https://x.com/home", "Home").pageUrl, "https://x.com/home");
+  }
   assert.equal(source(player(body, null), "https://x.com/home", "Home").pageUrl, "https://x.com/home");
 });
 

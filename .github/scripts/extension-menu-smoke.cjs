@@ -189,7 +189,7 @@ function fixture(content) {
     report.push({ name: 'narrow-menu-stays-in-viewport', passed: true });
     await page.keyboard.press('Escape');
 
-    html = fixture('<div data-testid="cellInnerDiv"><video></video></div>');
+    html = fixture('<div data-testid="cellInnerDiv"><video></video></div><article><a href="/unrelated/status/999"><time>Another post</time></a></article>');
     await page.reload();
     const before = probes().length;
     await hover(0);
