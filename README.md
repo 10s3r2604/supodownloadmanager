@@ -10,7 +10,7 @@
 <p align="center">
   <a href="https://github.com/10s3r2604/supodownloadmanager/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/10s3r2604/supodownloadmanager?label=download&color=12b886"></a>
   <a href="https://github.com/10s3r2604/supodownloadmanager/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/10s3r2604/supodownloadmanager/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/github/license/10s3r2604/supodownloadmanager?color=blue"></a>
+  <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-555">
   <img alt="Price" src="https://img.shields.io/badge/price-free%20forever-12b886">
 </p>
@@ -46,7 +46,7 @@ computer you own, and the code is right here.
 | Windows · macOS · Linux         | Usually Windows only                          | **All three**                         |
 | Torrents and magnet links       | Usually a separate program                    | **Built in**                          |
 | Videos from web pages           | Yes                                           | **Yes**, in the quality you pick      |
-| Source code                     | Closed                                        | **Open** ([GPL-3.0](LICENSE))         |
+| Source code                     | Closed                                        | **Open** ([GPL-3.0-or-later](LICENSE)) |
 | Accounts, ads, tracking         | Varies                                        | **None**                              |
 
 ## Features
@@ -169,7 +169,7 @@ progress windows. The browser extension talks to the app through a small server 
 
 ## Building from source
 
-You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 20 or newer. On
+You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 22.12 or newer. On
 Linux, also the WebKitGTK libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```sh
@@ -186,16 +186,22 @@ Bug reports, ideas, translations, docs and code are all welcome. See
 
 ## Legal
 
-SDM is free software under the [GNU GPL v3.0 or later](LICENSE).
+SDM's own code is free software under the [GNU GPL v3.0 or later](LICENSE)
+(`GPL-3.0-or-later`). Third-party components retain their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Only download what you have the right to download. Many sites forbid downloading their
 videos, and most videos and torrents are protected by copyright. While a torrent
 downloads, SDM also shares it with others, who can see your IP address.
 
-The installers bundle [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense) and
-[Deno](https://github.com/denoland/deno) (MIT) for video downloads. Windows also
-bundles [ffmpeg](https://github.com/yt-dlp/FFmpeg-Builds) (GPL); on macOS and Linux,
-install ffmpeg with your package manager for merging and converting media. Bundled
+The installers bundle the standalone [yt-dlp](https://github.com/yt-dlp/yt-dlp)
+builds (GPL v3.0 or later) and [Deno](https://github.com/denoland/deno) (MIT, with
+separately licensed dependencies) for video downloads. yt-dlp's own source is
+Unlicense, but its PyInstaller builds include GPL-licensed dependencies; see
+[upstream's licensing notes](https://github.com/yt-dlp/yt-dlp#licensing).
+Windows also bundles a [GPL build of ffmpeg](https://github.com/yt-dlp/FFmpeg-Builds);
+on macOS and Linux, install ffmpeg with your package manager for merging and
+converting media. Bundled
 tools come from their official releases and are checksum-verified when packaged.
 SDM keeps its own copy of yt-dlp up to date; source and licenses are available from
 the linked upstream projects. Torrents use [librqbit](https://github.com/ikatson/rqbit)

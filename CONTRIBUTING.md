@@ -15,7 +15,7 @@ Please include:
 
 ## Development setup
 
-1. Install [Rust](https://rustup.rs) (latest stable) and [Node.js](https://nodejs.org) 20 or newer.
+1. Install [Rust](https://rustup.rs) (latest stable) and [Node.js](https://nodejs.org) 22.12 or newer.
 2. On Linux, install the libraries the desktop app needs. On Debian/Ubuntu:
 
    ```sh
@@ -91,3 +91,5 @@ cargo test --workspace
 
 By contributing you agree that your work is released under the
 [GPL-3.0-or-later](LICENSE) license of the project.
+Third-party code keeps its original license and notices; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
