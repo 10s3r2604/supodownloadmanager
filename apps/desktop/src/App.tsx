@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AddPrompt, type AppInfo, type Download, type MediaSource, type Settings, type TorrentSource, api } from "./api";
+import {
+  type AddPrompt,
+  type AppInfo,
+  type Download,
+  type MediaSource,
+  type PowerAction,
+  type PowerCountdown,
+  type Queue,
+  type Settings,
+  type TorrentSource,
+  api,
+} from "./api";
 import { useAppearance } from "./appearance";
 import { AddDialog } from "./components/AddDialog";
 import { BrowsersDialog } from "./components/BrowsersDialog";
@@ -8,6 +19,8 @@ import { ContextMenu } from "./components/ContextMenu";
 import { DeleteDialog } from "./components/DeleteDialog";
 import { DownloadDetails } from "./components/DownloadDetails";
 import { MediaDialog } from "./components/MediaDialog";
+import { PowerDialog } from "./components/PowerDialog";
+import { SchedulerDialog } from "./components/SchedulerDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TorrentDialog } from "./components/TorrentDialog";
 import { type Toast, Toasts } from "./components/Toasts";
@@ -22,6 +35,7 @@ type DialogState =
   | { kind: "torrent"; source: TorrentSource }
   | { kind: "settings" }
   | { kind: "browsers" }
+  | { kind: "scheduler" }
   | { kind: "delete"; ids: number[] }
   | { kind: "details"; id: number };
 
@@ -55,6 +69,10 @@ export default function App() {
   const [menu, setMenu] = useState<Menu | null>(null);
   const [prompts, setPrompts] = useState<(AddPrompt | MediaSource | TorrentSource)[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [queues, setQueues] = useState<Queue[]>([]);
+  const [queueFilter, setQueueFilter] = useState("all");
+  const [afterAll, setAfterAllState] = useState<PowerAction>("nothing");
+  const [countdown, setCountdown] = useState<PowerCountdown | null>(null);
   const anchor = useRef<number | null>(null);
 
   const { i18n, dark } = useAppearance(preview ?? settings);
@@ -86,7 +104,12 @@ export default function App() {
         refreshing = false;
       }
     };
-    const refreshInfo = () => api.appInfo().then((value) => alive && setInfo(value)).catch(() => {});
+    const refreshInfo = () => {
+      api.appInfo().then((value) => alive && setInfo(value)).catch(() => {});
+      // Schedules turn themselves off and "when all are done" resets.
+      api.listQueues().then((value) => alive && setQueues(value)).catch(() => {});
+      api.getAfterAll().then((value) => alive && setAfterAllState(value)).catch(() => {});
+    };
     refresh();
     refreshInfo();
     const timers = [setInterval(refresh, POLL_MS), setInterval(refreshInfo, 5000)];
@@ -111,6 +134,11 @@ export default function App() {
         setPrompts((queue) => [...queue, ...torrents]);
       }),
       api.onClipboardLink((url) => toast("clipboard", t("clipboardFound"), url)),
+      api.onPowerCountdown(setCountdown),
+      api.powerCountdown().then((value) => {
+        if (value) setCountdown(value);
+        return () => {};
+      }),
     ];
     return () => stops.forEach((stop) => stop.then((unlisten) => unlisten()));
   }, [toast, t]);
@@ -135,9 +163,19 @@ export default function App() {
     return downloads
       .filter((d) => matches(filter, d))
       .filter((d) => matchesType(typeFilter, d))
+      .filter((d) => queueFilter === "all" || d.queue === queueFilter)
       .filter((d) => !q || d.fileName.toLowerCase().includes(q) || d.url.toLowerCase().includes(q))
       .sort((a, b) => b.addedAt - a.addedAt);
-  }, [downloads, filter, typeFilter, query]);
+  }, [downloads, filter, typeFilter, queueFilter, query]);
+
+  // A deleted queue can no longer be shown.
+  useEffect(() => {
+    if (queueFilter !== "all" && queues.length > 0 && !queues.some((q) => q.id === queueFilter)) setQueueFilter("all");
+  }, [queues, queueFilter]);
+
+  const reloadQueues = useCallback(() => {
+    api.listQueues().then(setQueues).catch(() => {});
+  }, []);
 
   // Bulk actions apply only to rows the user can see in the current filter.
   useEffect(() => {
@@ -180,6 +218,7 @@ export default function App() {
     copyLink: (d) => run(copyText(d.url)),
     remove: (ids) => setDialog({ kind: "delete", ids }),
     openProgress: (d) => run(api.openProgressWindow(d.id)),
+    moveToQueue: (ids, queue) => run(api.moveToQueue(ids, queue)),
     menu: (event, download) => setMenu({ x: event.clientX, y: event.clientY, download }),
   };
 
@@ -238,6 +277,17 @@ export default function App() {
     onPauseAll: () => run(api.pauseAll()),
     onSettings: () => setDialog({ kind: "settings" }),
     onBrowsers: () => setDialog({ kind: "browsers" }),
+    queues,
+    queueFilter,
+    setQueueFilter,
+    afterAll,
+    setAfterAll: (action) => {
+      setAfterAllState(action);
+      run(api.setAfterAll(action));
+    },
+    onScheduler: () => setDialog({ kind: "scheduler" }),
+    onStartQueue: (queue) => run(api.startQueue(queue)),
+    onStopQueue: (queue) => run(api.stopQueue(queue)),
   };
 
   return (
@@ -254,6 +304,7 @@ export default function App() {
           y={menu.y}
           download={downloads.find((d) => d.id === menu.download.id) ?? menu.download}
           selected={selected}
+          queues={queues}
           actions={actions}
           onClose={closeMenu}
         />
@@ -264,6 +315,7 @@ export default function App() {
           prompt={dialog.prompt}
           initialUrl={dialog.url}
           settings={settings}
+          queues={queues}
           onClose={closeDialog}
           onError={showError}
           onMedia={(pageUrl) => setDialog({ kind: "media", source: { pageUrl } })}
@@ -311,6 +363,18 @@ export default function App() {
         />
       )}
       {dialog?.kind === "browsers" && <BrowsersDialog info={info} onClose={closeDialog} onError={showError} />}
+      {dialog?.kind === "scheduler" && settings && (
+        <SchedulerDialog
+          queues={queues}
+          downloads={downloads}
+          settings={settings}
+          onClose={closeDialog}
+          onError={showError}
+          onChanged={reloadQueues}
+          onSettings={setSettings}
+        />
+      )}
+      {countdown && <PowerDialog countdown={countdown} onError={showError} />}
       {dialog?.kind === "delete" && (
         <DeleteDialog
           count={dialog.ids.length}

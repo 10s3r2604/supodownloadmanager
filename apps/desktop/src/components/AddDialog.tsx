@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 
-import { type AddPrompt, type ProbeResult, type Settings, type TorrentSource, api } from "../api";
+import { type AddPrompt, MAIN_QUEUE, type ProbeResult, type Queue, type Settings, type TorrentSource, api } from "../api";
 import { errorText, useI18n } from "../context";
 import { formatBytes } from "../format";
 import { Icon, categoryIcon } from "../icons";
 import { Dialog } from "./Dialog";
+import { queueName } from "./SchedulerDialog";
 
 interface Props {
   prompt?: AddPrompt;
   initialUrl?: string;
   settings: Settings;
+  queues: Queue[];
   onClose: () => void;
   onError: (message: string) => void;
   /** Switches to the video quality picker for a page. */
@@ -34,7 +36,7 @@ function isVideoPage(url: string) {
   }
 }
 
-export function AddDialog({ prompt, initialUrl, settings, onClose, onError, onMedia, onTorrent }: Props) {
+export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onError, onMedia, onTorrent }: Props) {
   const { t, language } = useI18n();
   const headers = prompt?.headers ?? [];
   const [url, setUrl] = useState(prompt?.url ?? initialUrl ?? "");
@@ -45,6 +47,7 @@ export function AddDialog({ prompt, initialUrl, settings, onClose, onError, onMe
   const [nameEdited, setNameEdited] = useState(false);
   const [directory, setDirectory] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [queue, setQueue] = useState(MAIN_QUEUE);
   const valid = isLink(url);
 
   // Magnet links have no server to ask; they go to the torrent dialog.
@@ -108,6 +111,7 @@ export function AddDialog({ prompt, initialUrl, settings, onClose, onError, onMe
         fileName: fileName.trim() || undefined,
         directory: directory ?? undefined,
         start,
+        queue,
       });
       onClose();
     } catch (error) {
@@ -227,6 +231,18 @@ export function AddDialog({ prompt, initialUrl, settings, onClose, onError, onMe
             </button>
           </div>
         </div>
+        {queues.length > 1 && (
+          <label className="field narrow">
+            <span>{t("queue")}</span>
+            <select value={queue} onChange={(event) => setQueue(event.target.value)}>
+              {queues.map((q) => (
+                <option key={q.id} value={q.id}>
+                  {queueName(q, t)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button type="submit" hidden />
       </form>
     </Dialog>

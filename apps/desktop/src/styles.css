@@ -1312,3 +1312,163 @@ summary:focus-visible {
 input[type="checkbox"] {
   accent-color: var(--accent);
 }
+
+/* Queues and scheduler */
+
+.sched {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(0, 1fr);
+  gap: 18px;
+}
+
+.sched-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sched-list button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sched-list button:hover {
+  background: var(--hover);
+}
+
+.sched-list button.on {
+  border-color: var(--border-2);
+  background: var(--panel-2);
+}
+
+.sched-list strong {
+  overflow: hidden;
+  color: var(--strong);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sched-list small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.sched-list .sched-new {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--accent);
+}
+
+.sched-list .sched-new:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sched-parallel {
+  max-width: 300px;
+}
+
+.sched-form .hint.sched-hint {
+  margin-top: -6px;
+}
+
+.sched-times {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0 0 0 26px;
+  border: 0;
+}
+
+.sched-times.off {
+  opacity: 0.45;
+}
+
+.sched-times .field > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sched-times .field > span input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.sched-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sched-days button {
+  min-width: 42px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.sched-days button.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.button.sched-delete {
+  margin-right: auto;
+  color: var(--danger);
+}
+
+@media (max-width: 600px) {
+  .sched {
+    grid-template-columns: 1fr;
+  }
+}
+
+.power {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.power p {
+  margin: 4px 0;
+}
+
+.power-count {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 72px;
+  height: 72px;
+  border: 3px solid var(--accent);
+  border-radius: 50%;
+  color: var(--strong);
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.power-count .icon {
+  color: var(--accent);
+}

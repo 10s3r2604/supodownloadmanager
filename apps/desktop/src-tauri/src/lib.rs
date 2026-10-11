@@ -7,6 +7,8 @@ mod clipboard;
 mod commands;
 mod manager;
 mod media;
+mod power;
+mod queue;
 mod settings;
 mod store;
 mod texts;
@@ -15,7 +17,7 @@ mod tray;
 mod windows;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,6 +29,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::bridge::{BoxFuture, Bridge, BridgeConfig, BrowserDownload, Handler};
 use crate::manager::{AddRequest, Manager, Notice};
+use crate::queue::PowerAction;
 use crate::settings::Settings;
 
 /// Asks the user interface to show the "add download" dialog.
@@ -39,6 +42,11 @@ const MEDIA_PROMPT_EVENT: &str = "sdm:media-prompt";
 pub(crate) const TOOL_PROGRESS_EVENT: &str = "sdm:tool-progress";
 /// Asks the user interface to show the "add torrent" dialog.
 const TORRENT_PROMPT_EVENT: &str = "sdm:torrent-prompt";
+/// Tells the user interface that the computer is about to sleep or turn
+/// off (with a [`PowerCountdown`]), or that this was cancelled (`null`).
+const POWER_EVENT: &str = "sdm:power";
+/// Seconds to cancel a power action before it happens.
+const POWER_DELAY: u64 = 60;
 
 pub struct AppState {
     pub manager: Arc<Manager>,
@@ -54,7 +62,22 @@ pub struct AppState {
     pub when_done: windows::WhenDoneChoices,
     /// Torrents SDM was started with, until the window asks for them.
     pub pending_torrents: Mutex<Vec<torrent::TorrentSource>>,
+    /// The power action counting down, if any.
+    pub power: Mutex<Option<PowerCountdown>>,
+    /// Changes whenever a power action starts or is cancelled.
+    power_turn: AtomicU64,
     quitting: AtomicBool,
+}
+
+/// A power action that happens soon unless the user cancels it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PowerCountdown {
+    pub action: PowerAction,
+    /// The queue that finished, or `None` for all downloads.
+    pub queue: Option<String>,
+    /// When it happens, in milliseconds since 1970.
+    pub at: u64,
 }
 
 /// A download offered by the browser, shown in the "add download" dialog.
@@ -106,6 +129,16 @@ pub fn run() {
             commands::magnet_handler,
             commands::register_magnet_handler,
             commands::set_when_done,
+            commands::list_queues,
+            commands::save_queue,
+            commands::delete_queue,
+            commands::start_queue,
+            commands::stop_queue,
+            commands::move_to_queue,
+            commands::get_after_all,
+            commands::set_after_all,
+            commands::power_countdown,
+            commands::cancel_power_action,
             commands::probe_url,
             commands::add_download,
             commands::pause_downloads,
@@ -198,6 +231,8 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
             std::env::args().skip(1),
             &std::env::current_dir().unwrap_or_default(),
         )),
+        power: Mutex::new(None),
+        power_turn: AtomicU64::new(0),
         quitting: AtomicBool::new(false),
     });
     tray::create(app, settings.resolved_language())?;
@@ -209,14 +244,18 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         tools.update_ytdlp(&update_manager.downloader()).await;
     });
 
-    // Keep the stored list up to date and save it every few seconds.
+    // Keep the stored list up to date and save it every few seconds, and
+    // start and stop scheduled queues.
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(1));
         let mut tick = 0u8;
         loop {
             ticker.tick().await;
-            tick = (tick + 1) % 5;
-            manager.tick(tick == 0);
+            tick = (tick + 1) % 10;
+            manager.tick(tick.is_multiple_of(5));
+            if tick == 0 {
+                manager.check_schedules(chrono::Local::now().naive_local());
+            }
         }
     });
 
@@ -302,6 +341,17 @@ fn notify(app: &AppHandle, notice: Notice) {
             (texts.completed, file_name)
         }
         Notice::Failed { file_name, error } => (texts.failed, format!("{file_name}\n{error}")),
+        Notice::Done { queue, action } => {
+            let queue = queue.map(|q| {
+                if q.is_main() {
+                    texts.main_queue.to_owned()
+                } else {
+                    q.name
+                }
+            });
+            start_power_action(app, action, queue);
+            return;
+        }
     };
     if !settings.notifications {
         return;
@@ -309,6 +359,73 @@ fn notify(app: &AppHandle, notice: Notice) {
     if let Err(error) = app.notification().builder().title(title).body(body).show() {
         tracing::warn!(%error, "could not show a notification");
     }
+}
+
+/// Counts down, then quits SDM or puts the computer to sleep or turns it
+/// off, unless [`cancel_power_action`] is called first.
+fn start_power_action(app: &AppHandle, action: PowerAction, queue: Option<String>) {
+    if action == PowerAction::Nothing {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let turn = state.power_turn.fetch_add(1, Ordering::SeqCst) + 1;
+    let countdown = PowerCountdown {
+        action,
+        queue,
+        at: now_ms() + POWER_DELAY * 1000,
+    };
+    if let Ok(mut slot) = state.power.lock() {
+        *slot = Some(countdown.clone());
+    }
+    tracing::info!(?action, "downloads are done; counting down");
+    show_main_window(app);
+    let _ = app.emit(POWER_EVENT, Some(countdown));
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(POWER_DELAY)).await;
+        let state = app.state::<AppState>();
+        if state.power_turn.load(Ordering::SeqCst) != turn {
+            return;
+        }
+        if let Ok(mut slot) = state.power.lock() {
+            *slot = None;
+        }
+        let _ = app.emit(POWER_EVENT, None::<PowerCountdown>);
+        match action {
+            PowerAction::Nothing => {}
+            PowerAction::Quit => quit(&app),
+            PowerAction::Sleep => {
+                if let Err(error) = power::perform(action).await {
+                    tracing::warn!(%error, "could not put the computer to sleep");
+                }
+            }
+            PowerAction::Hibernate | PowerAction::Shutdown => {
+                // Save everything first; the system closes SDM anyway.
+                state.manager.shutdown().await;
+                match power::perform(action).await {
+                    Ok(()) => app.exit(0),
+                    Err(error) => tracing::warn!(%error, "could not turn the computer off"),
+                }
+            }
+        }
+    });
+}
+
+/// Stops a power action that is counting down.
+pub(crate) fn cancel_power_action(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state.power_turn.fetch_add(1, Ordering::SeqCst);
+    let was = state.power.lock().ok().and_then(|mut slot| slot.take());
+    if was.is_some() {
+        let _ = app.emit(POWER_EVENT, None::<PowerCountdown>);
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default()
 }
 
 /// Offers links copied to the clipboard for download.
@@ -388,6 +505,7 @@ impl Handler for AppBridge {
                 file_name,
                 directory: None,
                 start: true,
+                queue: None,
             };
             if let Err(error) = manager.add(request).await {
                 tracing::warn!(%error, "could not add a download from the browser");

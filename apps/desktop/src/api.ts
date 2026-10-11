@@ -61,6 +61,41 @@ export interface Download {
   uploadSpeed: number;
   /** Bytes sent to other peers. */
   uploaded: number;
+  /** The queue it waits in. */
+  queue: string;
+}
+
+/** The queue every download is in unless another one is chosen. */
+export const MAIN_QUEUE = "main";
+
+export type PowerAction = "nothing" | "quit" | "sleep" | "hibernate" | "shutdown";
+
+export interface Schedule {
+  enabled: boolean;
+  /** "HH:MM", local time. */
+  start: string | null;
+  stop: string | null;
+  /** 0 = Monday … 6 = Sunday; empty = once. */
+  days: number[];
+}
+
+export interface Queue {
+  /** Empty for a new queue. */
+  id: string;
+  /** Empty for the main queue. */
+  name: string;
+  /** Downloads at the same time; the main queue uses the setting instead. */
+  maxParallel: number;
+  schedule: Schedule;
+  whenDone: PowerAction;
+}
+
+/** A power action that happens at `at` unless cancelled. */
+export interface PowerCountdown {
+  action: PowerAction;
+  /** The queue that finished, or null for all downloads. */
+  queue: string | null;
+  at: number;
 }
 
 export interface Settings {
@@ -111,6 +146,7 @@ export interface AddRequest {
   fileName?: string;
   directory?: string;
   start: boolean;
+  queue?: string;
 }
 
 /** A download offered by the browser extension. */
@@ -306,6 +342,19 @@ export interface Api {
   /** Files dropped on the window. */
   onFileDrop(handler: (paths: string[]) => void): Promise<UnlistenFn>;
   onToolProgress(handler: (progress: ToolProgress) => void): Promise<UnlistenFn>;
+  listQueues(): Promise<Queue[]>;
+  /** Adds a queue (with an empty id) or changes one. */
+  saveQueue(queue: Queue): Promise<Queue>;
+  deleteQueue(id: string): Promise<void>;
+  startQueue(id: string): Promise<void>;
+  stopQueue(id: string): Promise<void>;
+  moveToQueue(ids: number[], queue: string): Promise<void>;
+  /** What happens once every download is done. */
+  getAfterAll(): Promise<PowerAction>;
+  setAfterAll(action: PowerAction): Promise<void>;
+  powerCountdown(): Promise<PowerCountdown | null>;
+  cancelPowerAction(): Promise<void>;
+  onPowerCountdown(handler: (countdown: PowerCountdown | null) => void): Promise<UnlistenFn>;
 }
 
 const tauriApi: Api = {
@@ -365,6 +414,17 @@ const tauriApi: Api = {
       if (event.payload.type === "drop") handler(event.payload.paths);
     }),
   onToolProgress: (handler) => listen<ToolProgress>("sdm:tool-progress", (e) => handler(e.payload)),
+  listQueues: () => invoke("list_queues"),
+  saveQueue: (queue) => invoke("save_queue", { queue }),
+  deleteQueue: (id) => invoke("delete_queue", { id }),
+  startQueue: (id) => invoke("start_queue", { id }),
+  stopQueue: (id) => invoke("stop_queue", { id }),
+  moveToQueue: (ids, queue) => invoke("move_to_queue", { ids, queue }),
+  getAfterAll: () => invoke("get_after_all"),
+  setAfterAll: (action) => invoke("set_after_all", { action }),
+  powerCountdown: () => invoke("power_countdown"),
+  cancelPowerAction: () => invoke("cancel_power_action"),
+  onPowerCountdown: (handler) => listen<PowerCountdown | null>("sdm:power", (e) => handler(e.payload)),
 };
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

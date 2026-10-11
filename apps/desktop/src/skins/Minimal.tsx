@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 
-import type { Download } from "../api";
+import type { Download, PowerAction } from "../api";
 import { wordmark } from "../brand";
 import { useI18n } from "../context";
 import { formatBytes, formatHuman, formatSpeed, percent } from "../format";
@@ -16,6 +16,7 @@ import {
 } from "../model";
 import type { ViewProps } from "../views";
 import { AreaChart, niceMax } from "../components/Charts";
+import { POWER_ACTIONS, queueName } from "../components/SchedulerDialog";
 import "./minimal.css";
 
 export function MinimalView(p: ViewProps & { dark: boolean }) {
@@ -62,6 +63,9 @@ export function MinimalView(p: ViewProps & { dark: boolean }) {
               title={t("bridgeError", { error: p.info.bridgeError })}
             />
           )}
+        </button>
+        <button type="button" className="mn-link" onClick={p.onScheduler}>
+          {t("scheduler")}
         </button>
         <button type="button" className="mn-link" onClick={p.onSettings}>
           {t("settings")}
@@ -127,6 +131,23 @@ export function MinimalView(p: ViewProps & { dark: boolean }) {
           ))}
         </nav>
         <div className="mn-tools">
+          {p.queues.length > 1 && (
+            <label className="mn-type">
+              <select
+                aria-label={t("queue")}
+                value={p.queueFilter}
+                onChange={(e) => p.setQueueFilter(e.target.value)}
+              >
+                <option value="all">{t("allQueues")}</option>
+                {p.queues.map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {queueName(q, t)}
+                  </option>
+                ))}
+              </select>
+              <Icon name="chevron" size={14} />
+            </label>
+          )}
           <label className="mn-type">
             <select
               aria-label={t("categories")}
@@ -212,6 +233,48 @@ export function MinimalView(p: ViewProps & { dark: boolean }) {
             </>
           ) : (
             <>
+              {p.queueFilter !== "all" && (
+                <>
+                  <button
+                    type="button"
+                    className="mn-link"
+                    onClick={() => p.onStartQueue(p.queueFilter)}
+                  >
+                    {t("startQueue")}
+                  </button>
+                  <button
+                    type="button"
+                    className="mn-link"
+                    onClick={() => p.onStopQueue(p.queueFilter)}
+                  >
+                    {t("stopQueue")}
+                  </button>
+                </>
+              )}
+              {(hasActive || p.afterAll !== "nothing") && (
+                <label
+                  className={`mn-type mn-when${p.afterAll !== "nothing" ? " on" : ""}`}
+                  title={t("whenAllDone")}
+                >
+                  <Icon name="power" size={14} />
+                  <select
+                    aria-label={t("whenAllDone")}
+                    value={p.afterAll}
+                    onChange={(e) =>
+                      p.setAfterAll(e.target.value as PowerAction)
+                    }
+                  >
+                    {POWER_ACTIONS.map((action) => (
+                      <option key={action} value={action}>
+                        {action === "nothing"
+                          ? t("whenAllDone")
+                          : t(`power.${action}` as TextKey)}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon name="chevron" size={14} />
+                </label>
+              )}
               {hasActive && (
                 <button
                   type="button"

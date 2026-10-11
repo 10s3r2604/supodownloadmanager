@@ -15,6 +15,7 @@ use tokio::runtime::Handle;
 
 use crate::category::Category;
 use crate::media::{self, AddMediaRequest, MediaControl, MediaSpec, Tools};
+use crate::queue::{self, MAIN_QUEUE, PowerAction, Queue, ScheduleEvent};
 use crate::settings::Settings;
 use crate::store;
 use crate::torrent::{
@@ -63,6 +64,13 @@ pub struct Record {
     /// address then, and `path` the file or folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub torrent: Option<TorrentSpec>,
+    /// The queue the download waits in.
+    #[serde(default = "main_queue")]
+    pub queue: String,
+}
+
+fn main_queue() -> String {
+    MAIN_QUEUE.into()
 }
 
 /// What the user interface shows for a download.
@@ -105,6 +113,7 @@ pub struct DownloadView {
     pub upload_speed: u64,
     /// Bytes sent to other peers.
     pub uploaded: u64,
+    pub queue: String,
 }
 
 /// A request to add a download.
@@ -123,6 +132,9 @@ pub struct AddRequest {
     /// `true` to queue the download now, `false` to add it paused.
     #[serde(default)]
     pub start: bool,
+    /// The queue to put it in; the main queue when missing.
+    #[serde(default)]
+    pub queue: Option<String>,
 }
 
 /// Something worth telling the user about.
@@ -141,6 +153,12 @@ pub enum Notice {
         file_name: String,
         error: String,
     },
+    /// A queue (or, with `queue: None`, the whole list) has nothing left
+    /// to download and asks for `action`.
+    Done {
+        queue: Option<Queue>,
+        action: PowerAction,
+    },
 }
 
 pub type Notify = Box<dyn Fn(Notice) + Send + Sync>;
@@ -148,6 +166,7 @@ pub type Notify = Box<dyn Fn(Notice) + Send + Sync>;
 pub struct Manager {
     inner: Mutex<Inner>,
     store: PathBuf,
+    queue_store: PathBuf,
     tools: Arc<Tools>,
     torrents: Arc<TorrentEngine>,
     runtime: Handle,
@@ -162,6 +181,11 @@ struct Inner {
     next_id: u64,
     dirty: bool,
     closing: bool,
+    queues: Vec<Queue>,
+    /// What to do once every download is done; not remembered.
+    after_all: PowerAction,
+    /// When the queue schedules were last looked at.
+    checked_at: Option<chrono::NaiveDateTime>,
 }
 
 /// A running download of any kind.
@@ -231,6 +255,13 @@ impl Manager {
             }
         }
         let next_id = records.iter().map(|r| r.id).max().unwrap_or(0) + 1;
+        let queue_store = store.with_file_name("queues.json");
+        let queues = queue::sanitize_all(store::load_json(&queue_store).unwrap_or_default());
+        for record in &mut records {
+            if !queues.iter().any(|q| q.id == record.queue) {
+                record.queue = main_queue();
+            }
+        }
         Ok(Arc::new(Self {
             inner: Mutex::new(Inner {
                 records,
@@ -240,8 +271,12 @@ impl Manager {
                 next_id,
                 dirty: false,
                 closing: false,
+                queues,
+                after_all: PowerAction::Nothing,
+                checked_at: None,
             }),
             store,
+            queue_store,
             tools,
             torrents,
             runtime,
@@ -347,6 +382,7 @@ impl Manager {
 
         let id = {
             let mut inner = self.lock();
+            let queue = inner.queue_id(request.queue.as_deref());
             let path = inner.free_path(&directory, &file_name);
             let id = inner.next_id;
             inner.next_id += 1;
@@ -371,6 +407,7 @@ impl Manager {
                 elapsed_ms: 0,
                 media: None,
                 torrent: None,
+                queue,
             });
             inner.dirty = true;
             self.save(&mut inner);
@@ -428,6 +465,7 @@ impl Manager {
                 elapsed_ms: 0,
                 media: Some(request.spec()),
                 torrent: None,
+                queue: main_queue(),
             });
             inner.dirty = true;
             self.save(&mut inner);
@@ -540,6 +578,7 @@ impl Manager {
                     files,
                     folder,
                 }),
+                queue: main_queue(),
             });
             inner.dirty = true;
             self.save(&mut inner);
@@ -598,6 +637,152 @@ impl Manager {
     pub fn resume_all(self: &Arc<Self>) {
         let ids: Vec<u64> = self.lock().records.iter().map(|r| r.id).collect();
         self.resume(&ids);
+    }
+
+    /// The queues, the main queue first.
+    pub fn queues(&self) -> Vec<Queue> {
+        self.lock().queues.clone()
+    }
+
+    /// Adds a queue (when its id is empty) or changes one. Returns it.
+    pub fn save_queue(self: &Arc<Self>, queue: Queue) -> Result<Queue, String> {
+        let saved = {
+            let mut inner = self.lock();
+            let mut queue = queue;
+            if queue.id.is_empty() {
+                let mut n = inner.queues.len();
+                queue.id = loop {
+                    let id = format!("q{n}");
+                    if !inner.queues.iter().any(|q| q.id == id) {
+                        break id;
+                    }
+                    n += 1;
+                };
+                inner.queues.push(queue.clone().sanitized());
+            } else {
+                let slot = inner
+                    .queues
+                    .iter_mut()
+                    .find(|q| q.id == queue.id)
+                    .ok_or("this queue no longer exists")?;
+                *slot = queue.clone().sanitized();
+            }
+            let saved = inner
+                .queues
+                .iter()
+                .find(|q| q.id == queue.id)
+                .cloned()
+                .unwrap_or(queue);
+            self.save_queues(&inner);
+            saved
+        };
+        self.schedule();
+        Ok(saved)
+    }
+
+    /// Deletes a queue; its downloads move to the main queue.
+    pub fn delete_queue(self: &Arc<Self>, id: &str) {
+        if id == MAIN_QUEUE {
+            return;
+        }
+        {
+            let mut inner = self.lock();
+            inner.queues.retain(|q| q.id != id);
+            for record in inner.records.iter_mut().filter(|r| r.queue == id) {
+                record.queue = main_queue();
+            }
+            inner.dirty = true;
+            self.save(&mut inner);
+            self.save_queues(&inner);
+        }
+        self.schedule();
+    }
+
+    /// Puts downloads into another queue.
+    pub fn move_to_queue(self: &Arc<Self>, ids: &[u64], queue: &str) {
+        {
+            let mut inner = self.lock();
+            let queue = inner.queue_id(Some(queue));
+            for record in inner.records.iter_mut().filter(|r| ids.contains(&r.id)) {
+                record.queue.clone_from(&queue);
+            }
+            inner.dirty = true;
+            self.save(&mut inner);
+        }
+        self.schedule();
+    }
+
+    /// Resumes every unfinished download of a queue.
+    pub fn start_queue(self: &Arc<Self>, id: &str) {
+        let ids = self.queue_downloads(id);
+        self.resume(&ids);
+    }
+
+    /// Pauses every download of a queue.
+    pub fn stop_queue(&self, id: &str) {
+        let ids = self.queue_downloads(id);
+        let mut inner = self.lock();
+        for &id in &ids {
+            inner.pause_one(id);
+        }
+        self.save(&mut inner);
+    }
+
+    fn queue_downloads(&self, queue: &str) -> Vec<u64> {
+        self.lock()
+            .records
+            .iter()
+            .filter(|r| r.queue == queue && r.state != State::Completed)
+            .map(|r| r.id)
+            .collect()
+    }
+
+    pub fn after_all(&self) -> PowerAction {
+        self.lock().after_all
+    }
+
+    /// What to do once every download is done.
+    pub fn set_after_all(&self, action: PowerAction) {
+        self.lock().after_all = action;
+    }
+
+    /// Starts and stops queues whose time has come. Call this regularly
+    /// with the local time.
+    pub fn check_schedules(self: &Arc<Self>, now: chrono::NaiveDateTime) {
+        let due: Vec<(String, ScheduleEvent)> = {
+            let mut inner = self.lock();
+            let Some(from) = inner.checked_at.replace(now) else {
+                return;
+            };
+            let mut due = Vec::new();
+            let mut changed = false;
+            for queue in &mut inner.queues {
+                for event in queue.schedule.due(from, now) {
+                    due.push((queue.id.clone(), event));
+                    if queue.schedule.finished_by(event) {
+                        queue.schedule.enabled = false;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                self.save_queues(&inner);
+            }
+            due
+        };
+        for (queue, event) in due {
+            tracing::info!(%queue, ?event, "scheduled queue event");
+            match event {
+                ScheduleEvent::Start => self.start_queue(&queue),
+                ScheduleEvent::Stop => self.stop_queue(&queue),
+            }
+        }
+    }
+
+    fn save_queues(&self, inner: &Inner) {
+        if let Err(error) = store::save_json(&self.queue_store, &inner.queues) {
+            tracing::warn!(%error, "could not save the queues");
+        }
     }
 
     /// Removes downloads from the list. Unfinished data is always deleted;
@@ -661,14 +846,36 @@ impl Manager {
             if inner.closing {
                 return;
             }
-            let free = usize::from(inner.settings.max_parallel).saturating_sub(inner.active.len());
-            let next: Vec<u64> = inner
-                .records
+            // Free places in every queue.
+            let mut free: HashMap<&str, usize> = inner
+                .queues
                 .iter()
-                .filter(|r| r.state == State::Queued && !inner.active.contains_key(&r.id))
-                .take(free)
-                .map(|r| r.id)
+                .map(|q| {
+                    let limit = if q.is_main() {
+                        inner.settings.max_parallel
+                    } else {
+                        q.max_parallel
+                    };
+                    let running = inner
+                        .records
+                        .iter()
+                        .filter(|r| r.queue == q.id && inner.active.contains_key(&r.id))
+                        .count();
+                    (q.id.as_str(), usize::from(limit).saturating_sub(running))
+                })
                 .collect();
+            let mut next = Vec::new();
+            for record in &inner.records {
+                if record.state != State::Queued || inner.active.contains_key(&record.id) {
+                    continue;
+                }
+                if let Some(places) = free.get_mut(record.queue.as_str())
+                    && *places > 0
+                {
+                    *places -= 1;
+                    next.push(record.id);
+                }
+            }
             for &id in &next {
                 self.start(&mut inner, id);
             }
@@ -782,7 +989,10 @@ impl Manager {
     }
 
     fn finished(self: &Arc<Self>, id: u64, result: Result<Outcome, String>) {
-        let notice = {
+        // Only downloads that end by themselves, not paused ones, can make
+        // a queue done.
+        let ended = matches!(result, Ok(Outcome::Completed { .. }) | Err(_));
+        let (notice, done) = {
             let mut inner = self.lock();
             let Some(active) = inner.active.remove(&id) else {
                 return;
@@ -805,12 +1015,20 @@ impl Manager {
             };
             inner.dirty = true;
             self.save(&mut inner);
-            notice
+            let done = if ended && notice.is_some() {
+                inner.done_after(id)
+            } else {
+                None
+            };
+            (notice, done)
         };
         if let Some(notice) = notice {
             (self.notify)(notice);
         }
         self.schedule();
+        if let Some(done) = done {
+            (self.notify)(done);
+        }
     }
 
     /// Deletes what is left of a download that leaves the list.
@@ -848,6 +1066,42 @@ impl Manager {
 }
 
 impl Inner {
+    /// An existing queue id, or the main queue.
+    fn queue_id(&self, wanted: Option<&str>) -> String {
+        wanted
+            .filter(|id| self.queues.iter().any(|q| q.id == *id))
+            .map_or_else(main_queue, str::to_owned)
+    }
+
+    /// Whether a queue (or, with `None`, any queue) has downloads that are
+    /// running or waiting to run.
+    fn busy(&self, queue: Option<&str>) -> bool {
+        self.records.iter().any(|r| {
+            matches!(r.state, State::Queued | State::Downloading)
+                && queue.is_none_or(|q| r.queue == q)
+        })
+    }
+
+    /// After download `id` ended: what to do because its queue, or the
+    /// whole list, has nothing left.
+    fn done_after(&mut self, id: u64) -> Option<Notice> {
+        let queue = self.records.iter().find(|r| r.id == id)?.queue.clone();
+        if self.after_all != PowerAction::Nothing && !self.busy(None) {
+            let action = std::mem::take(&mut self.after_all);
+            return Some(Notice::Done {
+                queue: None,
+                action,
+            });
+        }
+        let queue = self.queues.iter().find(|q| q.id == queue)?;
+        (queue.when_done != PowerAction::Nothing && !self.busy(Some(&queue.id))).then(|| {
+            Notice::Done {
+                queue: Some(queue.clone()),
+                action: queue.when_done,
+            }
+        })
+    }
+
     /// The download of a torrent, if one has it.
     fn torrent_download(&self, info_hash: &str) -> Option<u64> {
         self.records
@@ -984,6 +1238,7 @@ fn view(record: &Record, live: &Live) -> DownloadView {
         checking: live.torrent.is_some_and(|t| t.checking),
         upload_speed: live.torrent.map_or(0, |t| t.upload_speed),
         uploaded: live.torrent.map_or(0, |t| t.uploaded),
+        queue: record.queue.clone(),
     }
 }
 
@@ -1575,6 +1830,176 @@ echo "SDMF $home/$name"
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (format!("http://{addr}"), data)
+    }
+
+    fn local(hour: u32, minute: u32) -> chrono::NaiveDateTime {
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 12)
+            .unwrap()
+            .and_hms_opt(hour, minute, 0)
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn queues_run_their_downloads_on_schedule() {
+        let fixture = Fixture::new();
+        let (base, _) = big_file_server().await;
+        let manager = fixture.manager();
+        let mut slow = manager.settings();
+        slow.speed_limit = 256 * 1024;
+        manager.update_settings(slow).unwrap();
+
+        let night = manager
+            .save_queue(Queue {
+                id: String::new(),
+                name: "Night".into(),
+                max_parallel: 1,
+                schedule: queue::Schedule {
+                    enabled: true,
+                    start: Some("01:00".into()),
+                    stop: Some("05:00".into()),
+                    days: Vec::new(),
+                },
+                when_done: PowerAction::Nothing,
+            })
+            .unwrap();
+        assert_eq!(night.id, "q1");
+        let mut ids = Vec::new();
+        for name in ["a.bin", "b.bin"] {
+            let request = AddRequest {
+                url: format!("{base}/{name}"),
+                queue: Some(night.id.clone()),
+                ..AddRequest::default()
+            };
+            ids.push(manager.add(request).await.unwrap());
+        }
+        // An unknown queue means the main queue.
+        let other = manager
+            .add(AddRequest {
+                url: format!("{base}/c.bin"),
+                queue: Some("gone".into()),
+                ..AddRequest::default()
+            })
+            .await
+            .unwrap();
+
+        // Nothing runs until the schedule starts the queue.
+        manager.check_schedules(local(0, 59));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let list = manager.list();
+        assert!(list.iter().all(|d| d.state == State::Paused));
+        assert_eq!(
+            list.iter().map(|d| d.queue.as_str()).collect::<Vec<_>>(),
+            ["q1", "q1", "main"]
+        );
+
+        // One at a time, as the queue says.
+        manager.check_schedules(local(1, 0));
+        wait_for(&manager, ids[0], State::Downloading).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(manager.get(ids[1]).unwrap().state, State::Queued);
+        assert_eq!(manager.get(other).unwrap().state, State::Paused);
+
+        manager.check_schedules(local(5, 0));
+        wait_for(&manager, ids[0], State::Paused).await;
+        assert_eq!(manager.get(ids[1]).unwrap().state, State::Paused);
+        // A schedule without days runs once.
+        assert!(!manager.queues()[1].schedule.enabled);
+
+        // Queues are remembered; deleting one moves its downloads.
+        manager.shutdown().await;
+        drop(manager);
+        let manager = fixture.manager();
+        assert_eq!(manager.queues()[1].name, "Night");
+        assert_eq!(manager.get(ids[1]).unwrap().queue, "q1");
+        manager.delete_queue("q1");
+        manager.delete_queue(MAIN_QUEUE);
+        assert_eq!(manager.queues().len(), 1);
+        assert!(manager.list().iter().all(|d| d.queue == MAIN_QUEUE));
+        manager.move_to_queue(&ids, "nowhere");
+        assert_eq!(manager.get(ids[0]).unwrap().queue, MAIN_QUEUE);
+        manager.shutdown().await;
+    }
+
+    async fn wait_for_notice(fixture: &Fixture, wanted: &Notice) {
+        for _ in 0..200 {
+            if fixture.notices.lock().unwrap().contains(wanted) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("no {wanted:?} in {:?}", fixture.notices.lock().unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn says_what_to_do_when_downloads_are_done() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let manager = fixture.manager();
+        let mut main = manager.queues()[0].clone();
+        main.when_done = PowerAction::Shutdown;
+        let main = manager.save_queue(main).unwrap();
+
+        let id = manager
+            .add(request(format!("{base}/one.zip"), true))
+            .await
+            .unwrap();
+        wait_for(&manager, id, State::Completed).await;
+        wait_for_notice(
+            &fixture,
+            &Notice::Done {
+                queue: Some(main),
+                action: PowerAction::Shutdown,
+            },
+        )
+        .await;
+
+        // "When all downloads are done" wins, and only counts once.
+        manager.set_after_all(PowerAction::Quit);
+        let id = manager
+            .add(request(format!("{base}/two.zip"), true))
+            .await
+            .unwrap();
+        wait_for(&manager, id, State::Completed).await;
+        wait_for_notice(
+            &fixture,
+            &Notice::Done {
+                queue: None,
+                action: PowerAction::Quit,
+            },
+        )
+        .await;
+        assert_eq!(manager.after_all(), PowerAction::Nothing);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pausing_does_not_count_as_done() {
+        let fixture = Fixture::new();
+        let (base, _) = big_file_server().await;
+        let manager = fixture.manager();
+        let mut slow = manager.settings();
+        slow.speed_limit = 64 * 1024;
+        manager.update_settings(slow).unwrap();
+        manager.set_after_all(PowerAction::Shutdown);
+
+        let id = manager
+            .add(request(format!("{base}/big.bin"), true))
+            .await
+            .unwrap();
+        wait_for(&manager, id, State::Downloading).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        manager.pause(&[id]);
+        wait_for(&manager, id, State::Paused).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !fixture
+                .notices
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| matches!(n, Notice::Done { .. }))
+        );
+        assert_eq!(manager.after_all(), PowerAction::Shutdown);
+        manager.shutdown().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]

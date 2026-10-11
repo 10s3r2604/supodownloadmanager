@@ -9,15 +9,16 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::AppState;
 use crate::browsers::{self, Browser, Engine, InstallInfo};
 use crate::category::Category;
 use crate::manager::{AddRequest, DownloadView, State as DownloadState};
 use crate::media::{AddMediaRequest, MediaInfo, MediaSource, ToolStatus};
+use crate::queue::{PowerAction, Queue};
 use crate::settings::Settings;
 use crate::torrent::{AddTorrentRequest, TorrentFile, TorrentInfo, TorrentSource};
 use crate::tray;
 use crate::windows::WhenDone;
+use crate::{AppState, PowerCountdown};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -150,6 +151,59 @@ pub fn get_when_done(state: State<'_, AppState>, id: u64) -> WhenDone {
 #[tauri::command]
 pub fn set_when_done(state: State<'_, AppState>, id: u64, choice: WhenDone) {
     state.when_done.set(id, choice);
+}
+
+#[tauri::command]
+pub fn list_queues(state: State<'_, AppState>) -> Vec<Queue> {
+    state.manager.queues()
+}
+
+/// Adds a queue (with an empty id) or changes one.
+#[tauri::command]
+pub fn save_queue(state: State<'_, AppState>, queue: Queue) -> Result<Queue> {
+    state.manager.save_queue(queue)
+}
+
+#[tauri::command]
+pub fn delete_queue(state: State<'_, AppState>, id: String) {
+    state.manager.delete_queue(&id);
+}
+
+#[tauri::command]
+pub fn start_queue(state: State<'_, AppState>, id: String) {
+    state.manager.start_queue(&id);
+}
+
+#[tauri::command]
+pub fn stop_queue(state: State<'_, AppState>, id: String) {
+    state.manager.stop_queue(&id);
+}
+
+#[tauri::command]
+pub fn move_to_queue(state: State<'_, AppState>, ids: Vec<u64>, queue: String) {
+    state.manager.move_to_queue(&ids, &queue);
+}
+
+/// What happens once every download is done.
+#[tauri::command]
+pub fn get_after_all(state: State<'_, AppState>) -> PowerAction {
+    state.manager.after_all()
+}
+
+#[tauri::command]
+pub fn set_after_all(state: State<'_, AppState>, action: PowerAction) {
+    state.manager.set_after_all(action);
+}
+
+/// The power action counting down, if any.
+#[tauri::command]
+pub fn power_countdown(state: State<'_, AppState>) -> Option<PowerCountdown> {
+    state.power.lock().ok().and_then(|slot| slot.clone())
+}
+
+#[tauri::command]
+pub fn cancel_power_action(app: AppHandle) {
+    crate::cancel_power_action(&app);
 }
 
 #[derive(Serialize)]

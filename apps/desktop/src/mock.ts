@@ -1,7 +1,7 @@
 // A simulated backend so the interface can be developed and tested in a
 // normal browser (`npm run dev`). It is never used inside the real app.
 
-import type { Api, Browser, Category, Download, MediaInfo, MediaOption, Settings, ToolStatus, TorrentFile, TorrentInfo, WhenDone } from "./api";
+import type { Api, Browser, Category, Download, MediaInfo, MediaOption, PowerAction, PowerCountdown, Queue, Settings, ToolStatus, TorrentFile, TorrentInfo, WhenDone } from "./api";
 import { categoryOf } from "./model";
 
 const MB = 1024 * 1024;
@@ -83,6 +83,7 @@ function make(
     checking: false,
     uploadSpeed: 0,
     uploaded: 0,
+    queue: "main",
     ...extra,
   };
 }
@@ -127,6 +128,24 @@ const downloads: Download[] = [
 ];
 
 const whenDone = new Map<number, WhenDone>();
+
+const queues: Queue[] = [
+  { id: "main", name: "", maxParallel: 3, schedule: { enabled: false, start: null, stop: null, days: [] }, whenDone: "nothing" },
+  {
+    id: "q1",
+    name: "Night",
+    maxParallel: 2,
+    schedule: { enabled: true, start: "01:00", stop: "06:30", days: [0, 1, 2, 3, 4, 5, 6] },
+    whenDone: "shutdown",
+  },
+];
+downloads[5].queue = "q1";
+downloads[7].queue = "q1";
+let afterAll: PowerAction = "nothing";
+const powerParam = new URLSearchParams(location.search).get("power");
+let countdown: PowerCountdown | null = powerParam
+  ? { action: powerParam as PowerAction, queue: "Night", at: Date.now() + 60_000 }
+  : null;
 
 const speeds = new Map<number, number>([
   [1, 9.4 * MB],
@@ -498,5 +517,50 @@ export const mockApi: Api = {
     const listener = (event: Event) => handler((event as CustomEvent).detail);
     window.addEventListener("sdm:tool-progress", listener);
     return () => window.removeEventListener("sdm:tool-progress", listener);
+  },
+  async listQueues() {
+    return clone(queues);
+  },
+  async saveQueue(queue) {
+    const saved = clone(queue);
+    if (!saved.id) {
+      saved.id = `q${queues.length}`;
+      queues.push(saved);
+    } else {
+      queues[queues.findIndex((q) => q.id === saved.id)] = saved;
+    }
+    return clone(saved);
+  },
+  async deleteQueue(id) {
+    if (id === "main") return;
+    queues.splice(queues.findIndex((q) => q.id === id), 1);
+    for (const d of downloads.filter((d) => d.queue === id)) d.queue = "main";
+  },
+  async startQueue(id) {
+    await this.resume(downloads.filter((d) => d.queue === id).map((d) => d.id));
+  },
+  async stopQueue(id) {
+    await this.pause(downloads.filter((d) => d.queue === id).map((d) => d.id));
+  },
+  async moveToQueue(ids, queue) {
+    for (const d of byIds(ids)) d.queue = queue;
+  },
+  async getAfterAll() {
+    return afterAll;
+  },
+  async setAfterAll(action) {
+    afterAll = action;
+  },
+  async powerCountdown() {
+    return countdown;
+  },
+  async cancelPowerAction() {
+    countdown = null;
+    window.dispatchEvent(new CustomEvent("sdm:power", { detail: null }));
+  },
+  async onPowerCountdown(handler) {
+    const listener = (event: Event) => handler((event as CustomEvent).detail);
+    window.addEventListener("sdm:power", listener);
+    return () => window.removeEventListener("sdm:power", listener);
   },
 };

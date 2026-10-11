@@ -217,6 +217,42 @@
   font-size: 12px;
 }
 
+.mn-bulk {
+  align-items: center;
+}
+
+.mn-when {
+  display: inline-flex;
+  align-items: center;
+}
+
+.mn-when > svg:first-child {
+  position: static;
+  transform: none;
+  margin-right: 4px;
+}
+
+.mn-when select {
+  appearance: none;
+  padding: 2px 20px 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mn-when select option {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.mn-when.on {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
 .mn-list {
   flex: 1;
   min-height: 0;

@@ -1,6 +1,6 @@
 // Data and actions for the download list.
 
-import type { AppInfo, Download, Settings } from "./api";
+import type { AppInfo, Download, PowerAction, Queue, Settings } from "./api";
 import type { Filter, History, Totals, TypeFilter } from "./model";
 
 export interface RowActions {
@@ -16,6 +16,7 @@ export interface RowActions {
   copyLink: (download: Download) => void;
   remove: (ids: number[]) => void;
   openProgress: (download: Download) => void;
+  moveToQueue: (ids: number[], queue: string) => void;
   menu: (event: { clientX: number; clientY: number }, download: Download) => void;
 }
 
@@ -39,4 +40,13 @@ export interface ViewProps {
   onPauseAll: () => void;
   onSettings: () => void;
   onBrowsers: () => void;
+  queues: Queue[];
+  /** A queue id, or "all". */
+  queueFilter: string;
+  setQueueFilter: (queue: string) => void;
+  afterAll: PowerAction;
+  setAfterAll: (action: PowerAction) => void;
+  onScheduler: () => void;
+  onStartQueue: (queue: string) => void;
+  onStopQueue: (queue: string) => void;
 }

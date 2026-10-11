@@ -1,20 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import type { Download } from "../api";
+import type { Download, Queue } from "../api";
 import { useI18n } from "../context";
 import { Icon } from "../icons";
 import type { RowActions } from "../views";
+import { queueName } from "./SchedulerDialog";
 
 interface Props {
   x: number;
   y: number;
   download: Download;
   selected: number[];
+  queues: Queue[];
   actions: RowActions;
   onClose: () => void;
 }
 
-export function ContextMenu({ x, y, download: d, selected, actions, onClose }: Props) {
+export function ContextMenu({ x, y, download: d, selected, queues, actions, onClose }: Props) {
   const { t } = useI18n();
   const ids = selected.includes(d.id) ? selected : [d.id];
   const canPause = d.state === "downloading" || d.state === "queued";
@@ -84,6 +86,14 @@ export function ContextMenu({ x, y, download: d, selected, actions, onClose }: P
       {canResume && item("play", t("resume"), () => actions.resume(ids))}
       {d.seeding && item("pause", t("stopSeeding"), () => actions.pause([d.id]))}
       {item("link", t("copyLink"), () => actions.copyLink(d))}
+      {d.state !== "completed" &&
+        queues
+          .filter((q) => q.id !== d.queue)
+          .map((q) => (
+            <button key={q.id} type="button" role="menuitem" onClick={() => actions.moveToQueue(ids, q.id)}>
+              <Icon name="clock" size={15} /> {t("moveToQueue", { queue: queueName(q, t) })}
+            </button>
+          ))}
       <hr />
       {item("trash", t("delete"), () => actions.remove(ids), true)}
     </div>
