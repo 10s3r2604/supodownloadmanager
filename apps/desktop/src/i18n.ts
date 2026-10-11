@@ -127,6 +127,7 @@ const en = {
   deleteFiles: "Also move downloaded files to the Trash",
 
   settingsTitle: "Settings",
+  settingsSaveFailed: "Settings could not be saved. Your previous settings are still in use.",
   tabGeneral: "General",
   tabConnection: "Connection",
   tabBrowser: "Browser & clipboard",
@@ -151,6 +152,7 @@ const en = {
   proxySystem: "Use system settings",
   proxyNone: "No proxy",
   proxyCustom: "Custom",
+  customProxyUrl: "Custom proxy",
   browserIntegration: "Accept downloads from the browser extension",
   confirmBrowser: "Ask before downloading from the browser",
   clipboardMonitor: "Offer to download links I copy",
@@ -489,6 +491,7 @@ const vi: Record<TextKey, string> = {
   deleteFiles: "Chuyển cả các file đã tải xong vào Thùng rác",
 
   settingsTitle: "Cài đặt",
+  settingsSaveFailed: "Không lưu được cài đặt. Cài đặt trước đó vẫn đang được sử dụng.",
   tabGeneral: "Chung",
   tabConnection: "Kết nối",
   tabBrowser: "Trình duyệt & clipboard",
@@ -513,6 +516,7 @@ const vi: Record<TextKey, string> = {
   proxySystem: "Theo cài đặt hệ thống",
   proxyNone: "Không dùng proxy",
   proxyCustom: "Tùy chỉnh",
+  customProxyUrl: "Địa chỉ proxy tùy chỉnh",
   browserIntegration: "Nhận link tải từ extension trình duyệt",
   confirmBrowser: "Hỏi trước khi tải file từ trình duyệt",
   clipboardMonitor: "Gợi ý tải khi tôi copy link",

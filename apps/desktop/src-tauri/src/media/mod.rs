@@ -169,7 +169,7 @@ async fn run_probe(
     let mut lines = BufReader::new(stderr).lines();
     let reader = async move {
         while let Ok(Some(line)) = lines.next_line().await {
-            tracing::debug!(target: "sdm_desktop::ytdlp", "{line}");
+            let line = redact_diagnostic(&line);
             *stage
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = line.clone();
@@ -237,104 +237,301 @@ async fn run_probe(
     }
 }
 
-/// Remembers what yt-dlp found on pages for a while, so the quality menu
-/// opens at once when the page was read in advance (when the pointer
-/// reached the video).
-#[derive(Default)]
+/// yt-dlp can echo signed URLs or proxy credentials in diagnostics.
+fn redact_diagnostic(line: &str) -> String {
+    line.split_whitespace()
+        .map(|word| {
+            let Some(separator) = word.find("://") else {
+                return word.to_owned();
+            };
+            let start = word[..separator]
+                .rfind(|c: char| !c.is_ascii_alphanumeric() && !matches!(c, '+' | '-' | '.'))
+                .map_or(0, |index| index + 1);
+            if let Ok(mut url) = url::Url::parse(&word[start..]) {
+                let _ = url.set_username("");
+                let _ = url.set_password(None);
+                url.set_query(None);
+                url.set_fragment(None);
+                return format!("{}{}", &word[..start], url);
+            }
+            // Malformed ports or punctuation must not cause a credential leak.
+            let rest = &word[separator + 3..];
+            let authority_end = rest.find('/').unwrap_or(rest.len());
+            let rest = rest[..authority_end]
+                .rfind('@')
+                .map_or(rest, |index| &rest[index + 1..]);
+            let end = rest.find(['?', '#']).unwrap_or(rest.len());
+            format!("{}{}", &word[..separator + 3], &rest[..end])
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Bounded discovery shared by native dialogs and browser job interests.
+#[derive(Clone)]
 pub struct Prober {
-    pages: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Probe>>>,
+    inner: std::sync::Arc<ProbePool>,
+}
+
+struct ProbePool {
+    pages: std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<Probe>>>,
+    slots: std::sync::Arc<tokio::sync::Semaphore>,
+    next_interest: std::sync::atomic::AtomicU64,
+}
+
+impl Default for Prober {
+    fn default() -> Self {
+        Self {
+            inner: std::sync::Arc::new(ProbePool {
+                pages: Default::default(),
+                slots: std::sync::Arc::new(tokio::sync::Semaphore::new(PROBE_ACTIVE)),
+                next_interest: std::sync::atomic::AtomicU64::new(1),
+            }),
+        }
+    }
 }
 
 struct Probe {
+    page: String,
     started: std::time::Instant,
-    /// The last thing yt-dlp said, while it works.
     stage: std::sync::Mutex<String>,
-    result: tokio::sync::OnceCell<Result<MediaInfo, String>>,
+    result: tokio::sync::watch::Sender<Option<Result<MediaInfo, String>>>,
     cancel: tokio::sync::watch::Sender<bool>,
+    interests:
+        std::sync::Mutex<std::collections::HashMap<u64, (bool, tokio::sync::watch::Sender<bool>)>>,
 }
 
-/// How long a page's formats stay valid; their addresses expire.
+struct Interest {
+    probe: std::sync::Arc<Probe>,
+    id: u64,
+}
+
+impl Drop for Interest {
+    fn drop(&mut self) {
+        let mut interests = self
+            .probe
+            .interests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        interests.remove(&self.id);
+        if interests.is_empty() && self.probe.result.borrow().is_none() {
+            self.probe.cancel.send_replace(true);
+        }
+    }
+}
+
+const PROBE_ACTIVE: usize = 2;
+/// Includes the two active jobs and eight waiting pages. Cache entries do not count.
+const PROBE_PENDING: usize = 10;
+const PROBE_CACHE: usize = 64;
 const PROBE_KEEP: Duration = Duration::from_secs(20 * 60);
 
 impl Prober {
-    /// What yt-dlp finds on a page, read once and shared by everyone who
-    /// asks while it is being read.
     pub async fn probe(
         &self,
-        tools: &Tools,
+        tools: &std::sync::Arc<Tools>,
         source: &MediaSource,
         proxy: &str,
     ) -> Result<MediaInfo, String> {
+        self.probe_with_interest(tools, source, proxy, true).await
+    }
+
+    /// Dropping this future releases just this browser's interest.
+    pub async fn probe_browser(
+        &self,
+        tools: &std::sync::Arc<Tools>,
+        source: &MediaSource,
+        proxy: &str,
+    ) -> Result<MediaInfo, String> {
+        self.probe_with_interest(tools, source, proxy, false).await
+    }
+
+    async fn probe_with_interest(
+        &self,
+        tools: &std::sync::Arc<Tools>,
+        source: &MediaSource,
+        proxy: &str,
+        native: bool,
+    ) -> Result<MediaInfo, String> {
+        use std::sync::atomic::Ordering;
         validate_page(&source.page_url)?;
-        let key = page_key(&source.page_url);
-        let entry = {
+        let key = source_key(source, proxy);
+        let id = self.inner.next_interest.fetch_add(1, Ordering::Relaxed);
+        let (interest_cancel, mut cancelled) = tokio::sync::watch::channel(false);
+        let (entry, fresh) = {
             let mut pages = self
+                .inner
                 .pages
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            pages.retain(|_, p| p.started.elapsed() < PROBE_KEEP);
-            pages
-                .entry(key.clone())
+            pages.retain(|_, p| {
+                !*p.cancel.borrow()
+                    && (p.result.borrow().is_none() || p.started.elapsed() < PROBE_KEEP)
+            });
+            if !pages.contains_key(&key)
+                && pages
+                    .values()
+                    .filter(|p| p.result.borrow().is_none())
+                    .count()
+                    >= PROBE_PENDING
+            {
+                return Err("video discovery is busy; try again shortly".into());
+            }
+            if pages.len() >= PROBE_CACHE
+                && let Some(oldest) = pages
+                    .iter()
+                    .filter(|(_, p)| p.result.borrow().is_some())
+                    .min_by_key(|(_, p)| p.started)
+                    .map(|(k, _)| *k)
+            {
+                pages.remove(&oldest);
+            }
+            let fresh = !pages.contains_key(&key);
+            let entry = pages
+                .entry(key)
                 .or_insert_with(|| {
                     std::sync::Arc::new(Probe {
+                        page: page_key(&source.page_url),
                         started: std::time::Instant::now(),
-                        stage: std::sync::Mutex::new(String::new()),
-                        result: tokio::sync::OnceCell::new(),
+                        stage: std::sync::Mutex::new("waiting for video discovery".into()),
+                        result: tokio::sync::watch::channel(None).0,
                         cancel: tokio::sync::watch::channel(false).0,
+                        interests: Default::default(),
                     })
                 })
-                .clone()
-        };
-        let result = entry
-            .result
-            .get_or_init(|| read_page(tools, source, proxy, &entry.stage, entry.cancel.subscribe()))
-            .await
-            .clone();
-        if result.is_err() {
-            // Let the next attempt try again.
-            let mut pages = self
-                .pages
+                .clone();
+            entry
+                .interests
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if pages
-                .get(&key)
-                .is_some_and(|p| std::sync::Arc::ptr_eq(p, &entry))
-            {
-                pages.remove(&key);
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(id, (native, interest_cancel));
+            (entry, fresh)
+        };
+        let _interest = Interest {
+            probe: entry.clone(),
+            id,
+        };
+        if fresh {
+            let pool = self.inner.clone();
+            let entry = entry.clone();
+            let tools = tools.clone();
+            let source = source.clone();
+            let proxy = proxy.to_owned();
+            tokio::spawn(async move {
+                let mut cancelled = entry.cancel.subscribe();
+                let result = tokio::select! {
+                    biased;
+                    _ = wait_cancelled(&mut cancelled) => Err("video discovery cancelled".into()),
+                    permit = tokio::time::timeout(PROBE_TIMEOUT, pool.slots.clone().acquire_owned()) => {
+                        match permit {
+                            Ok(Ok(_permit)) => read_page(&tools, &source, &proxy, &entry.stage, cancelled.clone()).await,
+                            _ => Err("video discovery queue took too long; try again".into()),
+                        }
+                    }
+                };
+                let failed = result.is_err();
+                entry.result.send_replace(Some(result));
+                if failed {
+                    let mut pages = pool
+                        .pages
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if pages
+                        .get(&key)
+                        .is_some_and(|p| std::sync::Arc::ptr_eq(p, &entry))
+                    {
+                        pages.remove(&key);
+                    }
+                }
+            });
+        }
+        let mut result = entry.result.subscribe();
+        loop {
+            if let Some(result) = result.borrow().clone() {
+                return result;
+            }
+            tokio::select! {
+                biased;
+                _ = wait_cancelled(&mut cancelled) => {
+                    // When this cancelled the shared worker, finish killing/reaping
+                    // before completing the native invocation and releasing cookies.
+                    if *entry.cancel.borrow() {
+                        while result.borrow().is_none() {
+                            if result.changed().await.is_err() { break; }
+                        }
+                    }
+                    return Err("video discovery cancelled".into());
+                },
+                changed = result.changed() => if changed.is_err() { return Err("video discovery stopped".into()); }
             }
         }
-        result
     }
-}
 
-impl Prober {
+    /// Native dialog cancellation leaves browser interests attached.
     pub fn cancel(&self, page_url: &str) {
-        let probe = self
-            .pages
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&page_key(page_url));
-        if let Some(probe) = probe {
-            probe.cancel.send_replace(true);
-        }
-    }
-
-    /// What yt-dlp is doing for a page being read, for the user to see.
-    pub fn stage(&self, page_url: &str) -> Option<String> {
         let pages = self
+            .inner
             .pages
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let probe = pages.get(&page_key(page_url))?;
-        if probe.result.initialized() {
-            return None;
+        for probe in pages.values().filter(|p| p.page == page_key(page_url)) {
+            let mut interests = probe
+                .interests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            interests.retain(|_, (native, cancel)| {
+                if *native {
+                    cancel.send_replace(true);
+                    false
+                } else {
+                    true
+                }
+            });
+            if interests.is_empty() && probe.result.borrow().is_none() {
+                probe.cancel.send_replace(true);
+            }
         }
+    }
+
+    pub fn stage(&self, page_url: &str) -> Option<String> {
+        let pages = self
+            .inner
+            .pages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let probe = pages.values().find(|p| {
+            p.page == page_key(page_url) && p.result.borrow().is_none() && !*p.cancel.borrow()
+        })?;
         let stage = probe
             .stage
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        Some(stage.clone()).filter(|s| !s.is_empty())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        Some(stage).filter(|s| !s.is_empty())
     }
+}
+
+pub(crate) async fn wait_cancelled(cancelled: &mut tokio::sync::watch::Receiver<bool>) {
+    while !*cancelled.borrow() {
+        if cancelled.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+/// Hash authentication context in memory; never persist or log the key/input.
+pub(crate) fn source_key(source: &MediaSource, proxy: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    page_key(&source.page_url).hash(&mut hash);
+    source.media_url.hash(&mut hash);
+    source.user_agent.hash(&mut hash);
+    source.referrer.hash(&mut hash);
+    serde_json::to_string(&source.cookies)
+        .unwrap_or_default()
+        .hash(&mut hash);
+    proxy.hash(&mut hash);
+    hash.finish()
 }
 
 /// Pages that differ only in their fragment are the same video.
@@ -498,14 +695,14 @@ mod tests {
         let fixture = dir.path().join("yt-dlp");
         std::fs::write(&fixture, "#!/bin/sh\necho reading >&2\nexec sleep 30\n").unwrap();
         std::fs::set_permissions(&fixture, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let tools = Tools::with_ytdlp(dir.path(), fixture.clone());
+        let tools = std::sync::Arc::new(Tools::with_ytdlp(dir.path(), fixture.clone()));
         let prober = Prober::default();
         let source = MediaSource {
             page_url: "https://x.com/author/status/123".into(),
             ..MediaSource::default()
         };
         let cancel = async {
-            while prober.stage(&source.page_url).is_none() {
+            while prober.stage(&source.page_url).as_deref() != Some("reading") {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             prober.cancel(&format!("{}#player", source.page_url));
@@ -530,5 +727,219 @@ mod tests {
         let info = prober.probe(&tools, &source, "none").await.unwrap();
         assert_eq!(info.title, "Retry clip");
         assert!(!info.options.is_empty());
+    }
+    #[test]
+    fn cache_separates_authentication_and_selected_clip() {
+        let base = MediaSource {
+            page_url: "https://example.org/clip".into(),
+            ..Default::default()
+        };
+        let mut changed = base.clone();
+        changed.page_url.push_str("#player");
+        changed.title = Some("different tab title".into());
+        assert_eq!(source_key(&base, ""), source_key(&changed, ""));
+        changed.user_agent = Some("another browser".into());
+        assert_ne!(source_key(&base, ""), source_key(&changed, ""));
+        changed = base.clone();
+        changed.referrer = Some("https://example.org/private".into());
+        assert_ne!(source_key(&base, ""), source_key(&changed, ""));
+        changed = base.clone();
+        changed.media_url = Some("https://example.org/second-clip".into());
+        assert_ne!(source_key(&base, ""), source_key(&changed, ""));
+        changed = base.clone();
+        changed.cookies = serde_json::from_str(r#"[{"name":"session","value":"private-value","domain":"example.org","path":"/","secure":true,"hostOnly":true,"expires":null}]"#).unwrap();
+        assert_ne!(source_key(&base, ""), source_key(&changed, ""));
+        assert_ne!(
+            source_key(&base, ""),
+            source_key(&base, "http://user:password@proxy.example")
+        );
+    }
+
+    #[test]
+    fn diagnostics_remove_url_credentials_and_tokens() {
+        let line = redact_diagnostic(
+            "ERROR: https://user:password@example.org/clip?token=secret#private failed",
+        );
+        assert_eq!(line, "ERROR: https://example.org/clip failed");
+        for input in [
+            "socks5://user:password@proxy.example:1080?token=secret",
+            "socks5h://user:password@proxy.example:1080?token=secret",
+            "SOCKS4://user:password@proxy.example:1080?token=secret",
+            "HTTPS://user:password@example.org/clip?token=secret",
+            "socks5://user:password@proxy.example:invalid?token=secret",
+        ] {
+            let line = redact_diagnostic(input);
+            assert!(!line.contains("user"), "{line}");
+            assert!(!line.contains("password"), "{line}");
+            assert!(!line.contains("secret"), "{line}");
+        }
+    }
+
+    #[cfg(unix)]
+    fn stalled_tools(dir: &std::path::Path) -> std::sync::Arc<Tools> {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = dir.join("yt-dlp");
+        std::fs::write(
+            &fixture,
+            "#!/bin/sh\ntouch \"$(dirname \"$0\")/started-$$\"\necho PID $$ >&2\nexec sleep 30\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fixture, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::sync::Arc::new(Tools::with_ytdlp(dir, fixture))
+    }
+
+    #[cfg(unix)]
+    fn started_count(dir: &std::path::Path) -> usize {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|p| p.file_name().to_string_lossy().starts_with("started-"))
+            .count()
+    }
+
+    #[cfg(unix)]
+    async fn await_started(dir: &std::path::Path, count: usize) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while started_count(dir) < count {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn discovery_bounds_active_and_queued_pages_and_cancels_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = stalled_tools(dir.path());
+        let prober = Prober::default();
+        let mut tasks = Vec::new();
+        for index in 0..PROBE_PENDING {
+            let prober = prober.clone();
+            let tools = tools.clone();
+            tasks.push(tokio::spawn(async move {
+                prober
+                    .probe_browser(
+                        &tools,
+                        &MediaSource {
+                            page_url: format!("https://example.org/{index}"),
+                            ..Default::default()
+                        },
+                        "none",
+                    )
+                    .await
+            }));
+        }
+        await_started(dir.path(), PROBE_ACTIVE).await;
+        // Let all submitted tasks register; this does not rely on process sleeps.
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while prober.inner.pages.lock().unwrap().len() < PROBE_PENDING {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(started_count(dir.path()), PROBE_ACTIVE);
+        let error = prober
+            .probe_browser(
+                &tools,
+                &MediaSource {
+                    page_url: "https://example.org/overflow".into(),
+                    ..Default::default()
+                },
+                "none",
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("busy"));
+        // Release every active and queued browser interest. Queued work must never spawn.
+        for task in &tasks {
+            task.abort();
+        }
+        for task in tasks {
+            assert!(task.await.unwrap_err().is_cancelled());
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !prober.inner.pages.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(started_count(dir.path()), PROBE_ACTIVE);
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("media")).unwrap().count(),
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelling_one_browser_or_native_interest_preserves_other_browser() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = stalled_tools(dir.path());
+        let prober = Prober::default();
+        let source = MediaSource {
+            page_url: "https://example.org/shared".into(),
+            ..Default::default()
+        };
+        let start = |native: bool| {
+            let prober = prober.clone();
+            let tools = tools.clone();
+            let source = source.clone();
+            tokio::spawn(async move {
+                if native {
+                    prober.probe(&tools, &source, "none").await
+                } else {
+                    prober.probe_browser(&tools, &source, "none").await
+                }
+            })
+        };
+        let first = start(false);
+        let second = start(false);
+        let native = start(true);
+        await_started(dir.path(), 1).await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let count = prober
+                    .inner
+                    .pages
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .interests
+                    .lock()
+                    .unwrap()
+                    .len();
+                if count == 3 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        first.abort();
+        let _ = first.await;
+        prober.cancel(&source.page_url);
+        assert!(native.await.unwrap().unwrap_err().contains("cancelled"));
+        assert!(!second.is_finished());
+        assert_eq!(started_count(dir.path()), 1);
+        let stage = prober.stage(&source.page_url).unwrap();
+        let pid: i32 = stage.strip_prefix("PID ").unwrap().parse().unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+        second.abort();
+        let _ = second.await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !prober.inner.pages.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
     }
 }

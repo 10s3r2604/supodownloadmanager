@@ -21,7 +21,22 @@ env:
   VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
+  validate:
+    name: Validate release version and engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node .github/scripts/check-version.mjs
+      - run: node --test extension/tests/*.test.mjs
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
   desktop:
+    needs: validate
     name: Desktop app (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -105,6 +120,7 @@ jobs:
           args: ${{ matrix.args }}
 
   cli:
+    needs: validate
     name: CLI ${{ matrix.target }}
     strategy:
       fail-fast: false

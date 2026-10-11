@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use sdm_core::{ClientConfig, ProxyConfig};
+use sdm_core::{ClientConfig, Downloader, ProxyConfig};
 use serde::{Deserialize, Serialize};
 
 use crate::category::{Category, default_capture_extensions};
@@ -95,16 +95,48 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Reads the settings, falling back to defaults when the file is
-    /// missing or broken.
-    pub fn load(path: &Path) -> Self {
-        store::load_json::<Self>(path)
-            .unwrap_or_default()
-            .sanitized()
+    /// Defaults are used only for a missing file. A malformed proxy from an
+    /// older release is repaired without discarding the user's other settings.
+    pub fn load(path: &Path) -> std::io::Result<(Self, Option<String>)> {
+        match store::load_json_validated::<Self>(path, |settings| settings.validate()) {
+            Ok(loaded) => {
+                let notice = loaded.recovery_notice("settings");
+                Ok((loaded.value.unwrap_or_default().sanitized(), notice))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+                // Reading without proxy validation still rejects broken JSON
+                // and I/O failures. Only the invalid proxy field is repaired.
+                let Some(mut settings) = store::load_json::<Self>(path)? else {
+                    return Err(error);
+                };
+                settings = settings.sanitized();
+                if settings.validate().is_ok() {
+                    return Err(error);
+                }
+                settings.proxy.clear();
+                settings.validate()?;
+                let damaged = store::repair_json(path, &settings)?;
+                Ok((
+                    settings,
+                    Some(format!(
+                        "The saved proxy address was invalid and has been reset to the system proxy. Other settings were kept. The original settings were preserved at {}. Open Settings to choose a proxy.",
+                        damaged.display()
+                    )),
+                ))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        self.validate()?;
         store::save_json(path, self)
+    }
+
+    fn validate(&self) -> std::io::Result<()> {
+        Downloader::new(self.client_config())
+            .map(|_| ())
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
     }
 
     /// Brings every value into its valid range.
@@ -277,5 +309,71 @@ mod tests {
             settings.client_config().proxy,
             ProxyConfig::Url("socks5://127.0.0.1:1080".into())
         );
+    }
+
+    #[test]
+    fn invalid_saved_proxy_recovers_valid_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let good = Settings {
+            proxy: "none".into(),
+            connections: 19,
+            language: "vi".into(),
+            ..Settings::default()
+        }
+        .sanitized();
+        good.save(&path).unwrap();
+        let bad = Settings {
+            proxy: "http://[".into(),
+            ..good.clone()
+        };
+        let bytes = serde_json::to_vec(&bad).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let (loaded, notice) = Settings::load(&path).unwrap();
+        assert_eq!(loaded, good);
+        assert!(notice.unwrap().contains("preserved"));
+        let damaged = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.to_string_lossy().contains(".damaged-"))
+            .unwrap();
+        assert_eq!(std::fs::read(damaged).unwrap(), bytes);
+    }
+
+    #[test]
+    fn invalid_proxy_without_backup_repairs_only_proxy_and_retains_original() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut settings = Settings {
+            proxy: "http://[".into(),
+            connections: 19,
+            language: "vi".into(),
+            temp_dir: dir.path().join("custom-temp"),
+            ..Settings::default()
+        }
+        .sanitized();
+        let bytes = serde_json::to_vec(&settings).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let (loaded, notice) = Settings::load(&path).unwrap();
+        settings.proxy.clear();
+        assert_eq!(loaded, settings);
+        assert!(notice.unwrap().contains("system proxy"));
+        let damaged = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.to_string_lossy().contains(".damaged-"))
+            .unwrap();
+        assert_eq!(std::fs::read(damaged).unwrap(), bytes);
+        assert_eq!(Settings::load(&path).unwrap().0, settings);
+    }
+
+    #[test]
+    fn unreadable_settings_are_preserved_and_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, b"{broken").unwrap();
+        let error = Settings::load(&path).unwrap_err();
+        assert!(error.to_string().contains("settings.json"));
+        assert_eq!(std::fs::read(path).unwrap(), b"{broken");
     }
 }

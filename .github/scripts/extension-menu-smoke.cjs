@@ -18,6 +18,9 @@ const executablePath = process.env.SDM_SMOKE_BROWSER || candidates.find(p => fs.
 assert(executablePath, 'A Chromium browser is required for the extension smoke test.');
 const requests = [], errors = [], report = [];
 let failProbe = false;
+let probeDelayMs = 0;
+let holdNextStatus = false, heldStatus = null;
+const jobs = new Map();
 const options = [
   { id: 'v1080', kind: 'video', height: 1080, fps: 60, ext: 'mp4', vcodec: 'H.264', acodec: 'AAC', size: 10 * 1024 ** 2 },
   { id: 'v720', kind: 'video', height: 720, fps: 30, ext: 'mp4', vcodec: 'H.264', acodec: 'AAC', size: 6 * 1024 ** 2 },
@@ -27,9 +30,52 @@ const server = http.createServer(async (req, res) => {
   let raw = '';
   for await (const part of req) raw += part;
   const body = raw ? JSON.parse(raw) : null;
-  requests.push({ path: req.url, body, client: req.headers['x-sdm-client'] });
+  const request = {
+    path: req.url, body, client: req.headers['x-sdm-client'],
+    owner: req.headers['x-sdm-probe-owner'], startedAt: Date.now(),
+  };
+  requests.push(request);
+  res.on('finish', () => { request.finishedAt = Date.now(); });
+  res.on('close', () => { if (!res.writableFinished) request.abortedAt = Date.now(); });
   res.setHeader('Content-Type', 'application/json');
-  if (req.url === '/api/ping') return res.end(JSON.stringify({ enabled: true, media: true, version: 'fixture' }));
+  if (req.url === '/api/ping') return res.end(JSON.stringify({ enabled: true, media: true, mediaProbeJobs: true, version: 'fixture' }));
+  if (['/api/media/probe/start', '/api/media/probe/status', '/api/media/probe/cancel'].includes(req.url)) {
+    if (!request.owner || typeof body?.clientId !== 'string') {
+      res.statusCode = 400;
+      return res.end('The probe needs its document owner and client ID.');
+    }
+    const key = `${request.owner}:${body.clientId}`;
+    if (req.url === '/api/media/probe/cancel') {
+      jobs.delete(key);
+      res.statusCode = 202;
+      return res.end();
+    }
+    let job = jobs.get(key);
+    if (req.url === '/api/media/probe/start' && !job) {
+      assert(body.source?.pageUrl, 'Probe jobs must include a source.');
+      job = {
+        readyAt: Date.now() + probeDelayMs, lastPollAt: Date.now(),
+        error: failProbe ? 'Fixture video needs a login' : null,
+        info: { title: `Clip ${body.source.pageUrl.split('/').at(-1)}`, options },
+      };
+      jobs.set(key, job);
+    }
+    if (!job || Date.now() - job.lastPollAt > 20_000) {
+      jobs.delete(key);
+      res.statusCode = 404;
+      return res.end('video discovery expired; try again');
+    }
+    job.lastPollAt = Date.now();
+    const result = job.error ? { state: 'error', error: job.error }
+      : Date.now() < job.readyAt ? { state: 'pending' } : { state: 'done', info: job.info };
+    if (req.url === '/api/media/probe/status' && holdNextStatus) {
+      holdNextStatus = false;
+      heldStatus = { request, res, result };
+      return;
+    }
+    return res.end(JSON.stringify(result));
+  }
+  // Keep the legacy desktop route available for older installed extensions.
   if (req.url === '/api/media/probe') {
     if (!body.wait) { res.statusCode = 202; return res.end(); }
     if (failProbe) { res.statusCode = 422; return res.end('Fixture video needs a login'); }
@@ -126,7 +172,9 @@ function fixture(content) {
       await until(async () => (await menuText()).includes('1080p60'), 'Quality menu did not load');
     }
     const adds = () => requests.filter(r => r.path === '/api/media/add');
-    const probes = () => requests.filter(r => r.path === '/api/media/probe');
+    const probes = () => requests.filter(r => ['/api/media/probe', '/api/media/probe/start'].includes(r.path));
+    const jobRequests = () => requests.filter(r => r.path.startsWith('/api/media/probe/'));
+    const statuses = clientId => requests.filter(r => r.path === '/api/media/probe/status' && r.body.clientId === clientId);
 
     await open(0);
     const labels = await menuText();
@@ -189,6 +237,69 @@ function fixture(content) {
     report.push({ name: 'narrow-menu-stays-in-viewport', passed: true });
     await page.keyboard.press('Escape');
 
+    await page.setViewportSize({ width: 1000, height: 800 });
+    probeDelayMs = 35_000;
+    html = fixture('<article><a href="/slow/status/333"><time>Slow post</time></a><video></video></article>');
+    await page.reload();
+    const slowStart = Date.now();
+    const beforeSlow = probes().length;
+    await hover(0);
+    await clickNode((n, a) => a.class === 'trigger');
+    const slowProbe = await until(() => probes().slice(beforeSlow).find(r => r.body.source?.pageUrl.endsWith('/status/333')), 'Slow probe did not start');
+    const slowClientId = slowProbe.body.clientId;
+    await until(() => statuses(slowClientId).length >= 2, 'Slow discovery did not use short status polls');
+    assert(!(await menuText()).includes('1080p60'), 'The slow fixture must remain pending before completion');
+    const oldTarget = (await loader.send('Target.getTargets')).targetInfos.find(t =>
+      t.type === 'service_worker' && t.url === `chrome-extension://${installed.id}/background.js`);
+    assert(oldTarget, 'The installed extension service-worker target was not found.');
+    holdNextStatus = true;
+    await until(() => heldStatus, 'The status request was not held for worker termination');
+    assert.equal(heldStatus.request.body.clientId, slowClientId);
+    assert(!heldStatus.request.finishedAt, 'Worker termination must interrupt an outstanding response.');
+    // Terminate the actual extension worker with a status response pending.
+    // The document retries its same ID after its runtime message port closes.
+    const closed = await loader.send('Target.closeTarget', { targetId: oldTarget.targetId });
+    assert.notEqual(closed.success, false, 'The extension service worker could not be stopped.');
+    await until(async () => !(await loader.send('Target.getTargets')).targetInfos
+      .some(t => t.targetId === oldTarget.targetId), 'The old extension worker did not stop');
+    if (!heldStatus.res.destroyed) heldStatus.res.end(JSON.stringify(heldStatus.result));
+    const newTarget = await until(async () => {
+      const { targetInfos } = await loader.send('Target.getTargets');
+      assert(!targetInfos.some(t => t.targetId === oldTarget.targetId), 'The old worker is still alive.');
+      return targetInfos.find(t => t.type === 'service_worker'
+        && t.url === oldTarget.url && t.targetId !== oldTarget.targetId);
+    }, 'Polling did not restart the installed extension worker');
+    assert.notEqual(newTarget.targetId, oldTarget.targetId);
+    worker = context.serviceWorkers().find(w => w.url() === oldTarget.url) || worker;
+    await until(async () => (await menuText()).includes('1080p60'), 'The 35-second discovery did not finish after the worker restart', 45_000);
+    assert(Date.now() - slowStart >= 35_000, 'Discovery must cross the previous long-fetch lifetime.');
+    assert(statuses(slowClientId).length >= 20, 'The long discovery must use repeated independent status requests.');
+    assert.equal(adds().length, 2, 'Discovery must not start a download.');
+    report.push({ name: 'slow-discovery-over-30-seconds-uses-short-polls', passed: true });
+    report.push({ name: 'pending-discovery-survives-worker-restart', passed: true });
+    await page.keyboard.press('Escape');
+
+    html = fixture('<article><a href="/cancel/status/444"><time>Cancelled post</time></a><video></video></article>');
+    await page.reload();
+    const beforeCancel = probes().length;
+    await hover(0);
+    await clickNode((n, a) => a.class === 'trigger');
+    const cancelledProbe = await until(() => probes().slice(beforeCancel).find(r => r.body.source?.pageUrl.endsWith('/status/444')), 'Cancellable probe did not start');
+    await until(() => statuses(cancelledProbe.body.clientId).length >= 1, 'Cancellable discovery was not pending');
+    await page.keyboard.press('Escape');
+    await until(() => requests.some(r => r.path === '/api/media/probe/cancel'
+      && r.body.clientId === cancelledProbe.body.clientId && r.owner === cancelledProbe.owner), 'Closing the menu did not cancel its probe interest');
+    assert.equal(await menuText(), '', 'Closing the menu must hide its pending result.');
+    assert(!jobs.has(`${cancelledProbe.owner}:${cancelledProbe.body.clientId}`), 'The cancelled interest must be removed from the fixture.');
+    probeDelayMs = 0;
+    const beforeReopen = probes().length;
+    await open(0);
+    const reopenedProbe = probes().slice(beforeReopen).find(r => r.body.source?.pageUrl.endsWith('/status/444'));
+    assert(reopenedProbe && reopenedProbe.body.clientId !== cancelledProbe.body.clientId, 'Reopening must start a fresh probe interest.');
+    assert.equal(adds().length, 2);
+    report.push({ name: 'close-cancels-pending-discovery-and-reopen-retries', passed: true });
+    await page.keyboard.press('Escape');
+
     html = fixture('<div data-testid="cellInnerDiv"><video></video></div><article><a href="/unrelated/status/999"><time>Another post</time></a></article>');
     await page.reload();
     const before = probes().length;
@@ -198,7 +309,11 @@ function fixture(content) {
     assert.equal(probes().length, before, 'An unresolved feed must not reach yt-dlp');
     report.push({ name: 'unresolved-post-stays-inline', passed: true });
 
-    assert(probes().every(r => /\/status\/\d+/.test(r.body.pageUrl)));
+    assert(probes().every(r => /\/status\/\d+/.test(r.body.source?.pageUrl || r.body.pageUrl)));
+    assert(jobRequests().length > 0, 'The installed extension must use the short probe-job protocol.');
+    assert(jobRequests().every(r => r.owner.startsWith(`${installed.id}:`)), 'Each interest must retain its extension document owner.');
+    await until(() => jobRequests().every(r => r.finishedAt || r.abortedAt), 'A probe request remained open');
+    assert(jobRequests().every(r => (r.finishedAt || r.abortedAt) - r.startedAt < 2500), 'Each probe request must finish or abort within its short fetch deadline.');
     assert(requests.every(r => r.path !== '/api/media'), 'The desktop picker must never open for X');
     assert(requests.every(r => r.client === 'extension'));
     assert.deepEqual(errors, []);

@@ -29,6 +29,7 @@
 #![forbid(unsafe_code)]
 
 mod checksum;
+mod completion;
 mod engine;
 mod error;
 mod filename;
@@ -38,6 +39,7 @@ mod segment;
 mod state;
 
 pub use checksum::sha256_file;
+pub use completion::{CompletionReceipt, acknowledge_completion, reconcile_completion};
 pub use engine::{
     ClientConfig, Destination, DownloadControl, DownloadHandle, DownloadOptions, DownloadRequest,
     Downloader, Fetched, Outcome, Phase, Progress, ProxyConfig, SegmentProgress, cleanup_partial,

@@ -439,6 +439,11 @@ function MinimalRow({ d, selected, actions }: { d: Download } & ViewProps) {
           </span>
           <span className="mn-size">{size}</span>
         </div>
+        {d.error && (
+          <button type="button" className="mn-row-error" title={d.error} onClick={() => actions.details(d)}>
+            {d.error}
+          </button>
+        )}
         <div
           className={`mn-line${value == null && running ? " indeterminate" : ""}`}
           role="progressbar"

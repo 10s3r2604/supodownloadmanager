@@ -71,7 +71,9 @@ function sdmVideoSource(video, pageUrl, title) {
   let request = 0;
   let frame = 0;
   let pointer = { x: -1, y: -1 };
-  let prefetched = { page: "", at: 0 };
+  let prefetched = { page: "", clientId: null, at: 0 };
+  let probeTimer = 0;
+  let probeWake = null;
 
   function refresh() {
     if (checking || Date.now() - checkedAt < RECHECK_MS) return checking;
@@ -162,13 +164,50 @@ function sdmVideoSource(video, pageUrl, title) {
     return sdmVideoSource(current, location.href, document.title);
   }
 
-  function prefetch() {
+  async function probeDelay() {
+    let wake;
+    await new Promise((resolve) => {
+      wake = resolve;
+      probeWake = resolve;
+      probeTimer = setTimeout(resolve, 1000);
+    });
+    if (probeWake === wake) probeWake = null;
+  }
+
+  async function probeMessage(message, token) {
+    // A worker replacement can close a runtime port mid-request. Retry the
+    // idempotent operation with its existing lease, within a small bound.
+    for (let attempt = 0; attempt < 3; ++attempt) {
+      try { return await chrome.runtime.sendMessage(message); }
+      catch {
+        if (!menuOpen || token !== request || attempt === 2) return null;
+        await probeDelay();
+        if (!menuOpen || token !== request) return null;
+      }
+    }
+    return null;
+  }
+
+  function cancelProbe() {
+    clearTimeout(probeTimer);
+    probeWake?.();
+    probeWake = null;
+    const clientId = prefetched.clientId;
+    prefetched = { page: "", clientId: null, at: 0 };
+    if (clientId) chrome.runtime.sendMessage({ type: "video-probe-cancel", clientId }).catch(() => {});
+  }
+
+  function prefetch(fresh = false) {
     const selected = source();
     if (sdmIsXPage(selected.pageUrl) && !sdmXPostUrl(selected.pageUrl)) return;
-    const page = selected.pageUrl.split("#")[0];
-    if (prefetched.page === page && Date.now() - prefetched.at < 60_000) return;
-    prefetched = { page, at: Date.now() };
-    chrome.runtime.sendMessage({ type: "video-prefetch", ...selected }).catch(() => {});
+    const page = `${selected.pageUrl.split("#")[0]}|${selected.mediaUrl || ""}`;
+    // Opening a menu after a long hover renews the interest before the
+    // desktop's 20-second idle lease can leave a cached expiry error.
+    if (prefetched.page === page && prefetched.clientId && (!fresh || Date.now() - prefetched.at < 15_000)) return;
+    cancelProbe();
+    const clientId = crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    prefetched = { page, clientId, at: Date.now() };
+    chrome.runtime.sendMessage({ type: "video-prefetch", ...selected, clientId }).catch(() => {});
   }
 
   function visibleVideoAt(x, y) {
@@ -184,7 +223,8 @@ function sdmVideoSource(video, pageUrl, title) {
     if (!current || !host) return;
     // Virtualized feeds may reuse the same VIDEO element for another post.
     if (!current.isConnected) { hide(); return; }
-    if (menuOpen && source().pageUrl !== menuSource?.pageUrl) { closeMenu(); reset(); }
+    const selected = source();
+    if (menuOpen && (selected.pageUrl !== menuSource?.pageUrl || selected.mediaUrl !== menuSource?.mediaUrl)) { closeMenu(); reset(); }
     const r = current.getBoundingClientRect();
     if (r.width < MIN_WIDTH || r.bottom < 0 || r.top > innerHeight) { hide(); return; }
     host.style.top = `${Math.max(6, Math.min(innerHeight - 38, r.top + 10))}px`;
@@ -204,7 +244,7 @@ function sdmVideoSource(video, pageUrl, title) {
   function show(video) {
     build();
     clearTimeout(hideTimer);
-    if (current !== video) { current = video; reset(); }
+    if (current !== video) { cancelProbe(); current = video; reset(); }
     host.style.display = "block";
     attach();
     place();
@@ -214,6 +254,7 @@ function sdmVideoSource(video, pageUrl, title) {
 
   function closeMenu(focus = false) {
     ++request;
+    cancelProbe();
     menuOpen = false;
     menuSource = null;
     if (menu) menu.hidden = true;
@@ -309,7 +350,16 @@ function sdmVideoSource(video, pageUrl, title) {
       place();
       return;
     }
-    const result = await chrome.runtime.sendMessage({ type: "video-probe", ...menuSource }).catch(() => null);
+    // The document owns the lease and polls through independent short messages.
+    // Its ID survives service-worker restarts and never carries cookies in URLs.
+    prefetch(true);
+    const clientId = prefetched.clientId;
+    let result = await probeMessage({ type: "video-probe", ...menuSource, clientId }, token);
+    while (menuOpen && token === request && result?.ok && result.state === "pending") {
+      await probeDelay();
+      if (!menuOpen || token !== request) return;
+      result = await probeMessage({ type: "video-probe-status", clientId }, token);
+    }
     if (!menuOpen || token !== request) return;
     if (!result?.ok) {
       status(result?.error || text("videoFailed"), "error");
@@ -412,7 +462,7 @@ function sdmVideoSource(video, pageUrl, title) {
       if (!video) { reply({ ok: false }); return; }
       closeMenu();
       show(video);
-      await openMenu({ preventDefault() {}, stopPropagation() {}, detail: 0 });
+      openMenu({ preventDefault() {}, stopPropagation() {}, detail: 0 }).catch(() => {});
       reply({ ok: true });
     })().catch(() => reply({ ok: false }));
     return true;
@@ -429,5 +479,6 @@ function sdmVideoSource(video, pageUrl, title) {
   }, true);
   addEventListener("scroll", place, { capture: true, passive: true });
   addEventListener("resize", place, { passive: true });
+  addEventListener("pagehide", cancelProbe);
   document.addEventListener("fullscreenchange", () => { attach(); place(); });
 })();

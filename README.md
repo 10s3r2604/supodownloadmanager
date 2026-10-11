@@ -59,7 +59,8 @@ computer you own, and the code is right here.
   over instead of being mixed.
 - Automatic retries, a speed limit, proxies (HTTP, HTTPS, SOCKS5) and safe file names.
   Works with servers that allow only one connection or don't say how big the file is.
-- Link expired halfway? Paste a fresh one and the download continues where it stopped.
+- Link expired halfway? Paste a fresh one to continue when the server's file size and
+  saved validators still match. Changed or missing validators require a fresh download.
 - Download data and resume state stay in SDM's own temporary folder, configurable in
   **Settings → General → Temporary folder** (Windows default:
   `%LOCALAPPDATA%\com.supodownloadmanager.app\temp`). Completed or removed downloads
@@ -167,8 +168,11 @@ Press `Ctrl+C` to pause; run the same command again to resume.
 2. **Split:** the file is divided into one segment per connection.
 3. **Download:** each connection fills its segment. A connection that finishes early
    splits the segment with the most bytes left and takes the back half.
-4. **Save progress** to `name.sdm-part` / `name.sdm-state` every two seconds and on pause.
-5. **Finish:** the part file is renamed to the final name.
+4. **Save progress:** sync downloaded bytes before writing `name.sdm-state` in the
+   download's own temporary subfolder. Validate segment coverage and file length on resume.
+5. **Finish:** publish the final file, copying through destination-side staging when
+   the temporary folder is on another drive. The desktop app retains a SHA-256 completion
+   journal until its history is saved, so a restart can recover interrupted bookkeeping.
 
 Videos are downloaded by yt-dlp and torrents by librqbit, inside the same queue, list and
 progress windows. The browser extension talks to the app through a small server on

@@ -7,7 +7,7 @@ default-members = ["crates/sdm-core", "crates/sdm-cli"]
 exclude = ["third_party"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/10s3r2604/supodownloadmanager"
@@ -15,7 +15,7 @@ homepage = "https://github.com/10s3r2604/supodownloadmanager"
 authors = ["Supo Download Manager contributors"]
 
 [workspace.dependencies]
-sdm-core = { path = "crates/sdm-core", version = "0.6.0" }
+sdm-core = { path = "crates/sdm-core", version = "0.6.1" }
 anyhow = "1"
 futures-util = "0.3"
 percent-encoding = "2"

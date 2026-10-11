@@ -361,6 +361,17 @@
   flex: 1;
 }
 
+.mn-row-error {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  color: var(--danger);
+  font-size: 12px;
+}
+
 .mn-error {
   color: var(--danger);
 }

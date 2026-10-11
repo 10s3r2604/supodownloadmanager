@@ -25,6 +25,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager as _, RunEvent, Window, WindowEvent};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -112,7 +113,17 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
-            setup(app.handle())?;
+            if let Err(error) = setup(app.handle()) {
+                tracing::error!(%error, "could not load the application data");
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                let handle = app.handle().clone();
+                app.dialog().message(format!(
+                    "Supo Download Manager could not open its saved data.\n\n{error}\n\nKeep the original files and restore a known-good backup at the paths above, then reopen the app."
+                )).title("Saved data needs recovery").kind(MessageDialogKind::Error)
+                    .show(move |_| handle.exit(1));
+            }
             Ok(())
         })
         .on_window_event(on_window_event)
@@ -205,7 +216,7 @@ fn init_logging() {
 fn setup(app: &AppHandle) -> anyhow::Result<()> {
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
-    let mut settings = Settings::load(&data_dir.join("settings.json"));
+    let (mut settings, settings_notice) = Settings::load(&data_dir.join("settings.json"))?;
     if settings.temp_dir.as_os_str().is_empty() {
         settings.temp_dir = app.path().app_local_data_dir()?.join("temp");
     }
@@ -251,6 +262,18 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         quitting: AtomicBool::new(false),
     });
     tray::create(app, settings.resolved_language())?;
+    let recovery_notice = [settings_notice.as_deref(), manager.recovery_notice()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if !recovery_notice.is_empty() {
+        app.dialog()
+            .message(recovery_notice)
+            .title("Saved data recovered")
+            .kind(MessageDialogKind::Warning)
+            .show(|_| {});
+    }
 
     // Sites change all the time; keep our copy of yt-dlp fresh.
     let update_manager = manager.clone();
@@ -289,6 +312,9 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
 }
 
 fn on_window_event(window: &Window, event: &WindowEvent) {
+    if window.app_handle().try_state::<AppState>().is_none() {
+        return;
+    }
     if let Some(id) = windows::add_window_id(window.label()) {
         if matches!(event, WindowEvent::Destroyed) {
             window
@@ -323,7 +349,9 @@ pub(crate) fn show_main_window(app: &AppHandle) {
 
 /// Pauses all downloads so their progress is saved, then exits.
 pub(crate) fn quit(app: &AppHandle) {
-    let state = app.state::<AppState>();
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
     if state.quitting.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -560,7 +588,14 @@ impl Handler for AppBridge {
         source: media::MediaSource,
     ) -> BoxFuture<Result<media::MediaInfo, String>> {
         let app = self.app.clone();
-        Box::pin(async move { probe_page(&app, &source).await })
+        Box::pin(async move { probe_page_browser(&app, &source).await })
+    }
+
+    fn probe_media_browser(
+        &self,
+        source: media::MediaSource,
+    ) -> BoxFuture<Result<media::MediaInfo, String>> {
+        self.probe_media(source)
     }
 
     fn add_media(
@@ -570,7 +605,7 @@ impl Handler for AppBridge {
     ) -> BoxFuture<Result<u64, String>> {
         let app = self.app.clone();
         Box::pin(async move {
-            let info = probe_page(&app, &source).await?;
+            let info = probe_page_browser(&app, &source).await?;
             let option = info
                 .options
                 .iter()
@@ -601,13 +636,35 @@ pub(crate) async fn probe_page(
     app: &AppHandle,
     source: &media::MediaSource,
 ) -> Result<media::MediaInfo, String> {
+    probe_page_inner(app, source, false).await
+}
+
+async fn probe_page_browser(
+    app: &AppHandle,
+    source: &media::MediaSource,
+) -> Result<media::MediaInfo, String> {
+    probe_page_inner(app, source, true).await
+}
+
+async fn probe_page_inner(
+    app: &AppHandle,
+    source: &media::MediaSource,
+    browser: bool,
+) -> Result<media::MediaInfo, String> {
     let state = app.state::<AppState>();
     if state.tools.ytdlp().is_none() {
         let downloader = state.manager.downloader();
         state.tools.install_ytdlp(&downloader, |_| {}).await?;
     }
     let proxy = state.manager.settings().proxy;
-    state.prober.probe(&state.tools, source, &proxy).await
+    if browser {
+        state
+            .prober
+            .probe_browser(&state.tools, source, &proxy)
+            .await
+    } else {
+        state.prober.probe(&state.tools, source, &proxy).await
+    }
 }
 
 /// Magnet links and `.torrent` files among command line arguments.

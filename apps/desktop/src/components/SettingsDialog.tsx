@@ -49,6 +49,7 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
   const [customProxy, setCustomProxy] = useState(proxyMode === "custom" ? settings.proxy : "");
   const [types, setTypes] = useState(settings.captureExtensions.join(", "));
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
@@ -62,6 +63,7 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
 
   async function save() {
     setSaving(true);
+    setSaveError(null);
     const proxy = proxyMode === "system" ? "" : proxyMode === "none" ? "none" : customProxy.trim();
     const captureExtensions = types
       .split(/[,\s]+/)
@@ -71,7 +73,7 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
       onSaved(await api.saveSettings({ ...draft, proxy, captureExtensions }));
       onClose();
     } catch (error) {
-      onError(errorText(error));
+      setSaveError(errorText(error));
       setSaving(false);
     }
   }
@@ -118,6 +120,12 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
           </button>
         ))}
       </div>
+
+      {saveError && (
+        <p className="hint warning" role="alert">
+          {t("settingsSaveFailed")} {saveError}
+        </p>
+      )}
 
       {tab === "appearance" && (
         <div className="form">
@@ -203,7 +211,7 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
           <div className="field">
             <span>{t("downloadFolder")}</span>
             <div className="input-row">
-              <input value={draft.downloadDir} onChange={(e) => set("downloadDir", e.target.value)} />
+              <input aria-label={t("downloadFolder")} value={draft.downloadDir} onChange={(e) => set("downloadDir", e.target.value)} />
               <button type="button" className="button" onClick={() => browse("downloadDir")}>
                 <Icon name="folder" size={16} />
                 {t("browse")}
@@ -273,6 +281,7 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
             </div>
             {proxyMode === "custom" && (
               <input
+                aria-label={t("customProxyUrl")}
                 value={customProxy}
                 placeholder="http://127.0.0.1:8080 · socks5://127.0.0.1:1080"
                 spellCheck={false}

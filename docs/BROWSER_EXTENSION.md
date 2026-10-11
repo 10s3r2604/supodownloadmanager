@@ -4,6 +4,10 @@ The SDM extension hands downloads from your browser over to the SDM desktop
 app. It works in Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi, Chromium and
 Firefox.
 
+Extension 0.6.3's video menu requires desktop SDM 0.6.1 or newer. Update both
+components together: reinstall the desktop app, replace the extracted extension
+files and reload the extension in your browser's extension manager.
+
 <img src="images/extension-popup.png" alt="Extension popup" width="320">
 
 ## What it does

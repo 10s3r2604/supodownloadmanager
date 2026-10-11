@@ -141,7 +141,7 @@ const server=http.createServer((req,res)=>{
       const response=await fetch('http://127.0.0.1:1420/',{signal:AbortSignal.timeout(1_000)});
       return response.ok;
     },'Vite did not start');
-    const desktop=child(path.join(root,'target/debug/sdm-desktop.exe'),[],'desktop',{
+    let desktop=child(path.join(root,'target/debug/sdm-desktop.exe'),[],'desktop',{
       ...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9222',
     });
     await until(async()=>{
@@ -150,11 +150,11 @@ const server=http.createServer((req,res)=>{
     },'WebView2 debugging endpoint did not start',30_000);
     browser=await chromium.connectOverCDP('http://127.0.0.1:9222');
     const pages=()=>browser.contexts().flatMap(context=>context.pages());
-    const main=await until(()=>pages().find(page=>!page.url().includes('#')&&page.url().includes(':1420')),'Main WebView was not found');
+    let main=await until(()=>pages().find(page=>!page.url().includes('#')&&page.url().includes(':1420')),'Main WebView was not found');
     await main.getByRole('button',{name:'Settings',exact:true}).waitFor({timeout:20_000});
     // Remember the actual main HWND before opening auxiliary windows.
     // Process.MainWindowHandle can later select one of the small windows.
-    const mainWindowHandle=execFileSync('powershell.exe',['-NoProfile','-Command',
+    let mainWindowHandle=execFileSync('powershell.exe',['-NoProfile','-Command',
       `(Get-Process -Id ${desktop.pid}).MainWindowHandle.ToInt64()`
     ],{encoding:'utf8',timeout:10_000}).trim();
     assert(/^\d+$/.test(mainWindowHandle) && Number(mainWindowHandle)>0);
@@ -404,6 +404,44 @@ const server=http.createServer((req,res)=>{
     assert.equal((await invoke('get_settings')).tempDir,tempA);
     assert.equal(fs.readFileSync(blocked,'utf8'),'keep');
     report.push({name:'invalid-temp-settings-keep-previous-folder',passed:true,mainResponsive:true});
+
+    // A rejected proxy must not poison either the current downloader or the
+    // next launch. Exercise native validation as well as the real Settings UI.
+    const settingsFile=path.join(data,'settings.json');
+    const settingsBeforeProxy=await invoke('get_settings');
+    const diskBeforeProxy=fs.readFileSync(settingsFile);
+    const invalidProxy='http://[invalid]';
+    await assert.rejects(invoke('save_settings',{settings:{...settingsBeforeProxy,proxy:invalidProxy}}));
+    assert.deepEqual(await invoke('get_settings'),settingsBeforeProxy);
+    assert.deepEqual(fs.readFileSync(settingsFile),diskBeforeProxy);
+    nativeResponsive();
+    report.push({name:'invalid-proxy-native-save-keeps-runtime-and-disk',passed:true,mainResponsive:true});
+    await main.getByRole('button',{name:'Settings',exact:true}).click();
+    const proxyDialog=main.getByRole('dialog',{name:'Settings',exact:true});
+    await proxyDialog.getByRole('tab',{name:'Connection',exact:true}).click();
+    await proxyDialog.getByRole('radio',{name:'Custom',exact:true}).check();
+    await proxyDialog.getByRole('textbox',{name:'Custom proxy',exact:true}).fill(invalidProxy);
+    await proxyDialog.getByRole('button',{name:'Save',exact:true}).click();
+    const proxyError=proxyDialog.locator('p.warning[role="alert"]');
+    await proxyError.waitFor({timeout:8_000});
+    assert((await proxyError.innerText()).trim().length>0);
+    // The global toast expires after seven seconds; the field error must stay
+    // visible for the user to correct it without having to reproduce the failure.
+    await sleep(7_500);
+    assert(await proxyError.isVisible());
+    assert(await proxyDialog.getByRole('button',{name:'Save',exact:true}).isEnabled());
+    assert.deepEqual(await invoke('get_settings'),settingsBeforeProxy);
+    assert.deepEqual(fs.readFileSync(settingsFile),diskBeforeProxy);
+    nativeResponsive();
+    await main.screenshot({path:path.join(output,'invalid-proxy-settings.png')});
+    report.push({name:'invalid-proxy-settings-error-remains-visible',passed:true,persistentInlineError:true});
+    await proxyDialog.getByRole('radio',{name:'No proxy',exact:true}).check();
+    await proxyDialog.getByRole('button',{name:'Save',exact:true}).click();
+    await until(async()=>!(await proxyDialog.count()),'Correcting the proxy did not save Settings');
+    assert.equal((await invoke('get_settings')).proxy,'none');
+    assert.equal(JSON.parse(fs.readFileSync(settingsFile,'utf8')).proxy,'none');
+    report.push({name:'corrected-proxy-settings-save',passed:true,persisted:true});
+
     function workspaces(root) {
       return fs.existsSync(root)?fs.readdirSync(root).filter(name=>name.startsWith('download-')):[];
     }
@@ -424,7 +462,7 @@ const server=http.createServer((req,res)=>{
     await invoke('resume_downloads',{ids:[partialId]});
     const resumed=await until(async()=>{const d=await invoke('get_download',{id:partialId});return d.state==='completed'?d:null;},'Paused data did not resume after temp change');
     assert.equal(sha(fs.readFileSync(resumed.path)),sha(bytes));
-    assert(!fs.existsSync(workspaceA));
+    await until(()=>!fs.existsSync(workspaceA),'Saved completion did not clean its temporary workspace',8_000);
     assert(!fs.existsSync(path.join(directory,'.sdm-finalizing')));
     assert.equal(fs.readFileSync(blocked,'utf8'),'keep');
     report.push({name:'temp-root-change-resume-and-completion-cleanup',passed:true,contentVerified:true});
@@ -436,13 +474,145 @@ const server=http.createServer((req,res)=>{
     assert.equal(workspaces(tempB).length,0);
     assert(!fs.existsSync(path.join(directory,'temp-remove.bin')));
     report.push({name:'new-temp-root-removal-cleans-unfinished-data',passed:true});
+
+    // Restart the actual app, then damage its primary JSON files while it is
+    // stopped. The backups below were produced by SDM, not synthetic records.
+    const downloadsFile=path.join(data,'downloads.json');
+    const restartId=await invoke('add_download',{request:{url:`${source}/restart-paused.bin`,
+      fileName:'restart-paused.bin',directory,start:false}});
+    await until(async()=>(await invoke('list_downloads')).every(d=>!['downloading','queued'].includes(d.state)),
+      'Downloads did not settle before the restart');
+    const settingsBeforeRestart=await invoke('get_settings');
+    // Also establish a last-good settings backup with the most recent temp root.
+    await invoke('save_settings',{settings:settingsBeforeRestart});
+    const historyBeforeRestart=await invoke('list_downloads');
+    let restartIndex=0;
+    async function stopDesktop() {
+      const current=desktop;
+      const exited=current.exitCode!==null?Promise.resolve():new Promise(resolve=>current.once('exit',resolve));
+      // Closing the real main window runs the manager's graceful save/shutdown.
+      const closing=invoke('plugin:window|close',{label:'main'}).catch(()=>{});
+      await bounded(exited,'The desktop did not exit after closing its main window',15_000);
+      await closing;
+      await bounded(browser.close(),'Could not disconnect the stopped desktop',3_000).catch(()=>{});
+      browser=undefined;
+      await until(async()=>{
+        try { await fetch('http://127.0.0.1:9222/json/version',{signal:AbortSignal.timeout(500)}); return false; }
+        catch { return true; }
+      },'The old WebView2 debugging endpoint remained alive',8_000);
+    }
+    async function dismissRecoveryNotice() {
+      return until(()=>execFileSync('powershell.exe',['-NoProfile','-Command',`
+        Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class RecoveryNotice {
+  public delegate bool Visit(IntPtr window, IntPtr state);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(Visit visit, IntPtr state);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, Visit visit, IntPtr state);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int capacity);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr window, StringBuilder text, int capacity);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
+  static string Text(IntPtr window) { var text=new StringBuilder(4096); GetWindowText(window,text,text.Capacity); return text.ToString(); }
+  public static bool Dismiss(uint process) {
+    IntPtr dialog=IntPtr.Zero;
+    EnumWindows((window,state)=>{
+      uint owner; GetWindowThreadProcessId(window,out owner);
+      if(owner==process && Text(window)=="Saved data recovered") { dialog=window; return false; }
+      return true;
+    },IntPtr.Zero);
+    if(dialog==IntPtr.Zero) return false;
+    bool clicked=false;
+    EnumChildWindows(dialog,(window,state)=>{
+      var kind=new StringBuilder(128); GetClassName(window,kind,kind.Capacity);
+      if(kind.ToString()=="Button" && Text(window).Replace("&","").Trim()=="OK") {
+        SendMessage(window,0x00F5,IntPtr.Zero,IntPtr.Zero); clicked=true; return false;
+      }
+      return true;
+    },IntPtr.Zero);
+    // Windows task dialogs can host their standard button in DirectUI.
+    if(!clicked) SendMessage(dialog,0x0466,new IntPtr(1),IntPtr.Zero);
+    return true;
+  }
+}
+'@;
+        if ([RecoveryNotice]::Dismiss(${desktop.pid})) { 'dismissed' }
+      `],{encoding:'utf8',timeout:5_000}).includes('dismissed'),
+      'The recovered-data notice was not shown',10_000);
+    }
+    async function startDesktop(recovered=false) {
+      restartIndex+=1;
+      desktop=child(path.join(root,'target/debug/sdm-desktop.exe'),[],`desktop-restart-${restartIndex}`,{
+        ...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9222',
+      });
+      await until(async()=>{
+        const response=await fetch('http://127.0.0.1:9222/json/version',{signal:AbortSignal.timeout(1_000)});
+        return response.ok;
+      },'Restarted WebView2 debugging endpoint did not start',30_000);
+      browser=await chromium.connectOverCDP('http://127.0.0.1:9222');
+      main=await until(()=>pages().find(page=>!page.url().includes('#')&&page.url().includes(':1420')),
+        'Restarted main WebView was not found');
+      await main.getByRole('button',{name:'Settings',exact:true}).waitFor({timeout:20_000});
+      if(recovered) await dismissRecoveryNotice();
+      // Capture the main HWND after dismissing recovery, before any additional
+      // native windows can make Process.MainWindowHandle select another window.
+      mainWindowHandle=execFileSync('powershell.exe',['-NoProfile','-Command',
+        `(Get-Process -Id ${desktop.pid}).MainWindowHandle.ToInt64()`
+      ],{encoding:'utf8',timeout:10_000}).trim();
+      assert(/^\d+$/.test(mainWindowHandle) && Number(mainWindowHandle)>0);
+      nativeResponsive();
+    }
+    const ids=records=>records.map(d=>d.id).sort((a,b)=>a-b);
+    await stopDesktop();
+    assert(fs.existsSync(`${settingsFile}.bak`),'SDM did not create its settings backup');
+    assert(fs.existsSync(`${downloadsFile}.bak`),'SDM did not create its download history backup');
+    await startDesktop();
+    assert.deepEqual(await invoke('get_settings'),settingsBeforeRestart);
+    assert.deepEqual(ids(await invoke('list_downloads')),ids(historyBeforeRestart));
+    assert.equal((await invoke('get_download',{id:restartId})).state,'paused');
+    assert.equal((await invoke('get_download',{id:fileId})).state,'completed');
+    assert.equal(sha(fs.readFileSync(file.path)),sha(bytes));
+    assert(!fileRequests.some(r=>r.method==='GET' && !r.probe && r.url==='/restart-paused.bin'));
+    report.push({name:'native-restart-retains-settings-and-history',passed:true,contentVerified:true,pausedRetained:true});
+
+    await stopDesktop();
+    const settingsBackup=JSON.parse(fs.readFileSync(`${settingsFile}.bak`,'utf8'));
+    const historyBackup=JSON.parse(fs.readFileSync(`${downloadsFile}.bak`,'utf8'));
+    assert.equal(settingsBackup.tempDir,tempB);
+    assert(historyBackup.some(d=>d.id===restartId && d.state==='paused'));
+    assert(historyBackup.some(d=>d.id===fileId && d.state==='completed'));
+    const damagedSettings=Buffer.from('{"downloadDir":');
+    const damagedHistory=Buffer.from('[{"id":');
+    fs.writeFileSync(settingsFile,damagedSettings);
+    fs.writeFileSync(downloadsFile,damagedHistory);
+    await startDesktop(true);
+    assert.deepEqual(await invoke('get_settings'),settingsBackup);
+    assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile,'utf8')),settingsBackup);
+    assert(fs.readdirSync(data).filter(name=>name.startsWith('settings.json.damaged-'))
+      .some(name=>fs.readFileSync(path.join(data,name)).equals(damagedSettings)),
+      'The damaged settings document was not preserved');
+    report.push({name:'damaged-settings-recovers-last-good-backup',passed:true,originalPreserved:true});
+    const recoveredHistory=await invoke('list_downloads');
+    assert.deepEqual(ids(recoveredHistory),ids(historyBackup));
+    assert.equal(recoveredHistory.find(d=>d.id===restartId)?.state,'paused');
+    assert.equal(recoveredHistory.find(d=>d.id===fileId)?.state,'completed');
+    assert(fs.readdirSync(data).filter(name=>name.startsWith('downloads.json.damaged-'))
+      .some(name=>fs.readFileSync(path.join(data,name)).equals(damagedHistory)),
+      'The damaged download history was not preserved');
+    assert.equal(sha(fs.readFileSync(file.path)),sha(bytes));
+    await main.getByRole('button',{name:'Settings',exact:true}).click();
+    await main.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();
+    nativeResponsive();
+    report.push({name:'damaged-history-recovers-last-good-backup',passed:true,originalPreserved:true,mainResponsive:true});
     fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({passed:report.length,report},null,2));
     console.log(JSON.stringify({passed:report.length,report},null,2));
   } catch(e) {
     console.error(`::error::Native Windows smoke: ${String(e.message).replaceAll('\n',' ')}`);
     fs.writeFileSync(path.join(output,'failure.txt'),e.stack||String(e));
-    for(const name of ['desktop','vite']) {
-      const log=path.join(output,`${name}.log`);
+    for(const name of fs.readdirSync(output).filter(name=>/^(desktop(?:-restart-\d+)?|vite)\.log$/.test(name))) {
+      const log=path.join(output,name);
       if(fs.existsSync(log)) console.error(`${name} log:\n${fs.readFileSync(log,'utf8')}`);
     }
     try {
@@ -457,7 +627,9 @@ const server=http.createServer((req,res)=>{
   } finally {
     if(browser) await bounded(browser.close(),'Could not close the smoke browser',3_000).catch(()=>{});
     for(const processHandle of children.reverse()) {
-      if(processHandle.pid) try { execFileSync('taskkill',['/pid',String(processHandle.pid),'/t','/f'],{stdio:'ignore'}); } catch {}
+      if(processHandle.pid && processHandle.exitCode===null && processHandle.signalCode===null) {
+        try { execFileSync('taskkill',['/pid',String(processHandle.pid),'/t','/f'],{stdio:'ignore'}); } catch {}
+      }
     }
     server.closeAllConnections(); server.close();
   }

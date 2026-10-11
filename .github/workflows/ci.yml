@@ -60,9 +60,18 @@ jobs:
         run: |
           npm ci
           npm run build
+      - run: node .github/scripts/check-version.mjs
       - run: cargo fmt --all --check
       - run: node --test extension/tests/*.test.mjs
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Upload browser extensions for testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdm-browser-extensions
+          path: |
+            extension/dist/chromium/
+            extension/dist/firefox/
+          if-no-files-found: error
 
   test:
     name: Test engine and CLI (${{ matrix.os }})

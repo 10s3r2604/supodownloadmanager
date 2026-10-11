@@ -6,8 +6,7 @@
 
 const DEFAULT_PORT = 17360;
 const PING_CACHE_MS = 5000;
-const PREFETCH_CACHE_MS = 60_000;
-const MEDIA_TIMEOUT_MS = 180_000;
+const MEDIA_TIMEOUT_MS = 25_000;
 const DEFAULT_PREFS = { capture: true, videoButton: true, magnets: true, port: DEFAULT_PORT, minSizeMb: 0 };
 
 // Sites where the video button and menu stay away. The Chrome Web Store
@@ -49,7 +48,6 @@ let cachedBrowser = null;
 const givenBack = new Set();
 const captureJobs = new Map();
 const capturedDownloads = new Set();
-const prefetchedPages = new Map();
 
 async function prefs() {
   return chrome.storage.local.get(DEFAULT_PREFS);
@@ -79,7 +77,7 @@ async function isBrave() {
   }
 }
 
-async function callApp(path, body, timeout = 2500) {
+async function callApp(path, body, timeout = 2500, extraHeaders = {}) {
   const { port } = await prefs();
   return fetch(`http://127.0.0.1:${port}${path}`, {
     method: body ? "POST" : "GET",
@@ -87,6 +85,7 @@ async function callApp(path, body, timeout = 2500) {
       "Content-Type": "application/json",
       "X-SDM-Client": "extension",
       "X-SDM-Browser": await browserId(),
+      ...extraHeaders,
     },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(timeout),
@@ -216,34 +215,37 @@ async function handOverVideo({ pageUrl, title, mediaUrl, referrer }) {
   }
 }
 
-/** Reads qualities or starts the chosen download without opening the app dialog. */
+/** Short requests let content scripts resume jobs after an MV3 worker restart. */
 async function videoRequest(message, sender) {
-  const { pageUrl } = message;
-  if (isXPage(pageUrl) && !/^\/(?:[^/]+\/status|i\/web\/status|statuses)\/\d+(?:\/|$)/.test(new URL(pageUrl).pathname)) {
-    return { ok: false, error: chrome.i18n.getMessage("videoPostNotFound") };
-  }
-  if (
-    !/^https?:/i.test(pageUrl || "") ||
-    !videoAllowed(pageUrl) ||
-    !videoAllowed(sender.url || sender.tab?.url)
-  ) {
-    return { ok: false, error: chrome.i18n.getMessage("videoUnavailable") };
-  }
-  const [settings, status] = await Promise.all([prefs(), ping()]);
-  if (!settings.videoButton || !status?.enabled || !status?.media) {
-    return { ok: false, error: chrome.i18n.getMessage("statusOffline") };
-  }
-  const prefetch = message.type === "video-prefetch";
-  const key = pageUrl.split("#")[0];
-  const now = Date.now();
-  for (const [page, time] of prefetchedPages) {
-    if (now - time >= PREFETCH_CACHE_MS) prefetchedPages.delete(page);
-  }
-  if (prefetch) {
-    if (prefetchedPages.has(key)) return { ok: true };
-    prefetchedPages.set(key, now);
-  }
+  const probeHeaders = {
+    "X-SDM-Probe-Owner": `${chrome.runtime.id}:${sender.tab?.id ?? "extension"}:${sender.frameId ?? 0}:${sender.documentId || ""}`,
+  };
+  const statusRequest = message.type === "video-probe-status";
+  const cancel = message.type === "video-probe-cancel";
   try {
+    if (statusRequest || cancel) {
+      const response = await callApp(cancel ? "/api/media/probe/cancel" : "/api/media/probe/status",
+        { clientId: message.clientId }, 2500, probeHeaders);
+      if (!response.ok) throw new Error((await response.text()) || chrome.i18n.getMessage("videoFailed"));
+      if (cancel) return { ok: true };
+      const result = await response.json();
+      return result.state === "error" ? { ok: false, error: result.error } : { ok: true, ...result };
+    }
+    const { pageUrl } = message;
+    if (isXPage(pageUrl) && !/^\/(?:[^/]+\/status|i\/web\/status|statuses)\/\d+(?:\/|$)/.test(new URL(pageUrl).pathname)) {
+      return { ok: false, error: chrome.i18n.getMessage("videoPostNotFound") };
+    }
+    if (!/^https?:/i.test(pageUrl || "") || !videoAllowed(pageUrl) || !videoAllowed(sender.url || sender.tab?.url)) {
+      return { ok: false, error: chrome.i18n.getMessage("videoUnavailable") };
+    }
+    const [settings, status] = await Promise.all([prefs(), ping()]);
+    if (!settings.videoButton || !status?.enabled || !status?.media) {
+      return { ok: false, error: chrome.i18n.getMessage("statusOffline") };
+    }
+    const add = message.type === "video-add";
+    // Older desktops retain their legacy protocol for older extensions. A new
+    // extension asks the user to update instead of holding an MV3 fetch open.
+    if (!add && !status.mediaProbeJobs) return { ok: false, error: chrome.i18n.getMessage("videoFailed") };
     const source = {
       pageUrl,
       title: message.title || undefined,
@@ -252,18 +254,14 @@ async function videoRequest(message, sender) {
       cookies: await cookieList(pageUrl),
       userAgent: navigator.userAgent,
     };
-    const add = message.type === "video-add";
-    const response = await callApp(
-      add ? "/api/media/add" : "/api/media/probe",
-      add ? { source, option: message.option } : { ...source, wait: !prefetch },
-      prefetch ? 2500 : MEDIA_TIMEOUT_MS,
-    );
+    const response = await callApp(add ? "/api/media/add" : "/api/media/probe/start",
+      add ? { source, option: message.option } : { source, clientId: message.clientId },
+      add ? MEDIA_TIMEOUT_MS : 2500, probeHeaders);
     if (!response.ok) throw new Error((await response.text()) || chrome.i18n.getMessage("videoFailed"));
-    if (prefetch) return { ok: true };
     const result = await response.json();
-    return add ? { ok: true, id: result.id } : { ok: true, info: result };
+    if (add) return { ok: true, id: result.id };
+    return result.state === "error" ? { ok: false, error: result.error } : { ok: true, ...result };
   } catch (error) {
-    if (prefetch && prefetchedPages.get(key) === now) prefetchedPages.delete(key);
     return { ok: false, error: error instanceof TypeError ? chrome.i18n.getMessage("statusOffline") : error.message };
   }
 }
@@ -488,7 +486,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       .catch(() => reply({ ok: false, error: chrome.i18n.getMessage("statusOffline") }));
     return true;
   }
-  if (["video-prefetch", "video-probe", "video-add"].includes(message?.type)) {
+  if (["video-prefetch", "video-probe", "video-probe-status", "video-probe-cancel", "video-add"].includes(message?.type)) {
     videoRequest(message, sender).then(reply).catch(() => reply({ ok: false, error: chrome.i18n.getMessage("videoFailed") }));
     return true;
   }

@@ -121,7 +121,7 @@ pub async fn media_probe_stage(
     Ok(state.prober.stage(&page_url))
 }
 
-/// Stops discovery for this page, including any browser prefetch sharing it.
+/// Releases native dialog interests; browser jobs release their own interests.
 #[tauri::command]
 pub async fn cancel_media_probe(state: State<'_, AppState>, page_url: String) -> Result<()> {
     state.prober.cancel(&page_url);
@@ -365,12 +365,9 @@ pub async fn save_settings(
         .map_err(text_error)?;
     drop(file);
     std::fs::remove_file(probe).map_err(text_error)?;
-    settings
-        .save(&state.data_dir.join("settings.json"))
-        .map_err(text_error)?;
     state
         .manager
-        .update_settings(settings.clone())
+        .save_settings(&state.data_dir.join("settings.json"), settings.clone())
         .map_err(text_error)?;
     tray::set_language(&app, settings.resolved_language());
     Ok(settings)

@@ -18,12 +18,13 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+use crate::completion::prepare_completion;
 use crate::error::{Error, Result};
 use crate::filename;
 use crate::limiter::RateLimiter;
 use crate::probe::{self, ContentRange, RemoteInfo};
 use crate::segment::{Scheduler, Segment, lock};
-use crate::state::{PartialFiles, SavedSegment, SavedState};
+use crate::state::{PartialFiles, SavedSegment, SavedState, sync_parent};
 
 /// Data is collected in memory up to this size before it is written.
 const WRITE_BUFFER: usize = 256 * 1024;
@@ -33,6 +34,7 @@ const TICK: Duration = Duration::from_millis(250);
 const SAVE_EVERY: u32 = 8;
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(15);
 const PROBE_ATTEMPTS: u32 = 3;
+const MAX_REMOTE_RESTARTS: u32 = 1;
 
 const RUNNING: u8 = 0;
 const PAUSE: u8 = 1;
@@ -105,6 +107,10 @@ pub struct DownloadOptions {
     /// Keep unfinished data and progress under this root. `None` preserves
     /// the CLI's sidecar layout. Each destination gets an isolated subfolder.
     pub temp_dir: Option<PathBuf>,
+    /// Retain a verified publication journal until the application saves its
+    /// Completed history and calls [`crate::acknowledge_completion`]. Use a
+    /// stable, unique application row ID. `None` preserves CLI cleanup.
+    pub completion_id: Option<String>,
 }
 
 impl Default for DownloadOptions {
@@ -117,6 +123,7 @@ impl Default for DownloadOptions {
             speed_limit: None,
             overwrite: false,
             temp_dir: None,
+            completion_id: None,
         }
     }
 }
@@ -589,10 +596,10 @@ impl Shared {
 static ACTIVE_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Default::default);
 
 /// Keeps a path reserved in [`ACTIVE_PATHS`] while it is alive.
-struct PathGuard(PathBuf);
+pub(crate) struct PathGuard(PathBuf);
 
 impl PathGuard {
-    fn try_new(path: &Path) -> Option<Self> {
+    pub(crate) fn try_new(path: &Path) -> Option<Self> {
         lock(&ACTIVE_PATHS)
             .insert(path.to_owned())
             .then(|| Self(path.to_owned()))
@@ -661,7 +668,7 @@ async fn run(
     let url = parse_url(&url)?;
     let headers = build_headers(&headers)?;
 
-    let info = match probe_with_retry(&client, &url, &headers, &options, &shared.cancel).await {
+    let mut info = match probe_with_retry(&client, &url, &headers, &options, &shared.cancel).await {
         Err(Error::Cancelled) => return Ok(shared.stopped_outcome(None)),
         result => result?,
     };
@@ -683,6 +690,7 @@ async fn run(
     }
 
     let mut ranged = info.resumable && info.size.is_some_and(|size| size > 0);
+    let mut remote_restarts = 0;
     loop {
         let ctx = Arc::new(Ctx {
             client: client.clone(),
@@ -698,6 +706,32 @@ async fn run(
             cancel: shared.cancel.child_token(),
         });
         match transfer(ctx, &path, saved.take()).await {
+            Err(Error::RemoteChanged) => {
+                // No byte from the previous representation may survive. Bound
+                // the automatic restart so unstable servers cannot loop.
+                files.cleanup().await?;
+                {
+                    let mut status = lock(&shared.status);
+                    status.scheduler = None;
+                    status.resumed_from = 0;
+                    status.phase = Phase::Connecting;
+                }
+                if remote_restarts >= MAX_REMOTE_RESTARTS {
+                    return Err(Error::RemoteChanged);
+                }
+                remote_restarts += 1;
+                info = match probe_with_retry(&client, &url, &headers, &options, &shared.cancel)
+                    .await
+                {
+                    Err(Error::Cancelled) => return Ok(shared.stopped_outcome(Some(path))),
+                    result => result?,
+                };
+                files.prepare(&path).await?;
+                ranged = info.resumable && info.size.is_some_and(|size| size > 0);
+                let mut status = lock(&shared.status);
+                status.info = Some(info.clone());
+                status.phase = Phase::Downloading;
+            }
             Err(Error::RangeIgnored) if ranged => {
                 tracing::warn!("server ignores byte ranges; continuing with a single connection");
                 ranged = false;
@@ -713,7 +747,14 @@ async fn run(
                             ..
                         })
                 ) {
-                    if let Err(error) = files.cleanup().await {
+                    let cleanup = if options.completion_id.is_some()
+                        && matches!(result, Ok(Outcome::Completed { .. }))
+                    {
+                        files.cleanup_transfer().await
+                    } else {
+                        files.cleanup().await
+                    };
+                    if let Err(error) = cleanup {
                         tracing::warn!(%error, "could not clean download temporary files");
                     }
                     if options.temp_dir.is_some()
@@ -835,10 +876,19 @@ async fn saved_progress(files: &PartialFiles, info: &RemoteInfo) -> Result<Optio
     };
     if let Some(saved) = saved
         && saved.is_valid()
-        && saved.matches(info)
-        && fs::try_exists(part_path).await?
+        && saved.has_valid_data(part_path).await?
     {
-        return Ok(Some(saved));
+        if saved.matches(info) {
+            return Ok(Some(saved));
+        }
+        if saved.url != info.url {
+            // A new link must be validated by retarget_partial before
+            // replacing a different URL's usable saved data.
+            return Err(Error::NotSameFile(
+                "this partial download belongs to another link; refresh its link or restart it"
+                    .into(),
+            ));
+        }
     }
     tracing::warn!(path = %part_path.display(), "the file changed on the server; starting over");
     remove_if_exists(state_path).await?;
@@ -871,9 +921,17 @@ impl Ctx {
     async fn save_state(&self, scheduler: &Scheduler) -> Result<()> {
         match self.info.size {
             Some(size) if self.ranged => {
-                SavedState::new(&self.info, size, scheduler.saved_segments())
-                    .save(&self.state)
-                    .await
+                // Snapshot first, then sync the data backing those positions.
+                // Taking the snapshot after syncing could claim newer writes
+                // which have not yet reached stable storage.
+                let saved = SavedState::new(&self.info, size, scheduler.saved_segments());
+                OpenOptions::new()
+                    .write(true)
+                    .open(&self.part)
+                    .await?
+                    .sync_all()
+                    .await?;
+                saved.save(&self.state).await
             }
             _ => Ok(()),
         }
@@ -918,6 +976,9 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
         status.scheduler = Some(scheduler.clone());
     }
 
+    // Keep a fresh range plan recoverable from the first connection onward.
+    ctx.save_state(&scheduler).await?;
+
     let mut tasks = JoinSet::new();
     for _ in 0..workers {
         tasks.spawn(worker(ctx.clone(), scheduler.clone()));
@@ -954,6 +1015,22 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
     }
     shared.speed.store(0, Ordering::Relaxed);
 
+    // A simultaneous pause must never persist positions from a representation
+    // which one of the workers has already rejected.
+    if matches!(&failure, Some(Error::RemoteChanged)) && shared.stop_reason() != RUNNING {
+        PartialFiles::new(path, ctx.options.temp_dir.as_deref())
+            .cleanup()
+            .await?;
+        return Ok(if shared.stop_reason() == CANCEL {
+            Outcome::Cancelled
+        } else {
+            Outcome::Paused {
+                path: Some(path.to_owned()),
+                resumable: false,
+            }
+        });
+    }
+
     match shared.stop_reason() {
         CANCEL => {
             remove_if_exists(&ctx.part).await?;
@@ -980,7 +1057,7 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
     }
 
     if let Some(error) = failure {
-        if matches!(error, Error::RangeIgnored) {
+        if matches!(error, Error::RangeIgnored | Error::RemoteChanged) {
             return Err(error);
         }
         if ctx.ranged {
@@ -1011,6 +1088,28 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
     // Save complete progress before committing, so disk/copy failures can be
     // retried without downloading the bytes again.
     ctx.save_state(&scheduler).await?;
+    // Non-ranged downloads have no state snapshot but their data must also
+    // reach stable storage before publishing the final name.
+    OpenOptions::new()
+        .write(true)
+        .open(&ctx.part)
+        .await?
+        .sync_all()
+        .await?;
+    if let Some(completion_id) = &ctx.options.completion_id {
+        match prepare_completion(
+            path,
+            ctx.options.temp_dir.as_deref(),
+            completion_id,
+            size,
+            &ctx.cancel,
+        )
+        .await
+        {
+            Err(Error::Cancelled) => return stopped_before_publication(&ctx, path).await,
+            result => result?,
+        }
+    }
     if let Err(error) = publish_file(&ctx, path).await {
         if matches!(error, Error::Cancelled) {
             return match shared.stop_reason() {
@@ -1029,6 +1128,20 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
     })
 }
 
+async fn stopped_before_publication(ctx: &Ctx, path: &Path) -> Result<Outcome> {
+    if ctx.shared.stop_reason() == CANCEL {
+        PartialFiles::new(path, ctx.options.temp_dir.as_deref())
+            .cleanup()
+            .await?;
+        Ok(Outcome::Cancelled)
+    } else {
+        Ok(Outcome::Paused {
+            path: Some(path.to_owned()),
+            resumable: ctx.ranged,
+        })
+    }
+}
+
 /// Rename on one volume; copy to a private staging folder on the destination
 /// volume otherwise. The final filename appears only after the copy succeeds.
 async fn publish_file(ctx: &Ctx, path: &Path) -> Result<()> {
@@ -1036,7 +1149,11 @@ async fn publish_file(ctx: &Ctx, path: &Path) -> Result<()> {
         return Err(Error::Cancelled);
     }
     match fs::rename(&ctx.part, path).await {
-        Ok(()) => return Ok(()),
+        Ok(()) => {
+            sync_parent(path).await?;
+            sync_parent(&ctx.part).await?;
+            return Ok(());
+        }
         Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {}
         Err(error) => return Err(error.into()),
     }
@@ -1067,6 +1184,7 @@ async fn publish_file(ctx: &Ctx, path: &Path) -> Result<()> {
             return Err(Error::Cancelled);
         }
         fs::rename(&staging_files.data, path).await?;
+        sync_parent(path).await?;
         Ok(())
     }
     .await;
@@ -1187,13 +1305,16 @@ async fn fetch(ctx: &Ctx, segment: &Segment) -> Result<()> {
     let mut request = ctx.client.get(ctx.url.clone()).headers(ctx.headers.clone());
     if ctx.ranged {
         request = request.header(header::RANGE, format!("bytes={start}-{}", end - 1));
+        if let Some(validator) = if_range_validator(&ctx.info) {
+            request = request.header(header::IF_RANGE, validator);
+        }
     }
     let response = tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => return Err(Error::Cancelled),
         response = request.send() => response?,
     };
-    check_response(ctx, &response, start)?;
+    check_response(ctx, &response, start, end)?;
     let _active = ActiveConnection::new(&ctx.shared.connections);
 
     let mut file = OpenOptions::new().write(true).open(&ctx.part).await?;
@@ -1209,8 +1330,44 @@ async fn fetch(ctx: &Ctx, segment: &Segment) -> Result<()> {
     streamed.and(flushed)
 }
 
-fn check_response(ctx: &Ctx, response: &Response, start: u64) -> Result<()> {
+/// Weak entity tags are forbidden in If-Range; a date is the fallback.
+fn if_range_validator(info: &RemoteInfo) -> Option<&str> {
+    info.etag
+        .as_deref()
+        .filter(|etag| etag.starts_with('"') && etag.ends_with('"'))
+        .or(info.last_modified.as_deref())
+}
+
+fn check_response(ctx: &Ctx, response: &Response, start: u64, end: u64) -> Result<()> {
     let status = response.status();
+    if status == StatusCode::RANGE_NOT_SATISFIABLE
+        && let Some(range) = response
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(probe::parse_content_range)
+        && range.total.is_some()
+        && range.total != ctx.info.size
+    {
+        return Err(Error::RemoteChanged);
+    }
+    if status.is_success() {
+        for (expected, name) in [
+            (&ctx.info.etag, header::ETAG),
+            (&ctx.info.last_modified, header::LAST_MODIFIED),
+        ] {
+            if let Some(expected) = expected {
+                let actual = response
+                    .headers()
+                    .get(name)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::trim);
+                if actual != Some(expected.as_str()) {
+                    return Err(Error::RemoteChanged);
+                }
+            }
+        }
+    }
     if !ctx.ranged {
         return if status.is_success() {
             Ok(())
@@ -1227,9 +1384,9 @@ fn check_response(ctx: &Ctx, response: &Response, start: u64) -> Result<()> {
                 .and_then(probe::parse_content_range);
             match range {
                 Some(ContentRange {
-                    range: Some((first, _)),
+                    range: Some((first, last)),
                     total,
-                }) if first == start => {
+                }) if first == start && last < end => {
                     if total.is_some() && total != ctx.info.size {
                         return Err(Error::RemoteChanged);
                     }
@@ -1238,8 +1395,8 @@ fn check_response(ctx: &Ctx, response: &Response, start: u64) -> Result<()> {
                 _ => Err(Error::BadContentRange),
             }
         }
-        // The whole file still works for a segment that starts at zero.
-        StatusCode::OK if start == 0 => Ok(()),
+        // A full response must restart the entire file with one connection,
+        // even at offset zero; otherwise its bytes can mix with other ranges.
         StatusCode::OK => Err(Error::RangeIgnored),
         status => Err(Error::Status(status)),
     }
@@ -1391,6 +1548,7 @@ fn build_headers(pairs: &[(String, String)]) -> Result<HeaderMap> {
         let name = HeaderName::from_bytes(name.trim().as_bytes()).map_err(|_| invalid())?;
         if [
             header::RANGE,
+            header::IF_RANGE,
             header::ACCEPT_ENCODING,
             header::CONTENT_LENGTH,
             header::HOST,

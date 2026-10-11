@@ -49,5 +49,5 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["full", "test-util"] }
 tower = { version = "0.5", features = ["util"] }

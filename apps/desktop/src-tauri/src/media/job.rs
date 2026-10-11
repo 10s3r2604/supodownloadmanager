@@ -68,10 +68,6 @@ impl MediaControl {
         self.stop(PAUSE);
     }
 
-    pub fn cancel(&self) {
-        self.stop(CANCEL);
-    }
-
     fn stop(&self, how: u8) {
         let _ = self
             .0
