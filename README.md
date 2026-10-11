@@ -121,8 +121,12 @@ Download the installer for your system from the
 | Fedora, openSUSE               | `….x86_64.rpm`                             |
 | Any Linux                      | `…_amd64.AppImage`                         |
 
-The installers are not code-signed yet. On Windows, if SmartScreen warns, click
-**More info → Run anyway**. On macOS, if it says the app is damaged, run
+Windows code signing is prepared but not activated yet; the v0.5.0 installers
+are unsigned. See the [Code signing policy](docs/CODE_SIGNING.md) for the free
+SignPath Foundation setup and signing status. A signed release can still show
+SmartScreen warnings while its reputation builds. If Windows warns, proceed
+through **More info → Run anyway** only if you trust the release and its source.
+On macOS, if it says the app is damaged, run
 `xattr -dr com.apple.quarantine "/Applications/Supo Download Manager.app"` once.
 
 ### Browser extension

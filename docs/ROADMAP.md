@@ -82,7 +82,8 @@ Built on [librqbit](https://github.com/ikatson/rqbit), a BitTorrent engine in Ru
 ## Phase 7: Distribution
 
 - [x] Installers built by CI: MSI/NSIS for Windows, DMG for macOS, deb/rpm/AppImage for Linux
-- [ ] Code signing for Windows and macOS
+- [ ] Windows code signing (SignPath pipeline prepared; awaiting project approval and activation)
+- [ ] macOS code signing and notarization
 - [ ] Packages for winget, Scoop, Homebrew and Flathub
 - [ ] More languages
 
