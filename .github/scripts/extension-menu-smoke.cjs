@@ -95,6 +95,80 @@ async function until(fn, message, timeout = 15_000) {
   }
   throw new Error(`${message}${last ? `: ${last.message}` : ''}`);
 }
+async function workerContext(loader, targetId) {
+  // Edge may reuse a service-worker target ID after stopping its JavaScript
+  // context. Observe that context directly instead of treating IDs as lifetimes.
+  const { sessionId } = await loader.send('Target.attachToTarget', { targetId, flatten: false });
+  const state = { nonce: null, endedAt: null, endReason: null };
+  const pending = new Map();
+  let nextId = 0;
+  function finishContext(reason) {
+    state.endedAt ||= Date.now();
+    state.endReason ||= reason;
+    for (const waiter of pending.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error(`Worker context ended: ${reason}`));
+    }
+    pending.clear();
+  }
+  function onMessage(event) {
+    if (event.sessionId !== sessionId) return;
+    const message = JSON.parse(event.message);
+    if (message.id) {
+      const waiter = pending.get(message.id);
+      if (!waiter) return;
+      pending.delete(message.id);
+      clearTimeout(waiter.timer);
+      if (message.error) waiter.reject(new Error(message.error.message));
+      else waiter.resolve(message.result);
+    } else if (state.nonce && ['Runtime.executionContextDestroyed', 'Runtime.executionContextsCleared'].includes(message.method)) {
+      finishContext(message.method);
+    }
+  }
+  function onDetach(event) {
+    if (event.sessionId === sessionId) finishContext('Target.detachedFromTarget');
+  }
+  loader.on('Target.receivedMessageFromTarget', onMessage);
+  loader.on('Target.detachedFromTarget', onDetach);
+  function send(method, params = {}) {
+    if (state.endedAt) return Promise.reject(new Error(`Worker context ended: ${state.endReason}`));
+    const id = ++nextId;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`Worker CDP command timed out: ${method}`));
+      }, 5000);
+      pending.set(id, { resolve, reject, timer });
+      loader.send('Target.sendMessageToTarget', { sessionId, message: JSON.stringify({ id, method, params }) })
+        .catch(error => {
+          const waiter = pending.get(id);
+          if (!waiter) return;
+          pending.delete(id);
+          clearTimeout(timer);
+          reject(error);
+        });
+    });
+  }
+  state.detach = async () => {
+    loader.off('Target.receivedMessageFromTarget', onMessage);
+    loader.off('Target.detachedFromTarget', onDetach);
+    finishContext('Smoke debugger detached');
+    await loader.send('Target.detachFromTarget', { sessionId }).catch(() => {});
+  };
+  try {
+    await send('Runtime.enable');
+    const result = await send('Runtime.evaluate', {
+      expression: 'globalThis.__sdmSmokeWorkerContextNonce ??= crypto.randomUUID()',
+      returnByValue: true,
+    });
+    assert.equal(result.result?.type, 'string', 'The worker context nonce was not readable.');
+    state.nonce = result.result.value;
+    return state;
+  } catch (error) {
+    await state.detach();
+    throw error;
+  }
+}
 function attributes(node) {
   const values = node.attributes || [];
   return Object.fromEntries(Array.from({ length: values.length / 2 }, (_, i) => [values[i * 2], values[i * 2 + 1]]));
@@ -252,6 +326,7 @@ function fixture(content) {
     const oldTarget = (await loader.send('Target.getTargets')).targetInfos.find(t =>
       t.type === 'service_worker' && t.url === `chrome-extension://${installed.id}/background.js`);
     assert(oldTarget, 'The installed extension service-worker target was not found.');
+    const oldContext = await workerContext(loader, oldTarget.targetId);
     holdNextStatus = true;
     await until(() => heldStatus, 'The status request was not held for worker termination');
     assert.equal(heldStatus.request.body.clientId, slowClientId);
@@ -259,17 +334,26 @@ function fixture(content) {
     // Terminate the actual extension worker with a status response pending.
     // The document retries its same ID after its runtime message port closes.
     const closed = await loader.send('Target.closeTarget', { targetId: oldTarget.targetId });
-    assert.notEqual(closed.success, false, 'The extension service worker could not be stopped.');
-    await until(async () => !(await loader.send('Target.getTargets')).targetInfos
-      .some(t => t.targetId === oldTarget.targetId), 'The old extension worker did not stop');
+    assert.equal(closed.success, true, 'The extension service worker could not be stopped.');
+    const stoppedAt = Date.now();
     if (!heldStatus.res.destroyed) heldStatus.res.end(JSON.stringify(heldStatus.result));
-    const newTarget = await until(async () => {
+    // Chromium may defer context-ended events until the replacement is inspected.
+    // A fresh nonce is mandatory evidence that the original JavaScript global
+    // was replaced, even when Edge keeps the same registered target ID.
+    const newContext = await until(async () => {
       const { targetInfos } = await loader.send('Target.getTargets');
-      assert(!targetInfos.some(t => t.targetId === oldTarget.targetId), 'The old worker is still alive.');
-      return targetInfos.find(t => t.type === 'service_worker'
-        && t.url === oldTarget.url && t.targetId !== oldTarget.targetId);
-    }, 'Polling did not restart the installed extension worker');
-    assert.notEqual(newTarget.targetId, oldTarget.targetId);
+      const target = targetInfos.find(t => t.type === 'service_worker' && t.url === oldTarget.url);
+      if (!target) return null;
+      const candidate = await workerContext(loader, target.targetId);
+      if (candidate.nonce !== oldContext.nonce) return candidate;
+      await candidate.detach();
+      return null;
+    }, 'Polling did not create a new installed extension worker context');
+    assert.notEqual(newContext.nonce, oldContext.nonce, 'Worker restart must create fresh in-memory state.');
+    await until(() => statuses(slowClientId).some(r => r.startedAt >= stoppedAt),
+      'The restarted worker did not resume status polling with the same client ID');
+    await oldContext.detach();
+    await newContext.detach();
     worker = context.serviceWorkers().find(w => w.url() === oldTarget.url) || worker;
     await until(async () => (await menuText()).includes('1080p60'), 'The 35-second discovery did not finish after the worker restart', 45_000);
     assert(Date.now() - slowStart >= 35_000, 'Discovery must cross the previous long-fetch lifetime.');
