@@ -6,8 +6,8 @@ import vm from "node:vm";
 const context = vm.createContext({ URL, window: { __sdmVideoButton: true } });
 vm.runInContext(readFileSync(new URL("../src/video.js", import.meta.url), "utf8"), context);
 const source = (...args) => JSON.parse(JSON.stringify(context.sdmVideoSource(...args)));
-const link = (href, time = false) => ({ getAttribute: () => href, querySelector: () => time ? {} : null });
-const scope = (links, parentElement = null, tagName = "DIV") => ({ querySelectorAll: () => links, parentElement, tagName });
+const link = (href, time = false) => ({ getAttribute: () => href, querySelector: () => time ? {} : null, contains: () => false });
+const scope = (links, parentElement = null, tagName = "DIV") => ({ querySelectorAll: () => links, matches: () => false, parentElement, tagName });
 const player = (parentElement, article) => ({ parentElement, closest: () => article, currentSrc: "blob:https://x.com/player", src: "" });
 
 test("X Home resolves each hovered video's own timestamp permalink", () => {
@@ -17,10 +17,17 @@ test("X Home resolves each hovered video's own timestamp permalink", () => {
   }
 });
 
-test("a video inside a quoted post uses its nearest post and removes /video/1", () => {
+test("a quoted video uses its nearest post and retains the chosen clip index", () => {
   const article = scope([link("/outer/status/123", true)], null, "ARTICLE");
   const quote = scope([link("/quoted/status/456/video/1?ref=embed", true)], article);
-  assert.equal(source(player(quote, article), "https://x.com/home", "Home / X").pageUrl, "https://x.com/quoted/status/456");
+  assert.equal(source(player(quote, article), "https://x.com/home", "Home / X").pageUrl, "https://x.com/quoted/status/456/video/1");
+});
+
+test("the link containing a player takes priority over the post timestamp", () => {
+  const own = link("/author/status/123/video/2");
+  own.contains = () => true;
+  const article = scope([link("/author/status/123", true), own], null, "ARTICLE");
+  assert.equal(source(player(article, article), "https://x.com/home", "Home").pageUrl, "https://x.com/author/status/123/video/2");
 });
 
 test("malformed or foreign links cannot replace the X post", () => {

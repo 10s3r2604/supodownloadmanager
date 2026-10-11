@@ -10,6 +10,8 @@ const page = { pageUrl: sender.url, title: "Clip", mediaUrl: "https://cdn.exampl
 async function background({ blocked = [], settings = {}, probeError = null, delay = 0 } = {}) {
   const calls = [];
   let listener;
+  let contextListener;
+  const tabMessages = [];
   let now = 100_000;
   let error = probeError;
   const event = { addListener() {} };
@@ -19,8 +21,8 @@ async function background({ blocked = [], settings = {}, probeError = null, dela
     cookies: { async getAll() { return [{ name: "session", value: "test-only", domain: "video.example", path: "/", secure: true, hostOnly: true }]; } },
     i18n: { getMessage: (key) => key },
     downloads: { onCreated: event },
-    contextMenus: { onClicked: event },
-    tabs: { onActivated: event, onUpdated: event },
+    contextMenus: { onClicked: { addListener(fn) { contextListener = fn; } } },
+    tabs: { onActivated: event, onUpdated: event, async sendMessage(...args) { tabMessages.push(args); return { ok: true }; } },
     alarms: { create() {}, onAlarm: event },
     action: { setTitle() {} },
   };
@@ -48,7 +50,7 @@ async function background({ blocked = [], settings = {}, probeError = null, dela
     },
   });
   await message({ type: "status" });
-  return { message, calls, advance: (ms) => { now += ms; }, fail: (value) => { error = value; } };
+  return { message, calls, tabMessages, context: (info, tab) => contextListener(info, tab), advance: (ms) => { now += ms; }, fail: (value) => { error = value; } };
 }
 
 const mediaCalls = (app) => app.calls.filter(({ path }) => path !== "/api/ping");
@@ -113,4 +115,35 @@ test("disabled video buttons do not read formats in the background", async () =>
   const app = await background({ settings: { videoButton: false } });
   assert.equal((await app.message({ type: "video-prefetch", ...page })).ok, false);
   assert.equal(mediaCalls(app).length, 0);
+});
+
+test("X timelines never reach discovery or the desktop picker, including legacy handovers", async () => {
+  const app = await background();
+  const from = { url: "https://x.com/home", tab: { url: "https://x.com/home" } };
+  for (const type of ["video-prefetch", "video-probe", "video-add", "video"]) {
+    assert.equal((await app.message({ type, pageUrl: from.url }, from)).ok, false);
+  }
+  assert.equal((await app.message({ type: "video", pageUrl: "https://x.com/a/status/123" }, from)).ok, false);
+  assert.equal(mediaCalls(app).length, 0);
+});
+
+test("X quality discovery and selected downloads stay on the quiet bridge routes", async () => {
+  const app = await background();
+  const from = { url: "https://x.com/home", tab: { url: "https://x.com/home" } };
+  const clip = { pageUrl: "https://x.com/a/status/123/video/2", title: "Second clip" };
+  assert.equal((await app.message({ type: "video-probe", ...clip }, from)).ok, true);
+  assert.equal((await app.message({ type: "video-add", ...clip, option: "v1080" }, from)).ok, true);
+  assert.deepEqual(mediaCalls(app).map(c => c.path), ["/api/media/probe", "/api/media/add"]);
+  assert.equal(mediaCalls(app)[1].body.source.pageUrl, clip.pageUrl);
+  assert.equal(mediaCalls(app)[1].body.option, "v1080");
+  assert.equal(mediaCalls(app)[0].body.referrer, from.url);
+});
+
+test("the X video context menu opens the quality menu in its original frame", async () => {
+  const app = await background();
+  await app.context({ menuItemId: "sdm-video", pageUrl: "https://x.com/home", srcUrl: "blob:https://x.com/clip", frameId: 7 }, { id: 42, url: "https://x.com/home" });
+  assert.deepEqual(JSON.parse(JSON.stringify(app.tabMessages)), [[42, { type: "video-open-menu", mediaUrl: "blob:https://x.com/clip" }, { frameId: 7 }]]);
+  assert.equal(mediaCalls(app).length, 0);
+  await app.context({ menuItemId: "sdm-video", pageUrl: page.pageUrl }, { id: 42, url: page.pageUrl });
+  assert.equal(mediaCalls(app).at(-1).path, "/api/media");
 });

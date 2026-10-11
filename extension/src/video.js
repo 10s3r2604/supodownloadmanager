@@ -1,24 +1,42 @@
 // Offers video qualities on the page, using SDM's cached yt-dlp results.
 
+function sdmIsXPage(pageUrl) {
+  try {
+    return ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"].includes(new URL(pageUrl).hostname);
+  } catch { return false; }
+}
+
+function sdmXPostUrl(pageUrl) {
+  try {
+    const url = new URL(pageUrl);
+    if (!sdmIsXPage(pageUrl) || !["http:", "https:"].includes(url.protocol)) return null;
+    const post = url.pathname.match(/^\/(?:[^/]+\/status|i\/web\/status|statuses)\/\d+(?:\/video\/\d+)?(?=\/|$)/);
+    return post ? `${url.origin}${post[0].replace(/^\/statuses\//, "/i/web/status/")}` : null;
+  } catch { return null; }
+}
+
 // On X, each player in a timeline belongs to a different post. Find the
 // nearest post link instead of asking yt-dlp to read the Home timeline.
 function sdmVideoSource(video, pageUrl, title) {
   const src = video ? video.currentSrc || video.src : "";
-  const page = new URL(pageUrl);
-  if (["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"].includes(page.hostname)) {
-    const article = video?.closest("article");
+  if (sdmIsXPage(pageUrl)) {
+    const article = video?.closest('article, [role="article"], [data-testid="tweet"], [data-testid="cellInnerDiv"]');
     for (let scope = video?.parentElement; article && scope; scope = scope.parentElement) {
       const links = [...scope.querySelectorAll('a[href]')];
-      // The timestamp is the post's own permalink, ahead of quoted links.
-      links.sort((a, b) => Number(Boolean(b.querySelector("time"))) - Number(Boolean(a.querySelector("time"))));
+      if (scope.matches('a[href]')) links.unshift(scope);
+      // Prefer an explicit link around this player, then the timestamp.
+      // Keep /video/N: yt-dlp uses it to select a clip in a multi-video post.
+      const rank = (link) => (link.contains(video) ? 4 : 0) + (link.querySelector("time") ? 2 : 0);
+      links.sort((a, b) => rank(b) - rank(a));
       const post = links.flatMap((link) => {
-        try { return [new URL(link.getAttribute("href"), pageUrl)]; } catch { return []; }
+        try {
+          const url = sdmXPostUrl(new URL(link.getAttribute("href"), pageUrl).href);
+          return url ? [url] : [];
+        } catch { return []; }
       })
-        .find((url) => ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"].includes(url.hostname)
-          && /^\/(?:[^/]+\/status|i\/web\/status)\/\d+(?:\/|$)/.test(url.pathname)
-          && ["http:", "https:"].includes(url.protocol));
+        .at(0);
       if (post) {
-        pageUrl = `${post.origin}${post.pathname.replace(/\/(?:video|photo)\/\d+.*$/, "")}`;
+        pageUrl = post;
         break;
       }
       if (scope.tagName === "ARTICLE") break;
@@ -41,6 +59,7 @@ function sdmVideoSource(video, pageUrl, title) {
   let checkedAt = 0;
   let checking = null;
   let current = null;
+  let contextVideo = null;
   let hideTimer = 0;
   let resetTimer = 0;
   let host = null;
@@ -89,6 +108,12 @@ function sdmVideoSource(video, pageUrl, title) {
         }
         [hidden] { display: none; }
         .row { display: block; width: 100%; border: 0; border-radius: 6px; padding: 10px 9px; background: transparent; color: inherit; text-align: left; }
+        .choice { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .choice > :first-child { min-width: 0; overflow-wrap: anywhere; }
+        .quality { font-weight: 650; }
+        .format { margin-top: 2px; font-size: 11px; color: #aebdca; }
+        .size { flex: none; font-variant-numeric: tabular-nums; }
+        .title { padding: 8px 9px; color: #aebdca; overflow-wrap: anywhere; font-size: 12px; }
         .row:hover, .row:focus-visible { background: #1b2b37; outline: 1px solid #2ee59d; }
         .row:disabled { opacity: .55; cursor: wait; }
         .more { margin-top: 4px; border-top: 1px solid #35404d; color: #6be0b3; }
@@ -139,6 +164,7 @@ function sdmVideoSource(video, pageUrl, title) {
 
   function prefetch() {
     const selected = source();
+    if (sdmIsXPage(selected.pageUrl) && !sdmXPostUrl(selected.pageUrl)) return;
     const page = selected.pageUrl.split("#")[0];
     if (prefetched.page === page && Date.now() - prefetched.at < 60_000) return;
     prefetched = { page, at: Date.now() };
@@ -156,6 +182,9 @@ function sdmVideoSource(video, pageUrl, title) {
 
   function place() {
     if (!current || !host) return;
+    // Virtualized feeds may reuse the same VIDEO element for another post.
+    if (!current.isConnected) { hide(); return; }
+    if (menuOpen && source().pageUrl !== menuSource?.pageUrl) { closeMenu(); reset(); }
     const r = current.getBoundingClientRect();
     if (r.width < MIN_WIDTH || r.bottom < 0 || r.top > innerHeight) { hide(); return; }
     host.style.top = `${Math.max(6, Math.min(innerHeight - 38, r.top + 10))}px`;
@@ -224,6 +253,7 @@ function sdmVideoSource(video, pageUrl, title) {
   }
 
   function moreOptions() {
+    if (sdmIsXPage(menuSource?.pageUrl || location.href)) return;
     const row = document.createElement("button");
     row.type = "button";
     row.className = "row more";
@@ -233,19 +263,30 @@ function sdmVideoSource(video, pageUrl, title) {
     menu.appendChild(row);
   }
 
+  function retryOptions() {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "row more";
+    row.setAttribute("role", "menuitem");
+    row.textContent = text("videoRetry");
+    row.addEventListener("click", (event) => { closeMenu(); openMenu(event); });
+    menu.appendChild(row);
+  }
+
   function optionLabel(option) {
     let quality = text("videoAudio");
     if (option.kind === "video") {
       quality = option.height ? `${option.height}p${option.fps > 30 ? option.fps : ""}` : text("videoBest");
       quality += option.height >= 2160 ? " 4K" : option.height >= 1440 ? " 2K" : option.height >= 720 ? " HD" : "";
     }
-    let size = "—";
+    let size = text("videoUnknownSize");
     if (Number.isFinite(option.size) && option.size >= 0) {
       const unit = option.size >= 1024 ** 3 ? "GB" : option.size >= 1024 ** 2 ? "MB" : option.size >= 1024 ? "KB" : "B";
       const divisor = { GB: 1024 ** 3, MB: 1024 ** 2, KB: 1024, B: 1 }[unit];
       size = `~${Number((option.size / divisor).toFixed(1))} ${unit}`;
     }
-    return `${quality} · ${option.ext.toUpperCase()} · ${size}`;
+    const format = [option.vcodec, option.acodec, option.ext.toUpperCase()].filter(Boolean).join(" · ");
+    return { quality, format, size };
   }
 
   async function openMenu(event) {
@@ -262,26 +303,54 @@ function sdmVideoSource(video, pageUrl, title) {
     status(text("videoFindingQualities"), "loading");
     moreOptions();
     place();
+    if (sdmIsXPage(menuSource.pageUrl) && !sdmXPostUrl(menuSource.pageUrl)) {
+      status(text("videoPostNotFound"), "error");
+      retryOptions();
+      place();
+      return;
+    }
     const result = await chrome.runtime.sendMessage({ type: "video-probe", ...menuSource }).catch(() => null);
     if (!menuOpen || token !== request) return;
     if (!result?.ok) {
       status(result?.error || text("videoFailed"), "error");
+      retryOptions();
     } else {
       const options = result.info?.options || [];
       menu.replaceChildren();
-      if (!options.length) status(text("videoNoQualities"));
+      if (!options.length) { status(text("videoNoQualities")); retryOptions(); }
+      if (options.length && result.info.title) {
+        const title = document.createElement("div");
+        title.className = "title";
+        title.textContent = result.info.title;
+        menu.appendChild(title);
+      }
       for (const option of options) {
         const row = document.createElement("button");
         row.type = "button";
-        row.className = "row";
+        row.className = "row choice";
         row.setAttribute("role", "menuitem");
-        row.textContent = optionLabel(option);
+        const labels = optionLabel(option);
+        row.setAttribute("aria-label", `${labels.quality} · ${labels.format} · ${labels.size}`);
+        const description = document.createElement("span");
+        const quality = document.createElement("div");
+        quality.className = "quality";
+        quality.textContent = labels.quality;
+        const format = document.createElement("div");
+        format.className = "format";
+        format.textContent = labels.format;
+        description.append(quality, format);
+        const size = document.createElement("span");
+        size.className = "size";
+        size.textContent = labels.size;
+        size.title = text("videoEstimatedSize");
+        row.append(description, size);
         row.addEventListener("click", () => download(option.id));
         menu.appendChild(row);
       }
     }
     moreOptions();
     place();
+    if (event.detail === 0) menu.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
   }
 
   async function download(option) {
@@ -293,6 +362,7 @@ function sdmVideoSource(video, pageUrl, title) {
     if (!result?.ok) {
       reset();
       status(result?.error || text("videoFailed"), "error");
+      retryOptions();
       moreOptions();
       place();
       return;
@@ -327,6 +397,26 @@ function sdmVideoSource(video, pageUrl, title) {
   }
 
   document.addEventListener("mousemove", onMove, { capture: true, passive: true });
+  document.addEventListener("contextmenu", (event) => {
+    contextVideo = event.composedPath().find((element) => element.tagName === "VIDEO")
+      || visibleVideoAt(event.clientX, event.clientY);
+  }, true);
+  chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+    if (message?.type !== "video-open-menu") return false;
+    (async () => {
+      await refresh();
+      if (!enabled) { reply({ ok: false }); return; }
+      const videos = [...document.querySelectorAll("video")];
+      const video = contextVideo?.isConnected ? contextVideo
+        : videos.find((v) => message.mediaUrl && (v.currentSrc || v.src) === message.mediaUrl);
+      if (!video) { reply({ ok: false }); return; }
+      closeMenu();
+      show(video);
+      await openMenu({ preventDefault() {}, stopPropagation() {}, detail: 0 });
+      reply({ ok: true });
+    })().catch(() => reply({ ok: false }));
+    return true;
+  });
   document.addEventListener("pointerdown", (event) => {
     if (menuOpen && !event.composedPath().includes(host)) closeMenu();
   }, true);
