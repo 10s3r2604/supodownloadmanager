@@ -36,6 +36,12 @@ function videoAllowed(pageUrl) {
   }
 }
 
+function isXPage(pageUrl) {
+  try {
+    return ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"].includes(new URL(pageUrl).hostname);
+  } catch { return false; }
+}
+
 let lastPing = { at: 0, status: null };
 let cachedBrowser = null;
 // Links given back to the browser because SDM could not take them.
@@ -182,6 +188,9 @@ async function cookieList(url) {
 /** Sends a page with a video to the app. Returns whether the app took it. */
 async function handOverVideo({ pageUrl, title, mediaUrl, referrer }) {
   if (!videoAllowed(pageUrl)) return false;
+    // X videos are selected in the page menu. Never send its Home feed to
+    // the desktop picker, including messages from an older content script.
+    if (isXPage(pageUrl)) return false;
   try {
     const response = await callApp("/api/media", {
       pageUrl,
@@ -200,6 +209,9 @@ async function handOverVideo({ pageUrl, title, mediaUrl, referrer }) {
 /** Reads qualities or starts the chosen download without opening the app dialog. */
 async function videoRequest(message, sender) {
   const { pageUrl } = message;
+  if (isXPage(pageUrl) && !/^\/(?:[^/]+\/status|i\/web\/status|statuses)\/\d+(?:\/|$)/.test(new URL(pageUrl).pathname)) {
+    return { ok: false, error: chrome.i18n.getMessage("videoPostNotFound") };
+  }
   if (
     !/^https?:/i.test(pageUrl || "") ||
     !videoAllowed(pageUrl) ||
@@ -318,6 +330,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "sdm-video") {
     const pageUrl = info.frameUrl || info.pageUrl || tab?.url;
     if (!pageUrl || !/^https?:/i.test(pageUrl)) return;
+    if (isXPage(pageUrl)) {
+      if (tab?.id != null) await chrome.tabs.sendMessage(tab.id,
+        { type: "video-open-menu", mediaUrl: info.srcUrl }, { frameId: info.frameId ?? 0 }).catch(() => {});
+      return;
+    }
     await handOverVideo({
       pageUrl,
       title: tab?.title,

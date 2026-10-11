@@ -54,7 +54,7 @@
     "message": "Đã gửi tới SDM"
   },
   "videoFailed": {
-    "message": "SDM chưa chạy"
+    "message": "Không lấy được chất lượng video."
   },
   "videoButtonLabel": {
     "message": "Hiện nút “Tải video này” trên video"
@@ -85,5 +85,17 @@
   },
   "videoUnavailable": {
     "message": "Không thể tải video trên trang này."
+  },
+  "videoRetry": {
+    "message": "Thử lại"
+  },
+  "videoUnknownSize": {
+    "message": "Chưa rõ dung lượng"
+  },
+  "videoEstimatedSize": {
+    "message": "Dung lượng ước tính; file tải xong có thể khác."
+  },
+  "videoPostNotFound": {
+    "message": "Chưa tìm được link bài chứa video này. Chờ bài tải xong rồi thử lại."
   }
 }
