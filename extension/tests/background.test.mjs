@@ -7,13 +7,15 @@ const code = readFileSync(new URL("../src/background.js", import.meta.url), "utf
 const sender = { url: "https://video.example/watch", tab: { url: "https://video.example/watch" } };
 const page = { pageUrl: sender.url, title: "Clip", mediaUrl: "https://cdn.example/clip.mp4" };
 
-async function background({ blocked = [], settings = {}, probeError = null, delay = 0 } = {}) {
+async function background({ blocked = [], settings = {}, probeError = null, delay = 0, deferStartupPing = false } = {}) {
   const calls = [];
   let listener;
   let contextListener;
   const tabMessages = [];
   let now = 100_000;
   let error = probeError;
+  let startupPing;
+  let pingCount = 0;
   const event = { addListener() {} };
   const chrome = {
     storage: { local: { async get(defaults) { return { ...defaults, ...settings }; } } },
@@ -37,7 +39,12 @@ async function background({ blocked = [], settings = {}, probeError = null, dela
       const path = new URL(url).pathname;
       const body = init.body ? JSON.parse(init.body) : null;
       calls.push({ path, body });
-      if (path === "/api/ping") return Response.json({ enabled: true, media: true, version: "0.5.0" });
+      if (path === "/api/ping") {
+        if (++pingCount === 1 && deferStartupPing) return new Promise(resolve => {
+          startupPing = () => resolve(new Response(null, { status: 503 }));
+        });
+        return Response.json({ enabled: true, media: true, version: "0.5.0" });
+      }
       if (delay && body?.wait) {
         await new Promise((resolve, reject) => {
           const timer = setTimeout(resolve, delay);
@@ -50,7 +57,7 @@ async function background({ blocked = [], settings = {}, probeError = null, dela
     },
   });
   await message({ type: "status" });
-  return { message, calls, tabMessages, context: (info, tab) => contextListener(info, tab), advance: (ms) => { now += ms; }, fail: (value) => { error = value; } };
+  return { message, calls, tabMessages, finishStartupPing: () => startupPing(), context: (info, tab) => contextListener(info, tab), advance: (ms) => { now += ms; }, fail: (value) => { error = value; } };
 }
 
 const mediaCalls = (app) => app.calls.filter(({ path }) => path !== "/api/ping");
@@ -146,4 +153,11 @@ test("the X video context menu opens the quality menu in its original frame", as
   assert.equal(mediaCalls(app).length, 0);
   await app.context({ menuItemId: "sdm-video", pageUrl: page.pageUrl }, { id: 42, url: page.pageUrl });
   assert.equal(mediaCalls(app).at(-1).path, "/api/media");
+});
+
+test("a stale startup ping cannot hide videos after a newer successful connection", async () => {
+  const app = await background({ deferStartupPing: true });
+  app.finishStartupPing();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(await app.message({ type: "video-enabled" }), true);
 });

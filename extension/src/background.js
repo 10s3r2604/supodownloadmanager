@@ -43,6 +43,7 @@ function isXPage(pageUrl) {
 }
 
 let lastPing = { at: 0, status: null };
+let pingRequest = 0;
 let cachedBrowser = null;
 // Links given back to the browser because SDM could not take them.
 const givenBack = new Set();
@@ -93,6 +94,7 @@ async function callApp(path, body, timeout = 2500) {
 /** Asks the app whether it is running. Returns its status or `null`. */
 async function ping(fresh = false) {
   if (!fresh && Date.now() - lastPing.at < PING_CACHE_MS) return lastPing.status;
+  const request = ++pingRequest;
   let status = null;
   try {
     const response = await callApp("/api/ping");
@@ -100,6 +102,9 @@ async function ping(fresh = false) {
   } catch {
     // The app is not running.
   }
+  // A slow startup check on the previous port must not overwrite a newer
+  // successful connection and hide the video button for its cache interval.
+  if (request !== pingRequest) return lastPing.status;
   lastPing = { at: Date.now(), status };
   chrome.action.setTitle({
     title: status
