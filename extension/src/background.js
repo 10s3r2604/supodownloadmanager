@@ -47,6 +47,8 @@ let pingRequest = 0;
 let cachedBrowser = null;
 // Links given back to the browser because SDM could not take them.
 const givenBack = new Set();
+const captureJobs = new Map();
+const capturedDownloads = new Set();
 const prefetchedPages = new Map();
 
 async function prefs() {
@@ -140,9 +142,12 @@ function wanted(item, status, settings) {
   const size = sizeOf(item);
   if (settings.minSizeMb > 0 && size > 0 && size < settings.minSizeMb * 1024 * 1024) return false;
 
-  const extensions = status.captureExtensions?.length ? status.captureExtensions : FALLBACK_EXTENSIONS;
-  const ext = extensionOf(item.filename) || extensionOf(url);
-  if (ext && extensions.includes(ext)) return true;
+  const extensions = Array.isArray(status.captureExtensions) ? status.captureExtensions : FALLBACK_EXTENSIONS;
+  const names = [item.filename, item.url, item.finalUrl].filter(Boolean);
+  const suffixes = names.map(extensionOf).filter(Boolean);
+  if (suffixes.some((ext) => extensions.includes(ext))) return true;
+  if (suffixes.length) return false;
+  if (!extensions.length) return false;
   return CAPTURE_MIME.test(item.mime || "");
 }
 
@@ -301,25 +306,58 @@ async function handOverLinks(tabId, { frameId = 0, selection = false } = {}) {
   }
 }
 
-chrome.downloads.onCreated.addListener(async (item) => {
+async function captureDownload(item) {
+  if (capturedDownloads.has(item.id) || item.state !== "in_progress" || !item.filename) return;
   const settings = await prefs();
-  if (!settings.capture || item.state !== "in_progress") return;
+  if (!settings.capture) return;
   const status = await ping();
   if (!status?.enabled || !wanted(item, status, settings)) return;
 
   try {
     await chrome.downloads.cancel(item.id);
-    await chrome.downloads.erase({ id: item.id });
   } catch {
-    // The download may already be gone.
+    // Do not also create an SDM download if Chrome already completed it.
+    return;
   }
+  capturedDownloads.add(item.id);
+  setTimeout(() => capturedDownloads.delete(item.id), 60_000);
+  await chrome.downloads.erase({ id: item.id }).catch(() => {});
+  // Keep the original request URL and its cookies. GitHub's final release
+  // asset URL is signed, temporary and no longer belongs to github.com.
+  const url = /^https?:/i.test(item.url || "") ? item.url : item.finalUrl;
   const accepted = await handOver({
-    url: item.finalUrl || item.url,
+    url,
     referrer: item.referrer,
     fileName: baseName(item.filename),
     fileSize: sizeOf(item),
   });
-  if (!accepted) giveBack(item.url);
+  if (!accepted) giveBack(url);
+}
+
+// Chrome may create the item before naming it, then fire several events
+// for the same download. Serialize those snapshots to hand it over once.
+function queueCapture(item) {
+  const previous = captureJobs.get(item.id) || Promise.resolve();
+  const job = previous.catch(() => {}).then(() => captureDownload(item));
+  captureJobs.set(item.id, job);
+  job.finally(() => {
+    if (captureJobs.get(item.id) === job) captureJobs.delete(item.id);
+  }).catch(() => {});
+  return job;
+}
+
+chrome.downloads.onCreated.addListener((item) => queueCapture(item));
+chrome.downloads.onDeterminingFilename?.addListener((item, suggest) => {
+  // This event has the response's tentative filename, before Save As.
+  // Always release it, including skipped downloads and connection failures.
+  queueCapture(item).finally(() => suggest()).catch(() => {});
+  return true;
+});
+chrome.downloads.onChanged.addListener(async (delta) => {
+  if (capturedDownloads.has(delta.id)) return;
+  if (!delta.filename && !delta.url && !delta.finalUrl && !delta.mime && !delta.fileSize && !delta.totalBytes && delta.state?.current !== "in_progress") return;
+  const [item] = await chrome.downloads.search({ id: delta.id }).catch(() => []);
+  if (item) await queueCapture(item);
 });
 
 function createMenus() {

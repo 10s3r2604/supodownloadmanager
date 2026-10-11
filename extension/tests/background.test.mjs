@@ -22,7 +22,7 @@ async function background({ blocked = [], settings = {}, probeError = null, dela
     runtime: { id: "sdm-test", onInstalled: event, onStartup: event, onMessage: { addListener(fn) { listener = fn; } } },
     cookies: { async getAll() { return [{ name: "session", value: "test-only", domain: "video.example", path: "/", secure: true, hostOnly: true }]; } },
     i18n: { getMessage: (key) => key },
-    downloads: { onCreated: event },
+    downloads: { onCreated: event, onChanged: event, onDeterminingFilename: event },
     contextMenus: { onClicked: { addListener(fn) { contextListener = fn; } } },
     tabs: { onActivated: event, onUpdated: event, async sendMessage(...args) { tabMessages.push(args); return { ok: true }; } },
     alarms: { create() {}, onAlarm: event },

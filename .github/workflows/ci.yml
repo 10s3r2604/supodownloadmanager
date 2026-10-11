@@ -9,6 +9,34 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  extension:
+    name: Test browser download capture (Chrome)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Test packaged extension downloads in Chrome
+        shell: pwsh
+        run: |
+          node extension/build.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $testDeps = Join-Path $env:RUNNER_TEMP "sdm-download-test"
+          npm install --prefix $testDeps --no-save --package-lock=false playwright-core@1.57.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:SDM_SMOKE_NODE_MODULES = Join-Path $testDeps "node_modules"
+          node .github/scripts/extension-download-smoke.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Chrome download capture checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-download-smoke
+          path: download-smoke/
+          if-no-files-found: ignore
+
   lint:
     name: Format and lint
     runs-on: ubuntu-latest

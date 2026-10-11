@@ -13,6 +13,11 @@ Firefox.
   the browser download and sends the link to SDM, together with the page's
   cookies, the referer and the browser's user agent. Downloads that need a
   login therefore work in SDM too.
+  It also checks when Chrome determines or updates the file name, so GitHub
+  release assets served through an opaque redirect as `application/octet-stream`
+  are captured as EXE/ZIP. SDM receives the original request URL and its cookies.
+  Multiple download events create only one SDM handover; a refused handover
+  returns the link to the browser.
 - **Puts a "Download this video" button on videos.** Hover any video that is
   at least 200 × 112 pixels and the button appears in its top right corner
   (also in full screen). Click to choose quality, format and estimated file
