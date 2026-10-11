@@ -68,7 +68,7 @@ The extension needs the free SDM app: https://github.com/10s3r2604/supodownloadm
 When the app is not running, your browser downloads as usual.
 
 Privacy: nothing is collected. The extension talks only to the SDM app on your own
-computer (127.0.0.1). No accounts, no analytics, no ads. Source code (GPL-3.0):
+computer (127.0.0.1). No accounts, no analytics, no ads. Source code (GPL-3.0-or-later):
 https://github.com/10s3r2604/supodownloadmanager
 ```
 
@@ -128,7 +128,7 @@ The source is not minified or generated, so no source upload is needed.
 
 ```
 This extension works together with the free, open-source Supo Download Manager desktop
-app (GPL-3.0): https://github.com/10s3r2604/supodownloadmanager/releases
+app (GPL-3.0-or-later): https://github.com/10s3r2604/supodownloadmanager/releases
 Without the app it does nothing and the browser downloads normally.
 
 To test:
