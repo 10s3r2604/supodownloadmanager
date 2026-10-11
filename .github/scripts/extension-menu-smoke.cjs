@@ -58,7 +58,7 @@ function fixture(content) {
 }
 
 (async () => {
-  let context;
+  let context, worker, page, cdp;
   try {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     context = await chromium.launchPersistentContext(profile, {
@@ -72,17 +72,18 @@ function fixture(content) {
     await loader.send('Extensions.loadUnpacked', { path: extension }).catch(error => {
       if (!context.serviceWorkers().length) throw error;
     });
-    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 15_000 });
+    worker = context.serviceWorkers().find(w => w.url().endsWith('/background.js'))
+      || await context.waitForEvent('serviceworker', { predicate: w => w.url().endsWith('/background.js'), timeout: 15_000 });
     await worker.evaluate(async port => {
       await chrome.storage.local.set({ port });
       await ping(true);
     }, server.address().port);
-    const page = await context.newPage();
+    page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     let html = fixture('<article><a href="/a/status/111"><time>First post</time></a><video></video></article><div role="article"><a href="/b/status/222/video/2"><time>Second post</time></a><video></video></div>');
     await context.route('https://x.com/**', route => route.fulfill({ status: 200, contentType: 'text/html', body: html }));
     await page.goto('https://x.com/home');
-    const cdp = await context.newCDPSession(page);
+    cdp = await context.newCDPSession(page);
     async function nodeWhere(predicate) {
       const { root } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
       function find(node) {
@@ -113,8 +114,13 @@ function fixture(content) {
       const video = page.locator('video').nth(index);
       await video.scrollIntoViewIfNeeded();
       const box = await video.boundingBox();
-      await page.mouse.move(box.x + 80, box.y + 60);
-      await until(() => nodeWhere((n, a) => a.class === 'trigger'), 'The video button did not appear');
+      let move = 0;
+      await until(async () => {
+        // document_idle may register the listener after the first synthetic
+        // mousemove. Keep moving inside the player until the button appears.
+        await page.mouse.move(box.x + 80 + (move++ % 2), box.y + 60);
+        return nodeWhere((n, a) => a.class === 'trigger');
+      }, 'The video button did not appear');
     }
     async function open(index) {
       await hover(index);
@@ -195,6 +201,18 @@ function fixture(content) {
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed: report.length, report, errors }, null, 2));
     console.log(JSON.stringify({ passed: report.length, report, errors }, null, 2));
+  } catch (error) {
+    console.error('Bridge fixture requests:', JSON.stringify(requests.map(r => ({ path: r.path, pageUrl: r.body?.pageUrl || r.body?.source?.pageUrl, wait: r.body?.wait }))));
+    if (worker) console.error('Extension status:', await worker.evaluate(async () => ({ version: chrome.runtime.getManifest().version, prefs: await prefs(), status: await ping(true) })).catch(e => String(e)));
+    if (page) {
+      console.error('Fixture DOM:', await page.evaluate(() => ({ url: location.href, videos: document.querySelectorAll('video').length, button: Boolean(document.querySelector('sdm-video-button')) })).catch(e => String(e)));
+      await page.screenshot({ path: path.join(output, 'failure.png'), timeout: 3000 }).catch(() => {});
+    }
+    if (cdp) {
+      const snapshot = await cdp.send('DOMSnapshot.captureSnapshot', { computedStyles: [] }).catch(() => null);
+      if (snapshot) console.error('Fixture labels:', snapshot.strings.filter(s => /SDM|qualities|video|1080|720|Retry/.test(s)));
+    }
+    throw error;
   } finally {
     if (context) await context.close();
     server.closeAllConnections(); server.close();
