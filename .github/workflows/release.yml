@@ -22,8 +22,19 @@ env:
   VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
+  check-release:
+    name: Check release is new or still a draft
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Preserve published releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/check-new-release.sh
+
   desktop:
     name: Desktop app (${{ matrix.name }})
+    needs: check-release
     strategy:
       fail-fast: false
       matrix:
@@ -257,6 +268,7 @@ jobs:
 
   cli:
     name: CLI ${{ matrix.target }}
+    needs: check-release
     strategy:
       fail-fast: false
       matrix:
@@ -325,8 +337,12 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
-          draft: false
+          draft: true
           overwrite_files: false
           files: |
             dist/*
             sdm-extension-*.zip
+      - name: Publish the completed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$VERSION" --draft=false

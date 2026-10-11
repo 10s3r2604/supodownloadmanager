@@ -49,7 +49,7 @@ fallback to unsigned Windows installers.
 The release stays a draft until all desktop and CLI builds complete and the
 publish job succeeds.
 
-Release assets for an already published Windows version are not replaced.
+Published releases are not rebuilt or overwritten; a draft can be resumed.
 Use a new version for the first signed release. Only verified installer
 artifacts are selected for publication; intermediate unsigned artifacts are
 kept separately for seven days.
@@ -70,25 +70,28 @@ this happens during the release build, not on users' computers.
 
 ## Activate signing
 
-1. Apply through [SignPath Foundation](https://signpath.org/apply). Supply the
+1. Merge the prepared workflow and policy changes into `main` after reviewing
+   their checks. Signing remains disabled. This makes the code signing policy
+   visible on the project's home page before applying.
+2. Apply through [SignPath Foundation](https://signpath.org/apply). Supply the
    [repository](https://github.com/10s3r2604/supodownloadmanager), the existing
    [release](https://github.com/10s3r2604/supodownloadmanager/releases/tag/v0.5.0),
    the GPL-3.0-or-later license, this policy and the privacy policy. Explain
    that installers bundle upstream yt-dlp, Deno and FFmpeg, which will not be
    re-signed as SDM binaries. Enter contact/identity details directly in the
    application form.
-2. After acceptance, connect the GitHub repository using SignPath's
+3. After acceptance, connect the GitHub repository using SignPath's
    [trusted build integration](https://docs.signpath.io/trusted-build-systems/github).
    Restrict production signing to this repository's release workflow and
    reviewed release commits/tags. Configure the owner as manual approver.
-3. Import [windows-app.xml](../.signpath/windows-app.xml) as artifact
+4. Import [windows-app.xml](../.signpath/windows-app.xml) as artifact
    configuration **`windows-app`** and
    [windows-installers.xml](../.signpath/windows-installers.xml) as
    **`windows-installers`**. Use a **`release-signing`** policy with the approved
    production certificate, SHA-256 signatures and trusted timestamps. Validate
    both configurations in SignPath's editor; service-side validation requires
    the SignPath account.
-4. In **GitHub → Settings → Secrets and variables → Actions**, set:
+5. In **GitHub → Settings → Secrets and variables → Actions**, set:
 
    | Type | Name | Value |
    | --- | --- | --- |
@@ -102,10 +105,10 @@ this happens during the release build, not on users' computers.
    algorithm. The signatures use SHA-256. When SignPath rotates the certificate,
    verify its replacement with the service and update the pinned thumbprint.
    Keep the API token in GitHub Secrets; do not put it in commits or chat.
-5. Merge the workflow changes, update this page's status and credit after
+6. Update this page's status and credit after
    acceptance, bump the app/workspace/npm versions, and release a new tag such
    as `v0.5.1`. Run **Release** from `main` or push that tag on `main`.
-6. Approve the application signing request, then the installer signing request
+7. Approve the application signing request, then the installer signing request
    in SignPath. Each request waits up to one hour for completion. Check the
    resulting `.exe` and `.msi` signatures and publisher on Windows before
    distributing the new release.
