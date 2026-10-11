@@ -1,5 +1,6 @@
 //! Supo Download Manager desktop app (Tauri).
 
+mod batch;
 mod bridge;
 mod browsers;
 mod category;
@@ -40,6 +41,8 @@ const CLIPBOARD_EVENT: &str = "sdm:clipboard-link";
 const MEDIA_PROMPT_EVENT: &str = "sdm:media-prompt";
 /// Progress of downloading yt-dlp or ffmpeg.
 pub(crate) const TOOL_PROGRESS_EVENT: &str = "sdm:tool-progress";
+/// Asks the user interface to let the user pick from the links of a page.
+const LINKS_PROMPT_EVENT: &str = "sdm:links-prompt";
 /// Asks the user interface to show the "add torrent" dialog.
 const TORRENT_PROMPT_EVENT: &str = "sdm:torrent-prompt";
 /// Tells the user interface that the computer is about to sleep or turn
@@ -129,6 +132,9 @@ pub fn run() {
             commands::magnet_handler,
             commands::register_magnet_handler,
             commands::set_when_done,
+            commands::expand_batch,
+            commands::add_batch,
+            commands::change_address,
             commands::list_queues,
             commands::save_queue,
             commands::delete_queue,
@@ -516,6 +522,11 @@ impl Handler for AppBridge {
     fn media(&self, source: media::MediaSource) {
         show_main_window(&self.app);
         let _ = self.app.emit(MEDIA_PROMPT_EVENT, source);
+    }
+
+    fn links(&self, links: bridge::PageLinks) {
+        show_main_window(&self.app);
+        let _ = self.app.emit(LINKS_PROMPT_EVENT, batch::from_page(links));
     }
 
     fn probe_media(

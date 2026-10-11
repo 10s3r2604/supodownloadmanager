@@ -309,6 +309,22 @@ if (query.get("torrent")) {
   }, 800);
 }
 
+if (query.get("links")) {
+  setTimeout(() => {
+    const page = "https://files.example.org/releases/";
+    const names = ["setup-2.4.exe", "setup-2.4.dmg", "notes.pdf", "manual.pdf", "logo.png", "demo.mp4", "theme.mp3", "source-2.4.tar.gz", "about.html"];
+    window.dispatchEvent(
+      new CustomEvent("sdm:links-prompt", {
+        detail: {
+          pageUrl: page,
+          title: "Releases · Example",
+          links: names.map((name) => ({ url: page + name, text: name.replace(/[-.]/g, " "), headers: [["Referer", page]] })),
+        },
+      }),
+    );
+  }, 800);
+}
+
 if (query.get("media")) {
   setTimeout(() => {
     window.dispatchEvent(
@@ -517,6 +533,41 @@ export const mockApi: Api = {
     const listener = (event: Event) => handler((event as CustomEvent).detail);
     window.addEventListener("sdm:tool-progress", listener);
     return () => window.removeEventListener("sdm:tool-progress", listener);
+  },
+  async expandBatch(pattern) {
+    const match = pattern.match(/\[(\d+)-(\d+)\]/);
+    if (!match) return [pattern.trim()];
+    const [from, to] = [Number(match[1]), Number(match[2])];
+    if (Math.abs(to - from) > 10_000) throw new Error("this pattern makes more than 10000 links; use a smaller range");
+    const width = match[1].length > 1 && match[1].startsWith("0") ? match[1].length : 0;
+    const out: string[] = [];
+    for (let n = from; n <= to; n++) out.push(pattern.trim().replace(match[0], String(n).padStart(width, "0")));
+    return out;
+  },
+  async addBatch(request) {
+    const ids = [];
+    for (const link of request.links) {
+      const name = link.fileName || decodeURIComponent(new URL(link.url).pathname.split("/").pop() || "") || "download";
+      const d = make(name, new URL(link.url).host, null, request.start ? "queued" : "paused", 0, 0, {
+        url: link.url,
+        queue: request.queue ?? "main",
+      });
+      downloads.push(d);
+      ids.push(d.id);
+    }
+    return ids;
+  },
+  async changeAddress(id, url) {
+    await wait(500);
+    const d = downloads.find((x) => x.id === id);
+    if (!d) throw new Error("this download is no longer in the list");
+    if (/other/.test(url)) throw new Error("the new link is for a different file (12 bytes instead of 3366010880)");
+    Object.assign(d, { url, error: null, state: d.state === "failed" ? "paused" : d.state });
+  },
+  async onLinksPrompt(handler) {
+    const listener = (event: Event) => handler((event as CustomEvent).detail);
+    window.addEventListener("sdm:links-prompt", listener);
+    return () => window.removeEventListener("sdm:links-prompt", listener);
   },
   async listQueues() {
     return clone(queues);

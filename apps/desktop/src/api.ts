@@ -149,6 +149,31 @@ export interface AddRequest {
   queue?: string;
 }
 
+/** One of many links added at once. */
+export interface BatchLink {
+  url: string;
+  fileName?: string | null;
+  /** Extra headers for this link, such as the cookies of its site. */
+  headers?: Headers;
+  /** The link's text on the page. */
+  text?: string | null;
+}
+
+export interface BatchRequest {
+  links: BatchLink[];
+  headers?: Headers;
+  directory?: string;
+  start: boolean;
+  queue?: string;
+}
+
+/** The links of a web page, sent by the browser extension. */
+export interface LinksPrompt {
+  pageUrl: string;
+  title: string | null;
+  links: BatchLink[];
+}
+
 /** A download offered by the browser extension. */
 export interface AddPrompt {
   url: string;
@@ -342,6 +367,12 @@ export interface Api {
   /** Files dropped on the window. */
   onFileDrop(handler: (paths: string[]) => void): Promise<UnlistenFn>;
   onToolProgress(handler: (progress: ToolProgress) => void): Promise<UnlistenFn>;
+  /** The links a pattern such as `file[1-10].zip` stands for. */
+  expandBatch(pattern: string): Promise<string[]>;
+  addBatch(request: BatchRequest): Promise<number[]>;
+  /** Gives an unfinished download a new link, keeping its progress. */
+  changeAddress(id: number, url: string): Promise<void>;
+  onLinksPrompt(handler: (prompt: LinksPrompt) => void): Promise<UnlistenFn>;
   listQueues(): Promise<Queue[]>;
   /** Adds a queue (with an empty id) or changes one. */
   saveQueue(queue: Queue): Promise<Queue>;
@@ -414,6 +445,10 @@ const tauriApi: Api = {
       if (event.payload.type === "drop") handler(event.payload.paths);
     }),
   onToolProgress: (handler) => listen<ToolProgress>("sdm:tool-progress", (e) => handler(e.payload)),
+  expandBatch: (pattern) => invoke("expand_batch", { pattern }),
+  addBatch: (request) => invoke("add_batch", { request }),
+  changeAddress: (id, url) => invoke("change_address", { id, url }),
+  onLinksPrompt: (handler) => listen<LinksPrompt>("sdm:links-prompt", (e) => handler(e.payload)),
   listQueues: () => invoke("list_queues"),
   saveQueue: (queue) => invoke("save_queue", { queue }),
   deleteQueue: (id) => invoke("delete_queue", { id }),

@@ -107,6 +107,44 @@ impl SavedState {
     }
 }
 
+/// Points the unfinished download of `path` at a new address of the same
+/// file (an expired link replaced by a fresh one), so it continues instead
+/// of starting over. Returns the bytes already downloaded, or `None` when
+/// there is no saved progress.
+///
+/// Fails when the new address serves a file of another size, or one that
+/// cannot be resumed.
+pub async fn retarget_partial(path: &Path, info: &RemoteInfo) -> Result<Option<u64>> {
+    let state = state_path(path);
+    let Some(mut saved) = SavedState::load(&state).await? else {
+        return Ok(None);
+    };
+    if !saved.is_valid() {
+        return Ok(None);
+    }
+    if info.size != Some(saved.size) {
+        return Err(Error::NotSameFile(match info.size {
+            Some(size) => format!(
+                "the new link is for a different file ({size} bytes instead of {})",
+                saved.size
+            ),
+            None => "the new link does not say how big the file is".into(),
+        }));
+    }
+    if !info.resumable {
+        return Err(Error::NotSameFile(
+            "the new link cannot continue a download that was started".into(),
+        ));
+    }
+    saved.url.clone_from(&info.url);
+    saved.etag.clone_from(&info.etag);
+    saved.last_modified.clone_from(&info.last_modified);
+    saved.save(&state).await?;
+    Ok(Some(
+        saved.segments.iter().map(|s| s.pos - s.start).sum::<u64>(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +214,50 @@ mod tests {
             SavedState::load(&path).await,
             Err(Error::State(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn moves_progress_to_a_new_address() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.bin");
+        assert_eq!(
+            retarget_partial(&path, &info(10, None)).await.unwrap(),
+            None
+        );
+
+        let segments = vec![
+            SavedSegment {
+                start: 0,
+                pos: 3,
+                end: 5,
+            },
+            SavedSegment {
+                start: 5,
+                pos: 9,
+                end: 10,
+            },
+        ];
+        SavedState::new(&info(10, Some("\"old\"")), 10, segments)
+            .save(&state_path(&path))
+            .await
+            .unwrap();
+
+        let mut fresh = info(10, Some("\"new\""));
+        fresh.url = "https://mirror.example.net/a.bin?token=2".into();
+        assert!(matches!(
+            retarget_partial(&path, &info(11, None)).await,
+            Err(Error::NotSameFile(_))
+        ));
+        let mut whole = fresh.clone();
+        whole.resumable = false;
+        assert!(matches!(
+            retarget_partial(&path, &whole).await,
+            Err(Error::NotSameFile(_))
+        ));
+
+        assert_eq!(retarget_partial(&path, &fresh).await.unwrap(), Some(7));
+        let saved = SavedState::load(&state_path(&path)).await.unwrap().unwrap();
+        assert_eq!(saved.url, fresh.url);
+        assert!(saved.matches(&fresh));
     }
 }

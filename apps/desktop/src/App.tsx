@@ -4,6 +4,7 @@ import {
   type AddPrompt,
   type AppInfo,
   type Download,
+  type LinksPrompt,
   type MediaSource,
   type PowerAction,
   type PowerCountdown,
@@ -14,6 +15,8 @@ import {
 } from "./api";
 import { useAppearance } from "./appearance";
 import { AddDialog } from "./components/AddDialog";
+import { AddressDialog } from "./components/AddressDialog";
+import { BatchDialog } from "./components/BatchDialog";
 import { BrowsersDialog } from "./components/BrowsersDialog";
 import { ContextMenu } from "./components/ContextMenu";
 import { DeleteDialog } from "./components/DeleteDialog";
@@ -36,6 +39,8 @@ type DialogState =
   | { kind: "settings" }
   | { kind: "browsers" }
   | { kind: "scheduler" }
+  | { kind: "batch"; page?: LinksPrompt }
+  | { kind: "address"; id: number }
   | { kind: "delete"; ids: number[] }
   | { kind: "details"; id: number };
 
@@ -67,7 +72,7 @@ export default function App() {
   const [selected, setSelected] = useState<number[]>([]);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
-  const [prompts, setPrompts] = useState<(AddPrompt | MediaSource | TorrentSource)[]>([]);
+  const [prompts, setPrompts] = useState<(AddPrompt | MediaSource | TorrentSource | LinksPrompt)[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [queues, setQueues] = useState<Queue[]>([]);
   const [queueFilter, setQueueFilter] = useState("all");
@@ -81,7 +86,7 @@ export default function App() {
   const toast = useCallback((kind: Toast["kind"], text: string, url?: string) => {
     const id = Date.now() + Math.random();
     setToasts((list) => [...list.filter((item) => !(url && item.url === url)), { id, kind, text, url }]);
-    setTimeout(() => setToasts((list) => list.filter((item) => item.id !== id)), kind === "error" ? 7000 : 15000);
+    setTimeout(() => setToasts((list) => list.filter((item) => item.id !== id)), kind === "clipboard" ? 15000 : 7000);
   }, []);
   const showError = useCallback((message: string) => toast("error", message), [toast]);
 
@@ -124,6 +129,7 @@ export default function App() {
     const stops = [
       api.onAddPrompt((prompt) => setPrompts((queue) => [...queue, prompt])),
       api.onMediaPrompt((source) => setPrompts((queue) => [...queue, source])),
+      api.onLinksPrompt((page) => setPrompts((queue) => [...queue, page])),
       api.onTorrentPrompt((source) => setPrompts((queue) => [...queue, source])),
       api.takePendingTorrents().then((sources) => {
         setPrompts((queue) => [...queue, ...sources]);
@@ -148,7 +154,9 @@ export default function App() {
     if (!dialog && prompts.length > 0 && settings) {
       const next = prompts[0];
       setDialog(
-        "pageUrl" in next
+        "links" in next
+          ? { kind: "batch", page: next }
+          : "pageUrl" in next
           ? { kind: "media", source: next }
           : "url" in next
             ? { kind: "add", prompt: next }
@@ -219,6 +227,7 @@ export default function App() {
     remove: (ids) => setDialog({ kind: "delete", ids }),
     openProgress: (d) => run(api.openProgressWindow(d.id)),
     moveToQueue: (ids, queue) => run(api.moveToQueue(ids, queue)),
+    newAddress: (d) => setDialog({ kind: "address", id: d.id }),
     menu: (event, download) => setMenu({ x: event.clientX, y: event.clientY, download }),
   };
 
@@ -320,6 +329,7 @@ export default function App() {
           onError={showError}
           onMedia={(pageUrl) => setDialog({ kind: "media", source: { pageUrl } })}
           onTorrent={(source) => setDialog({ kind: "torrent", source })}
+          onBatch={() => setDialog({ kind: "batch" })}
         />
       )}
       {dialog?.kind === "torrent" && settings && (
@@ -372,6 +382,16 @@ export default function App() {
           onError={showError}
           onChanged={reloadQueues}
           onSettings={setSettings}
+        />
+      )}
+      {dialog?.kind === "batch" && settings && (
+        <BatchDialog page={dialog.page} settings={settings} queues={queues} onClose={closeDialog} onError={showError} />
+      )}
+      {dialog?.kind === "address" && downloads.some((d) => d.id === dialog.id) && (
+        <AddressDialog
+          download={downloads.find((d) => d.id === dialog.id)!}
+          onClose={closeDialog}
+          onDone={(text) => toast("info", text)}
         />
       )}
       {countdown && <PowerDialog countdown={countdown} onError={showError} />}

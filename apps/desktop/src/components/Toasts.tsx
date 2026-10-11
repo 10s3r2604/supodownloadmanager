@@ -3,7 +3,7 @@ import { Icon } from "../icons";
 
 export interface Toast {
   id: number;
-  kind: "error" | "clipboard";
+  kind: "error" | "clipboard" | "info";
   text: string;
   url?: string;
 }
@@ -20,7 +20,7 @@ export function Toasts({ toasts, onDismiss, onDownload }: Props) {
     <div className="toasts" aria-live="polite">
       {toasts.map((toast) => (
         <div key={toast.id} className={`toast ${toast.kind}`} role="status">
-          <Icon name={toast.kind === "error" ? "alert" : "link"} size={16} />
+          <Icon name={toast.kind === "error" ? "alert" : toast.kind === "info" ? "tick" : "link"} size={16} />
           <div className="toast-text">
             <span>{toast.text}</span>
             {toast.url && <small title={toast.url}>{toast.url}</small>}

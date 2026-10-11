@@ -137,6 +137,38 @@ pub struct AddRequest {
     pub queue: Option<String>,
 }
 
+/// Many links added at once (a batch pattern, or the links of a page).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchRequest {
+    pub links: Vec<BatchLink>,
+    /// Cookies and referer for all links.
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    /// One folder for all; the category folders when missing.
+    #[serde(default)]
+    pub directory: Option<PathBuf>,
+    #[serde(default)]
+    pub start: bool,
+    #[serde(default)]
+    pub queue: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchLink {
+    pub url: String,
+    /// The name to save it as; taken from the link when missing.
+    #[serde(default)]
+    pub file_name: Option<String>,
+    /// Extra headers for this link (cookies of its site, say).
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    /// The link's text on the page, to help pick links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
 /// Something worth telling the user about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notice {
@@ -415,6 +447,158 @@ impl Manager {
         };
         self.schedule();
         Ok(id)
+    }
+
+    /// Adds many links without asking each server first, and returns their
+    /// ids. Links that are not http(s) are skipped.
+    pub fn add_batch(self: &Arc<Self>, request: BatchRequest) -> Result<Vec<u64>, String> {
+        let mut ids = Vec::new();
+        {
+            let mut inner = self.lock();
+            let queue = inner.queue_id(request.queue.as_deref());
+            for link in request.links {
+                let url = link.url.trim().to_owned();
+                let Ok(parsed) = url::Url::parse(&url) else {
+                    continue;
+                };
+                if !matches!(parsed.scheme(), "http" | "https") {
+                    continue;
+                }
+                let file_name = match link.file_name.as_deref().map(sdm_core::sanitize_file_name) {
+                    Some(name) if !name.is_empty() => name,
+                    _ => match name_from_url(&parsed) {
+                        name if name.is_empty() => "download".to_owned(),
+                        name => name,
+                    },
+                };
+                let category = Category::from_file_name(&file_name);
+                let directory = request
+                    .directory
+                    .clone()
+                    .filter(|d| !d.as_os_str().is_empty())
+                    .unwrap_or_else(|| inner.settings.directory_for(category));
+                let path = inner.free_path(&directory, &file_name);
+                let id = inner.next_id;
+                inner.next_id += 1;
+                let mut headers = request.headers.clone();
+                for (name, value) in link.headers {
+                    headers.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
+                    headers.push((name, value));
+                }
+                inner.records.push(Record {
+                    id,
+                    url,
+                    headers,
+                    file_name: file_name_of(&path),
+                    path,
+                    size: None,
+                    downloaded: 0,
+                    resumable: false,
+                    category,
+                    state: if request.start {
+                        State::Queued
+                    } else {
+                        State::Paused
+                    },
+                    error: None,
+                    added_at: now_ms(),
+                    completed_at: None,
+                    elapsed_ms: 0,
+                    media: None,
+                    torrent: None,
+                    queue: queue.clone(),
+                });
+                ids.push(id);
+            }
+            if ids.is_empty() {
+                return Err("none of these are http or https links".into());
+            }
+            inner.dirty = true;
+            self.save(&mut inner);
+        }
+        self.schedule();
+        Ok(ids)
+    }
+
+    /// Gives an unfinished download a new address for the same file, such
+    /// as a fresh link after the old one expired. What was downloaded so
+    /// far is kept.
+    pub async fn change_address(
+        self: &Arc<Self>,
+        id: u64,
+        url: String,
+        headers: Option<Vec<(String, String)>>,
+    ) -> Result<(), String> {
+        let url = url.trim().to_owned();
+        let parsed = url::Url::parse(&url).map_err(|_| format!("invalid URL: {url}"))?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(format!("only http and https links are supported: {url}"));
+        }
+        let (path, size, old_headers, downloader) = {
+            let inner = self.lock();
+            let record = inner
+                .records
+                .iter()
+                .find(|r| r.id == id)
+                .ok_or("this download is no longer in the list")?;
+            if record.media.is_some() || record.torrent.is_some() {
+                return Err("only normal downloads can get a new address".into());
+            }
+            if record.state == State::Completed {
+                return Err("this download is already complete".into());
+            }
+            (
+                record.path.clone(),
+                record.size,
+                record.headers.clone(),
+                inner.downloader.clone(),
+            )
+        };
+        // Stop it first; it starts again with the new address.
+        let was_running = self.lock().active.contains_key(&id);
+        if was_running {
+            self.pause(&[id]);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while self.lock().active.contains_key(&id) {
+                if Instant::now() > deadline {
+                    return Err("the download did not stop; try again".into());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+        let headers = headers.unwrap_or(old_headers);
+        let info = downloader
+            .probe(&url, &headers)
+            .await
+            .map_err(|error| format!("could not open the new link: {error}"))?;
+        if let (Some(size), Some(new)) = (size, info.size)
+            && size != new
+        {
+            return Err(format!(
+                "the new link is for a different file ({new} bytes instead of {size})"
+            ));
+        }
+        sdm_core::retarget_partial(&path, &info)
+            .await
+            .map_err(|error| error.to_string())?;
+        {
+            let mut inner = self.lock();
+            let Some(record) = inner.records.iter_mut().find(|r| r.id == id) else {
+                return Err("this download is no longer in the list".into());
+            };
+            record.url = url;
+            record.headers = headers;
+            record.error = None;
+            if record.state == State::Failed {
+                record.state = State::Paused;
+            }
+            inner.dirty = true;
+            self.save(&mut inner);
+        }
+        if was_running {
+            self.resume(&[id]);
+        }
+        Ok(())
     }
 
     /// Adds a video from a web page and returns its id.
@@ -2000,6 +2184,121 @@ echo "SDMF $home/$name"
         );
         assert_eq!(manager.after_all(), PowerAction::Shutdown);
         manager.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn adds_batches_without_asking_each_server() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let manager = fixture.manager();
+        let links = crate::batch::expand(&format!("{base}/photo[1-3].jpg"))
+            .unwrap()
+            .into_iter()
+            .map(|url| BatchLink {
+                url,
+                ..BatchLink::default()
+            })
+            .chain([
+                BatchLink {
+                    url: "mailto:someone@example.com".into(),
+                    ..BatchLink::default()
+                },
+                BatchLink {
+                    url: format!("{base}/x"),
+                    file_name: Some("named.txt".into()),
+                    headers: vec![("referer".into(), "https://page.example/b".into())],
+                    text: None,
+                },
+            ])
+            .collect();
+        let ids = manager
+            .add_batch(BatchRequest {
+                links,
+                headers: vec![("Referer".into(), "https://page.example/a".into())],
+                start: true,
+                ..BatchRequest::default()
+            })
+            .unwrap();
+        assert_eq!(ids.len(), 4);
+        for &id in &ids {
+            wait_for(&manager, id, State::Completed).await;
+        }
+        let list = manager.list();
+        assert_eq!(
+            list.iter()
+                .map(|d| d.file_name.as_str())
+                .collect::<Vec<_>>(),
+            ["photo1.jpg", "photo2.jpg", "photo3.jpg", "named.txt"]
+        );
+        assert_eq!(list[0].category, Category::Image);
+        let record = manager.lock().records[3].clone();
+        // Headers of a link replace those of the batch; cleared once done.
+        assert!(record.headers.is_empty());
+        assert!(
+            manager
+                .add_batch(BatchRequest {
+                    links: vec![BatchLink {
+                        url: "ftp://x/y".into(),
+                        ..BatchLink::default()
+                    }],
+                    ..BatchRequest::default()
+                })
+                .is_err()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_new_link_continues_the_download() {
+        let fixture = Fixture::new();
+        let (base, data) = big_file_server().await;
+        let small = server().await;
+        let manager = fixture.manager();
+        let mut slow = manager.settings();
+        slow.speed_limit = 256 * 1024;
+        manager.update_settings(slow).unwrap();
+
+        let id = manager
+            .add(request(format!("{base}/old-link.bin"), true))
+            .await
+            .unwrap();
+        wait_for(&manager, id, State::Downloading).await;
+        while manager.get(id).unwrap().downloaded < 300 * 1024 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        // A link to another file is refused, also while it runs.
+        let error = manager
+            .change_address(id, format!("{small}/other.bin"), None)
+            .await
+            .unwrap_err();
+        assert!(error.contains("different file"), "{error}");
+        assert!(
+            manager
+                .change_address(id, "nope".into(), None)
+                .await
+                .is_err()
+        );
+        let kept = manager.get(id).unwrap();
+        assert_eq!(kept.state, State::Paused);
+        assert!(kept.downloaded >= 300 * 1024);
+
+        let fresh = format!("{base}/fresh-link.bin?token=2");
+        manager
+            .change_address(id, fresh.clone(), None)
+            .await
+            .unwrap();
+        let view = manager.get(id).unwrap();
+        assert_eq!(view.url, fresh);
+        assert_eq!(view.downloaded, kept.downloaded);
+        let state = std::fs::read_to_string(sdm_core::partial_state_path(&view.path)).unwrap();
+        assert!(state.contains("fresh-link.bin"), "{state}");
+
+        let mut fast = manager.settings();
+        fast.speed_limit = 0;
+        manager.update_settings(fast).unwrap();
+        manager.resume(&[id]);
+        let done = wait_for(&manager, id, State::Completed).await;
+        assert_eq!(std::fs::read(done.path).unwrap(), data);
     }
 
     #[tokio::test(flavor = "multi_thread")]

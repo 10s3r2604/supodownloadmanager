@@ -86,6 +86,7 @@ export function ContextMenu({ x, y, download: d, selected, queues, actions, onCl
       {canResume && item("play", t("resume"), () => actions.resume(ids))}
       {d.seeding && item("pause", t("stopSeeding"), () => actions.pause([d.id]))}
       {item("link", t("copyLink"), () => actions.copyLink(d))}
+      {!d.media && !d.torrent && d.state !== "completed" && item("retry", t("addressMenu"), () => actions.newAddress(d))}
       {d.state !== "completed" &&
         queues
           .filter((q) => q.id !== d.queue)

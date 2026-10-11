@@ -18,6 +18,8 @@ interface Props {
   onMedia: (pageUrl: string) => void;
   /** Switches to the torrent dialog. */
   onTorrent: (source: TorrentSource) => void;
+  /** Switches to the batch download dialog. */
+  onBatch: () => void;
 }
 
 const isLink = (text: string) => /^https?:\/\/\S+$/i.test(text.trim());
@@ -36,7 +38,7 @@ function isVideoPage(url: string) {
   }
 }
 
-export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onError, onMedia, onTorrent }: Props) {
+export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onError, onMedia, onTorrent, onBatch }: Props) {
   const { t, language } = useI18n();
   const headers = prompt?.headers ?? [];
   const [url, setUrl] = useState(prompt?.url ?? initialUrl ?? "");
@@ -157,6 +159,12 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
           />
         </label>
         <div className="add-extra">
+          {!prompt && (
+            <button type="button" className="link-button" onClick={onBatch}>
+              <Icon name="layers" size={14} />
+              {t("batch")}
+            </button>
+          )}
           <button type="button" className="link-button" onClick={openTorrentFile}>
             <Icon name="magnet" size={14} />
             {t("openTorrentFile")}

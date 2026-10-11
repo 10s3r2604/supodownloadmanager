@@ -1265,6 +1265,7 @@ textarea:focus-visible {
   color: var(--danger);
 }
 
+.toast.info .icon:first-child,
 .toast.clipboard .icon:first-child {
   color: var(--accent-ink);
 }
@@ -1471,4 +1472,131 @@ input[type="checkbox"] {
 
 .power-count .icon {
   color: var(--accent);
+}
+
+/* Batch downloads and the links of a page */
+
+.batch-page {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.batch-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.batch-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.batch-types button {
+  padding: 4px 10px;
+  border: 1px solid var(--border-2);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.batch-types button span {
+  color: var(--muted);
+}
+
+.batch-types button.on {
+  border-color: var(--accent);
+  color: var(--strong);
+}
+
+.batch-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  color: var(--muted);
+}
+
+.batch-search input {
+  width: 150px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--strong);
+}
+
+.batch-list {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.batch-row {
+  display: grid;
+  grid-template-columns: 16px 16px minmax(0, 1fr) minmax(0, 40%);
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.batch-row:last-child {
+  border-bottom: 0;
+}
+
+.batch-row:hover {
+  background: var(--hover);
+}
+
+.batch-row input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.batch-row.batch-all {
+  grid-template-columns: 16px minmax(0, 1fr);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.batch-name,
+.batch-host {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-host {
+  font-size: 12px;
+  text-align: right;
+}
+
+.batch-more {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.batch-count {
+  margin-right: auto;
+  font-size: 12.5px;
 }

@@ -17,6 +17,8 @@ export interface RowActions {
   remove: (ids: number[]) => void;
   openProgress: (download: Download) => void;
   moveToQueue: (ids: number[], queue: string) => void;
+  /** Asks for a new link for an unfinished download. */
+  newAddress: (download: Download) => void;
   menu: (event: { clientX: number; clientY: number }, download: Download) => void;
 }
 

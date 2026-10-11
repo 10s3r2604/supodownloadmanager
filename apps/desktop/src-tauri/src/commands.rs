@@ -11,7 +11,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::browsers::{self, Browser, Engine, InstallInfo};
 use crate::category::Category;
-use crate::manager::{AddRequest, DownloadView, State as DownloadState};
+use crate::manager::{AddRequest, BatchRequest, DownloadView, State as DownloadState};
 use crate::media::{AddMediaRequest, MediaInfo, MediaSource, ToolStatus};
 use crate::queue::{PowerAction, Queue};
 use crate::settings::Settings;
@@ -151,6 +151,24 @@ pub fn get_when_done(state: State<'_, AppState>, id: u64) -> WhenDone {
 #[tauri::command]
 pub fn set_when_done(state: State<'_, AppState>, id: u64, choice: WhenDone) {
     state.when_done.set(id, choice);
+}
+
+/// The links a batch pattern stands for.
+#[tauri::command]
+pub fn expand_batch(pattern: String) -> Result<Vec<String>> {
+    crate::batch::expand(&pattern)
+}
+
+/// Adds many links at once.
+#[tauri::command]
+pub fn add_batch(state: State<'_, AppState>, request: BatchRequest) -> Result<Vec<u64>> {
+    state.manager.add_batch(request)
+}
+
+/// Gives an unfinished download a new link, keeping what was downloaded.
+#[tauri::command]
+pub async fn change_address(state: State<'_, AppState>, id: u64, url: String) -> Result<()> {
+    state.manager.change_address(id, url, None).await
 }
 
 #[tauri::command]
