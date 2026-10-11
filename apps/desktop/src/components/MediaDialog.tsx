@@ -234,7 +234,7 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
             <label className="field">
               <span>{t("fileName")}</span>
               <div className="input-row">
-                <input autoFocus value={title} spellCheck={false} onChange={(e) => setTitle(e.target.value)} />
+                <input value={title} spellCheck={false} onChange={(e) => setTitle(e.target.value)} />
                 <span className="media-ext">.{option?.ext ?? "mp4"}</span>
               </div>
             </label>
@@ -288,7 +288,7 @@ function OptionRow(props: {
   const detail = [o.vcodec, o.acodec, o.kind === "video" ? o.ext.toUpperCase() : null].filter(Boolean).join(" · ");
   return (
     <label className={`media-option${props.selected ? " on" : ""}${props.unavailable ? " off" : ""}`}>
-      <input type="radio" name="media-option" checked={props.selected} disabled={props.unavailable} onChange={props.onSelect} />
+      <input type="radio" name="media-option" autoFocus={props.selected && !props.unavailable} checked={props.selected} disabled={props.unavailable} onChange={props.onSelect} />
       <span className="media-label">
         {label}
         {badge && <em>{badge}</em>}

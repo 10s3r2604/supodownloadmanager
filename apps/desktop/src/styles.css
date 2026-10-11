@@ -356,13 +356,14 @@ textarea:focus-visible {
 /* Dialogs */
 
 .backdrop {
+  --dialog-space: 24px;
   position: fixed;
   inset: 0;
   z-index: 10;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: var(--dialog-space);
   background: var(--backdrop);
 }
 
@@ -370,7 +371,9 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   width: min(560px, 100%);
-  max-height: calc(100dvh - 48px);
+  max-height: calc(100vh - var(--dialog-space) * 2);
+  max-height: calc(100dvh - var(--dialog-space) * 2);
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--border-2);
@@ -392,6 +395,8 @@ textarea:focus-visible {
 }
 
 .dialog-header h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 0;
   color: var(--strong);
   font-size: 16px;
@@ -407,7 +412,8 @@ textarea:focus-visible {
   flex: 1 1 auto;
   min-height: 0;
   padding: 10px 20px 18px;
-  overflow-y: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .dialog-body p {
@@ -422,6 +428,24 @@ textarea:focus-visible {
   gap: 8px;
   padding: 12px 20px 16px;
   border-top: 1px solid var(--border);
+}
+
+@media (max-height: 640px), (max-width: 600px) {
+  .backdrop {
+    --dialog-space: 12px;
+  }
+
+  .dialog-header {
+    padding: 12px 12px 6px 16px;
+  }
+
+  .dialog-body {
+    padding: 8px 16px 12px;
+  }
+
+  .dialog-footer {
+    padding: 10px 16px 12px;
+  }
 }
 
 .tabs {
@@ -744,6 +768,8 @@ textarea:focus-visible {
 }
 
 .media-options {
+  container-name: media-qualities;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -826,9 +852,42 @@ textarea:focus-visible {
 }
 
 .media-size {
+  white-space: nowrap;
   color: var(--text);
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
+}
+
+@container media-qualities (max-width: 480px) {
+  .media-option {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    gap: 4px 10px;
+  }
+
+  .media-option input {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .media-label {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .media-size {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .media-detail {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 .media-ext {
