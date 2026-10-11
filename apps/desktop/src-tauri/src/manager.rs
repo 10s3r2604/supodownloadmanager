@@ -2449,10 +2449,30 @@ echo "SDMF $home/$name"
         let done = wait_for(&manager, finished, State::Completed).await;
 
         manager.remove(&[paused, finished], false);
+        // Completion is saved before cleanup. Removal retains the row and
+        // its path reservation until an in-flight cleanup finishes.
+        for _ in 0..500 {
+            if manager.get(paused).is_none() && manager.get(finished).is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         assert!(manager.list().is_empty());
         assert!(!sdm_core::partial_data_path(&path).exists());
         assert!(!sdm_core::partial_state_path(&path).exists());
-        assert!(done.path.exists(), "finished files stay unless asked");
+        let files = sdm_core::PartialFiles::new(&done.path, Some(&manager.settings().temp_dir));
+        assert!(!files.directory().unwrap().exists());
+        assert!(!files.completion.exists());
+        assert_eq!(
+            std::fs::read(done.path).unwrap(),
+            DATA,
+            "finished files stay unless asked"
+        );
+        let saved: Vec<Record> = store::load_json(&fixture.dir.path().join("downloads.json"))
+            .unwrap()
+            .unwrap();
+        assert!(saved.is_empty(), "both removals must be durably recorded");
+        manager.shutdown().await;
     }
 
     /// Serves 2 MiB with byte range support, so downloads can be resumed.

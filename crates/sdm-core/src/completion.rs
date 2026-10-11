@@ -159,7 +159,9 @@ mod tests {
         tokio::fs::write(&files.data, b"complete payload")
             .await
             .unwrap();
-        tokio::fs::File::open(&files.data)
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&files.data)
             .await
             .unwrap()
             .sync_all()
