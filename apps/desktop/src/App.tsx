@@ -69,7 +69,10 @@ export default function App() {
   useEffect(() => {
     api.getSettings().then(setSettings).catch((e) => showError(errorText(e)));
     let alive = true;
+    let refreshing = false;
     const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
       try {
         const list = await api.listDownloads();
         if (!alive) return;
@@ -77,6 +80,8 @@ export default function App() {
         setHistory((before) => recordHistory(before, list));
       } catch (error) {
         console.error(error);
+      } finally {
+        refreshing = false;
       }
     };
     const refreshInfo = () => api.appInfo().then((value) => alive && setInfo(value)).catch(() => {});

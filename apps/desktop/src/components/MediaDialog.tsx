@@ -1,6 +1,6 @@
 // Picks the quality of a video on a web page ("Download this video").
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { type MediaInfo, type MediaOption, type MediaSource, type Settings, type ToolProgress, type ToolStatus, api } from "../api";
 import { errorText, useI18n } from "../context";
@@ -36,16 +36,25 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
   const [busy, setBusy] = useState(false);
   // What yt-dlp is doing, so a slow site is not a mystery.
   const [ytdlpStage, setYtdlpStage] = useState<string | null>(null);
+  const attempt = useRef(0);
   const probing = stage.kind === "probing";
   useEffect(() => {
     if (!probing) {
       setYtdlpStage(null);
       return;
     }
+    let alive = true;
+    let polling = false;
     const timer = setInterval(() => {
-      api.mediaProbeStage(source.pageUrl).then(setYtdlpStage).catch(() => {});
+      if (!polling) {
+        polling = true;
+        api.mediaProbeStage(source.pageUrl)
+          .then((value) => { if (alive) setYtdlpStage(value); })
+          .catch(() => {})
+          .finally(() => { polling = false; });
+      }
     }, 700);
-    return () => clearInterval(timer);
+    return () => { alive = false; clearInterval(timer); };
   }, [probing, source.pageUrl]);
 
   // Tool downloads report their progress with events.
@@ -61,28 +70,40 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
   }, []);
 
   const load = useCallback(async () => {
+    const current = ++attempt.current;
+    setStage({ kind: "probing" });
     try {
       let status = await api.mediaTools();
+      if (current !== attempt.current) return;
       setTools(status);
       if (!status.ytdlp) {
         setStage({ kind: "tools", progress: null });
         status = await api.mediaPrepare(false);
+        if (current !== attempt.current) return;
       }
       setTools(status);
       setStage({ kind: "probing" });
       const found = await api.mediaProbe(source);
+      if (current !== attempt.current) return;
       setInfo(found);
       setTitle(found.title);
       setChoice(found.default ?? found.options[0]?.id ?? null);
       setStage({ kind: "ready" });
     } catch (error) {
-      setStage({ kind: "failed", error: errorText(error) });
+      if (current === attempt.current) setStage({ kind: "failed", error: errorText(error) });
     }
   }, [source]);
 
   useEffect(() => {
     load();
+    return () => { ++attempt.current; };
   }, [load]);
+
+  function close() {
+    ++attempt.current;
+    if (stage.kind === "probing") api.cancelMediaProbe(source.pageUrl).catch(() => {});
+    onClose();
+  }
 
   const option = info?.options.find((o) => o.id === choice) ?? null;
   const ffmpegMissing = Boolean(option?.needsFfmpeg && tools && !tools.ffmpeg);
@@ -109,7 +130,7 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
         directory: directory ?? undefined,
         start,
       });
-      onClose();
+      close();
     } catch (error) {
       onError(errorText(error));
       setStage({ kind: "ready" });
@@ -123,11 +144,11 @@ export function MediaDialog({ source, settings, onClose, onError, onDirect }: Pr
   return (
     <Dialog
       title={t("mediaTitle")}
-      onClose={onClose}
+      onClose={close}
       wide
       footer={
         <>
-          <button type="button" className="button" onClick={onClose}>
+          <button type="button" className="button" onClick={close}>
             {t("cancel")}
           </button>
           {ready && (

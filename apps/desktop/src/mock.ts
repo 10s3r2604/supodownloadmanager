@@ -436,6 +436,7 @@ export const mockApi: Api = {
   async mediaProbeStage() {
     return "[youtube] zoEtcR5EW08: Downloading tv client config";
   },
+  async cancelMediaProbe() {},
   async addMedia(request) {
     const d = make(`${request.title}.${request.option.ext}`, new URL(request.source.pageUrl).host, request.option.size, request.start ? "downloading" : "paused", 0, 0, {
       url: request.source.pageUrl,

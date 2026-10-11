@@ -99,7 +99,7 @@ jobs:
           }
           if (-not $runtime) { throw "The WebView2 runtime was not found" }
           Write-Host "WebView2: $($runtime.FullName)"
-      - name: Test native Windows progress windows
+      - name: Test native Windows media discovery and progress windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
