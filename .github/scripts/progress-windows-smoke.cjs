@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
-const {spawn, execFileSync} = require('node:child_process');
+const {spawn, execFile, execFileSync} = require('node:child_process');
+const {promisify} = require('node:util');
 const {chromium} = require(path.join(process.env.SDM_SMOKE_NODE_MODULES, 'playwright-core'));
 
 if (process.platform !== 'win32') throw new Error('This smoke test requires Windows/WebView2.');
@@ -50,7 +51,9 @@ class MediaFixture {
       if (url.Contains("/status/987") && !File.Exists(marker)) {
         File.WriteAllText(marker, System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
         Console.Error.WriteLine("[twitter] Reading stalled post");
-        Thread.Sleep(30000);
+        // Long enough to remain stalled during automation host startup;
+        // cancellation below still has to stop this process within 8 seconds.
+        Thread.Sleep(90000);
       }
       Console.Error.WriteLine("[twitter] Reading video formats");
       Thread.Sleep(1500);
@@ -81,6 +84,107 @@ fs.writeFileSync(path.join(tools,'yt-dlp.checked'),'fixture');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const children=[];
 const report=[];
+const execFileAsync=promisify(execFile);
+const pwsh='pwsh.exe';
+const interopFile=path.join(output,'NativeInterop.ps1');
+// Run Windows automation asynchronously so shell startup and native messages
+// cannot stop this process from serving the HTTP fixtures. PowerShell 7 is
+// supplied by windows-latest; the C# media executable above still uses csc.exe.
+fs.writeFileSync(interopFile,`param([string]$Action, [uint32]$TargetProcess, [long]$WindowHandle)
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class NativeSdmSmoke {
+  public delegate bool Visit(IntPtr window, IntPtr state);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(Visit visit, IntPtr state);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, Visit visit, IntPtr state);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr window, uint command);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr window);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr window, int command);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int capacity);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr window, StringBuilder text, int capacity);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr w, IntPtr l, uint flags, uint timeout, out UIntPtr result);
+  static string Text(IntPtr window) { var text=new StringBuilder(4096); GetWindowText(window,text,text.Capacity); return text.ToString(); }
+  public static long MainWindow(uint process) {
+    IntPtr main=IntPtr.Zero;
+    int matches=0;
+    EnumWindows((window,state)=>{
+      uint owner; GetWindowThreadProcessId(window,out owner);
+      if(owner==process && IsWindowVisible(window) && GetWindow(window,4)==IntPtr.Zero && Text(window)=="Supo Download Manager") {
+        matches+=1; main=window;
+      }
+      return true;
+    },IntPtr.Zero);
+    if(matches>1) throw new Exception("More than one main native window was found");
+    if(main==IntPtr.Zero) throw new Exception("Main native window was not found");
+    return main.ToInt64();
+  }
+  static IntPtr MainHandle(uint process, long handle) {
+    IntPtr main=new IntPtr(handle);
+    uint owner; GetWindowThreadProcessId(main,out owner);
+    if(!IsWindow(main) || owner!=process || Text(main)!="Supo Download Manager") throw new Exception("Cached main native window no longer belongs to this desktop process");
+    return main;
+  }
+  static void Message(IntPtr window, uint message, UIntPtr w) {
+    UIntPtr result;
+    if(SendMessageTimeout(window,message,w,IntPtr.Zero,2,1000,out result)==IntPtr.Zero) throw new Exception("Native Windows message loop stopped responding");
+  }
+  public static void Responsive(uint process, long handle) { Message(MainHandle(process,handle),0,UIntPtr.Zero); }
+  public static void Restore(uint process, long handle) { ShowWindowAsync(MainHandle(process,handle),9); }
+  public static bool DismissRecovery(uint process) {
+    IntPtr dialog=IntPtr.Zero;
+    EnumWindows((window,state)=>{
+      uint owner; GetWindowThreadProcessId(window,out owner);
+      if(owner==process && Text(window)=="Saved data recovered") { dialog=window; return false; }
+      return true;
+    },IntPtr.Zero);
+    if(dialog==IntPtr.Zero) return false;
+    IntPtr button=IntPtr.Zero;
+    EnumChildWindows(dialog,(window,state)=>{
+      var kind=new StringBuilder(128); GetClassName(window,kind,kind.Capacity);
+      if(kind.ToString()=="Button" && Text(window).Replace("&","").Trim()=="OK") {
+        button=window; return false;
+      }
+      return true;
+    },IntPtr.Zero);
+    if(button!=IntPtr.Zero) Message(button,0x00F5,UIntPtr.Zero);
+    // Windows task dialogs can host their standard button in DirectUI.
+    else Message(dialog,0x0466,new UIntPtr(1));
+    return true;
+  }
+}
+'@
+switch ($Action) {
+  'main' { [NativeSdmSmoke]::MainWindow($TargetProcess) }
+  'responsive' { [NativeSdmSmoke]::Responsive($TargetProcess,$WindowHandle); 'responsive' }
+  'restore' { [NativeSdmSmoke]::Restore($TargetProcess,$WindowHandle); 'restored' }
+  'recovery' { [NativeSdmSmoke]::DismissRecovery($TargetProcess) }
+  default { throw "Unknown Windows automation action: $Action" }
+}
+`);
+async function shell(script) {
+  const {stdout}=await execFileAsync(pwsh,['-NoLogo','-NoProfile','-NonInteractive','-Command',
+    `$ErrorActionPreference='Stop'; ${script}`],{encoding:'utf8',timeout:30_000,windowsHide:true});
+  return stdout.trim();
+}
+async function native(action,processId,handle='0') {
+  const started=Date.now();
+  try {
+    const {stdout}=await execFileAsync(pwsh,['-NoLogo','-NoProfile','-NonInteractive','-File',
+      interopFile,action,String(processId),String(handle)],{encoding:'utf8',timeout:30_000,windowsHide:true});
+    return stdout.trim();
+  } catch(error) {
+    error.message=`Windows automation ${action}: ${error.message}${error.stderr ? `\n${error.stderr.trim()}` : ''}`;
+    throw error;
+  } finally {
+    const elapsed=Date.now()-started;
+    if(elapsed>8_000) console.log(`Windows automation ${action} host + interop took ${elapsed} ms; the native message timeout remains 1000 ms.`);
+  }
+}
 async function until(fn, message, timeout=20_000) {
   const end=Date.now()+timeout;
   let last;
@@ -152,11 +256,9 @@ const server=http.createServer((req,res)=>{
     const pages=()=>browser.contexts().flatMap(context=>context.pages());
     let main=await until(()=>pages().find(page=>!page.url().includes('#')&&page.url().includes(':1420')),'Main WebView was not found');
     await main.getByRole('button',{name:'Settings',exact:true}).waitFor({timeout:20_000});
-    // Remember the actual main HWND before opening auxiliary windows.
-    // Process.MainWindowHandle can later select one of the small windows.
-    let mainWindowHandle=execFileSync('powershell.exe',['-NoProfile','-Command',
-      `(Get-Process -Id ${desktop.pid}).MainWindowHandle.ToInt64()`
-    ],{encoding:'utf8',timeout:10_000}).trim();
+    // Match this desktop's unowned main window by PID and exact title, then
+    // retain that HWND while auxiliary windows are opened and focused.
+    let mainWindowHandle=await native('main',desktop.pid);
     assert(/^\d+$/.test(mainWindowHandle) && Number(mainWindowHandle)>0);
     async function invoke(command,args={}) {
       return bounded(main.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args}),`${command} blocked the Windows UI thread`);
@@ -177,16 +279,10 @@ const server=http.createServer((req,res)=>{
       ]);
     }
 
-    function nativeResponsive() {
+    async function nativeResponsive() {
       // WM_NULL reaches the actual Windows message loop. JavaScript alone
       // can keep responding while a synchronous native IPC handler is stuck.
-      execFileSync('powershell.exe',['-NoProfile','-Command',`
-        Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class UiProbe { [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, IntPtr l, uint f, uint t, out UIntPtr result); }';
-        $h = [IntPtr]${mainWindowHandle};
-        if ($h -eq 0) { throw 'Main native window was not found' };
-        $result = [UIntPtr]::Zero;
-        if ([UiProbe]::SendMessageTimeout($h, 0, [UIntPtr]::Zero, [IntPtr]::Zero, 2, 1000, [ref]$result) -eq [IntPtr]::Zero) { throw 'Native Windows message loop stopped responding' }
-      `],{timeout:10_000,stdio:'pipe'});
+      assert.equal(await native('responsive',desktop.pid,mainWindowHandle),'responsive');
     }
     async function prompt(pageUrl) {
       await invoke('plugin:event|emit',{event:'sdm:media-prompt',payload:{pageUrl,title:'Home / X'}});
@@ -229,7 +325,7 @@ const server=http.createServer((req,res)=>{
     assert(cancelledPrompt.headers.some(([key,value])=>key==='Cookie' && value==='download_session=fixture'));
     await sleep(3_500);
     assert.equal(await cancelled.getByRole('textbox',{name:'File name',exact:true}).inputValue(),'browser-installer.exe');
-    nativeResponsive();
+    await nativeResponsive();
     await closeAdd(cancelled,()=>cancelled.getByRole('button',{name:'Cancel',exact:true}).click());
     assert(!fileRequests.some(r=>r.method==='GET' && !r.probe && r.url==='/delayed.exe'));
     report.push({name:'browser-small-independent-confirmation',passed:true,mainMinimized:true,filenamePreserved:true});
@@ -282,17 +378,14 @@ const server=http.createServer((req,res)=>{
     console.log(JSON.stringify({browserConfirmationChecks:report},null,2));
     // Restore through a native user action after testing that capture leaves
     // it minimized; these checks never grant an extra application permission.
-    execFileSync('powershell.exe',['-NoProfile','-Command',`
-      Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class RestoreSdm { [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int command); }';
-      [RestoreSdm]::ShowWindowAsync([IntPtr]${mainWindowHandle},9) | Out-Null;
-    `],{timeout:10_000,stdio:'pipe'});
+    assert.equal(await native('restore',desktop.pid,mainWindowHandle),'restored');
     await until(async()=>!await invoke('plugin:window|is_minimized',{label:'main'}),'Main window did not restore');
 
     // The old extension sent Home rather than the post. Fail promptly with
     // an actionable message, without starting an extractor for the feed.
     await prompt('https://x.com/home');
     await main.getByText('Open the X post containing the video',{exact:false}).waitFor({timeout:8_000});
-    nativeResponsive();
+    await nativeResponsive();
     await main.getByRole('button',{name:'Cancel',exact:true}).click();
     report.push({name:'x-home-error',passed:true,nativeResponsive:true});
 
@@ -304,22 +397,22 @@ const server=http.createServer((req,res)=>{
     await until(async()=>Boolean(await invoke('media_probe_stage',{pageUrl:'https://x.com/author/status/987'})),'Probe stage was not readable');
     await invoke('list_downloads');
     await invoke('get_settings');
-    nativeResponsive();
+    await nativeResponsive();
     await main.screenshot({path:path.join(output,'0-stalled-probe.png')});
-    await main.getByRole('button',{name:'Cancel',exact:true}).click();
-    await main.getByRole('dialog').waitFor({state:'hidden',timeout:3_000});
     const probePid=Number(fs.readFileSync(pidFile,'utf8'));
     assert(Number.isSafeInteger(probePid)&&probePid>0);
+    process.kill(probePid,0); // The fixture must still be alive when Cancel is clicked.
+    assert.equal(await main.locator('.media-option').count(),0,'The stalled probe ended before cancellation');
+    await main.getByRole('button',{name:'Cancel',exact:true}).click();
+    await main.getByRole('dialog').waitFor({state:'hidden',timeout:3_000});
     await until(()=>{
-      try {
-        execFileSync('powershell.exe',['-NoProfile','-Command',`if (Get-Process -Id ${probePid} -ErrorAction SilentlyContinue) { exit 1 }`],{timeout:3_000,stdio:'pipe'});
-        return true;
-      } catch { return false; }
+      try { process.kill(probePid,0); return false; }
+      catch(error) { if(error.code==='ESRCH') return true; throw error; }
     },'Cancel left the extractor running',8_000);
     report.push({name:'stalled-probe-cancel',passed:true,nativeResponsive:true,childStopped:true});
     await prompt('https://x.com/author/status/987');
     await main.locator('.media-option').first().waitFor({timeout:8_000});
-    nativeResponsive();
+    await nativeResponsive();
     await main.getByRole('button',{name:'Cancel',exact:true}).click();
     report.push({name:'probe-retry-after-cancel',passed:true,nativeResponsive:true});
 
@@ -414,7 +507,7 @@ const server=http.createServer((req,res)=>{
     await assert.rejects(invoke('save_settings',{settings:{...settingsBeforeProxy,proxy:invalidProxy}}));
     assert.deepEqual(await invoke('get_settings'),settingsBeforeProxy);
     assert.deepEqual(fs.readFileSync(settingsFile),diskBeforeProxy);
-    nativeResponsive();
+    await nativeResponsive();
     report.push({name:'invalid-proxy-native-save-keeps-runtime-and-disk',passed:true,mainResponsive:true});
     await main.getByRole('button',{name:'Settings',exact:true}).click();
     const proxyDialog=main.getByRole('dialog',{name:'Settings',exact:true});
@@ -432,7 +525,7 @@ const server=http.createServer((req,res)=>{
     assert(await proxyDialog.getByRole('button',{name:'Save',exact:true}).isEnabled());
     assert.deepEqual(await invoke('get_settings'),settingsBeforeProxy);
     assert.deepEqual(fs.readFileSync(settingsFile),diskBeforeProxy);
-    nativeResponsive();
+    await nativeResponsive();
     await main.screenshot({path:path.join(output,'invalid-proxy-settings.png')});
     report.push({name:'invalid-proxy-settings-error-remains-visible',passed:true,persistentInlineError:true});
     await proxyDialog.getByRole('radio',{name:'No proxy',exact:true}).check();
@@ -502,44 +595,7 @@ const server=http.createServer((req,res)=>{
       },'The old WebView2 debugging endpoint remained alive',8_000);
     }
     async function dismissRecoveryNotice() {
-      return until(()=>execFileSync('powershell.exe',['-NoProfile','-Command',`
-        Add-Type -TypeDefinition @'
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public class RecoveryNotice {
-  public delegate bool Visit(IntPtr window, IntPtr state);
-  [DllImport("user32.dll")] public static extern bool EnumWindows(Visit visit, IntPtr state);
-  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, Visit visit, IntPtr state);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int capacity);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr window, StringBuilder text, int capacity);
-  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
-  static string Text(IntPtr window) { var text=new StringBuilder(4096); GetWindowText(window,text,text.Capacity); return text.ToString(); }
-  public static bool Dismiss(uint process) {
-    IntPtr dialog=IntPtr.Zero;
-    EnumWindows((window,state)=>{
-      uint owner; GetWindowThreadProcessId(window,out owner);
-      if(owner==process && Text(window)=="Saved data recovered") { dialog=window; return false; }
-      return true;
-    },IntPtr.Zero);
-    if(dialog==IntPtr.Zero) return false;
-    bool clicked=false;
-    EnumChildWindows(dialog,(window,state)=>{
-      var kind=new StringBuilder(128); GetClassName(window,kind,kind.Capacity);
-      if(kind.ToString()=="Button" && Text(window).Replace("&","").Trim()=="OK") {
-        SendMessage(window,0x00F5,IntPtr.Zero,IntPtr.Zero); clicked=true; return false;
-      }
-      return true;
-    },IntPtr.Zero);
-    // Windows task dialogs can host their standard button in DirectUI.
-    if(!clicked) SendMessage(dialog,0x0466,new IntPtr(1),IntPtr.Zero);
-    return true;
-  }
-}
-'@;
-        if ([RecoveryNotice]::Dismiss(${desktop.pid})) { 'dismissed' }
-      `],{encoding:'utf8',timeout:5_000}).includes('dismissed'),
+      return until(async()=>await native('recovery',desktop.pid)==='True',
       'The recovered-data notice was not shown',10_000);
     }
     async function startDesktop(recovered=false) {
@@ -556,13 +612,9 @@ public class RecoveryNotice {
         'Restarted main WebView was not found');
       await main.getByRole('button',{name:'Settings',exact:true}).waitFor({timeout:20_000});
       if(recovered) await dismissRecoveryNotice();
-      // Capture the main HWND after dismissing recovery, before any additional
-      // native windows can make Process.MainWindowHandle select another window.
-      mainWindowHandle=execFileSync('powershell.exe',['-NoProfile','-Command',
-        `(Get-Process -Id ${desktop.pid}).MainWindowHandle.ToInt64()`
-      ],{encoding:'utf8',timeout:10_000}).trim();
+      mainWindowHandle=await native('main',desktop.pid);
       assert(/^\d+$/.test(mainWindowHandle) && Number(mainWindowHandle)>0);
-      nativeResponsive();
+      await nativeResponsive();
     }
     const ids=records=>records.map(d=>d.id).sort((a,b)=>a-b);
     await stopDesktop();
@@ -604,7 +656,7 @@ public class RecoveryNotice {
     assert.equal(sha(fs.readFileSync(file.path)),sha(bytes));
     await main.getByRole('button',{name:'Settings',exact:true}).click();
     await main.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();
-    nativeResponsive();
+    await nativeResponsive();
     report.push({name:'damaged-history-recovers-last-good-backup',passed:true,originalPreserved:true,mainResponsive:true});
     fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({passed:report.length,report},null,2));
     console.log(JSON.stringify({passed:report.length,report},null,2));
@@ -616,9 +668,7 @@ public class RecoveryNotice {
       if(fs.existsSync(log)) console.error(`${name} log:\n${fs.readFileSync(log,'utf8')}`);
     }
     try {
-      console.error(execFileSync('powershell.exe',['-NoProfile','-Command',
-        "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('sdm-desktop.exe', 'msedgewebview2.exe') } | Select-Object Name, CommandLine | ConvertTo-Json -Depth 5"
-      ],{encoding:'utf8',timeout:5_000}));
+      console.error(await shell("Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('sdm-desktop.exe', 'msedgewebview2.exe') } | Select-Object Name, CommandLine | ConvertTo-Json -Depth 5"));
     } catch {}
     if(browser) for(const [index,page] of browser.contexts().flatMap(c=>c.pages()).entries()) {
       await page.screenshot({path:path.join(output,`failure-${index}.png`),timeout:3_000}).catch(()=>{});
@@ -628,7 +678,7 @@ public class RecoveryNotice {
     if(browser) await bounded(browser.close(),'Could not close the smoke browser',3_000).catch(()=>{});
     for(const processHandle of children.reverse()) {
       if(processHandle.pid && processHandle.exitCode===null && processHandle.signalCode===null) {
-        try { execFileSync('taskkill',['/pid',String(processHandle.pid),'/t','/f'],{stdio:'ignore'}); } catch {}
+        try { await execFileAsync('taskkill',['/pid',String(processHandle.pid),'/t','/f'],{timeout:10_000,windowsHide:true}); } catch {}
       }
     }
     server.closeAllConnections(); server.close();

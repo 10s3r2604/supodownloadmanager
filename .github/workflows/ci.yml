@@ -37,6 +37,35 @@ jobs:
           path: download-smoke/
           if-no-files-found: ignore
 
+  extension_video:
+    name: Test browser video menus (Edge)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Test packaged extension video menus in Edge
+        shell: pwsh
+        run: |
+          node extension/build.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $testDeps = Join-Path $env:RUNNER_TEMP "sdm-video-menu-test"
+          npm install --prefix $testDeps --no-save --package-lock=false playwright-core@1.57.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:SDM_SMOKE_NODE_MODULES = Join-Path $testDeps "node_modules"
+          $env:SDM_SMOKE_OUTPUT = "edge-smoke"
+          node .github/scripts/extension-menu-smoke.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Edge video menu checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge-video-menu-smoke
+          path: edge-smoke/
+          if-no-files-found: ignore
+
   lint:
     name: Format and lint
     runs-on: ubuntu-latest
@@ -136,7 +165,7 @@ jobs:
           }
           if (-not $runtime) { throw "The WebView2 runtime was not found" }
           Write-Host "WebView2: $($runtime.FullName)"
-      - name: Test native Windows media and browser video menus
+      - name: Test native Windows media and browser confirmation windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -145,8 +174,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:SDM_SMOKE_NODE_MODULES = Join-Path $testDeps "node_modules"
           node .github/scripts/progress-windows-smoke.cjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node .github/scripts/extension-menu-smoke.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload native Windows progress checks
         if: runner.os == 'Windows' && always()
