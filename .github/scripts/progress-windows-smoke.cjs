@@ -189,7 +189,7 @@ const server=http.createServer((req,res)=>{
         body:JSON.stringify({url:`${source}${route}`,fileName:name,fileSize:bytes.length,
           cookies:'download_session=fixture',referrer:'https://github.com/example/releases',userAgent:'SDM-native-browser-fixture'}),
       });
-      assert.equal(response.status,200);
+      assert.equal(response.status,202);
       const page=await until(async()=>{
         for(const candidate of pages().filter(p=>p.url().includes('#add/'))) {
           if(await candidate.getByRole('textbox',{name:'File name',exact:true}).inputValue().catch(()=>null)===name) return candidate;
