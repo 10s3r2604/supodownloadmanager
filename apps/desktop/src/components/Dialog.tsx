@@ -9,9 +9,10 @@ interface Props {
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  standalone?: boolean;
 }
 
-export function Dialog({ title, onClose, children, footer, wide }: Props) {
+export function Dialog({ title, onClose, children, footer, wide, standalone }: Props) {
   const { t } = useI18n();
   const dialog = useRef<HTMLDivElement>(null);
   const initialFocus = useRef<HTMLElement | null>(null);
@@ -52,14 +53,14 @@ export function Dialog({ title, onClose, children, footer, wide }: Props) {
 
   return (
     <div
-      className="backdrop"
+      className={standalone ? "add-window" : "backdrop"}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (!standalone && event.target === event.currentTarget) onClose();
       }}
     >
-      <div ref={dialog} tabIndex={-1} className={`dialog${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
-        <header className="dialog-header">
-          <h2>{title}</h2>
+      <div ref={dialog} tabIndex={-1} className={`dialog${wide ? " wide" : ""}${standalone ? " window-dialog" : ""}`} role="dialog" aria-modal={standalone ? undefined : true} aria-label={title}>
+        <header className="dialog-header" data-tauri-drag-region={standalone ? true : undefined}>
+          <h2 data-tauri-drag-region={standalone ? true : undefined}>{title}</h2>
           <button type="button" className="icon-button" onClick={onClose} aria-label={t("close")}>
             <Icon name="x" />
           </button>

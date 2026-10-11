@@ -18,7 +18,7 @@ fs.mkdirSync(data, {recursive:true});
 fs.writeFileSync(path.join(data, 'settings.json'), JSON.stringify({
   downloadDir:directory, language:'en', progressWindow:true, progressStyle:'graph',
   completeDialog:true, clipboardMonitor:false, notifications:false, closeToTray:false,
-  connections:1, maxParallel:1, proxy:'none',
+  connections:1, maxParallel:1, proxy:'none', confirmBrowserDownloads:true,
 }));
 // A deterministic subprocess fixture writes media bytes and progress lines.
 // This tests the native media manager without relying on an external site.
@@ -103,14 +103,27 @@ function child(exe, args, name, env=process.env) {
   return processHandle;
 }
 const bytes=Buffer.alloc(256_000,0x53);
+const fileRequests=[];
 const server=http.createServer((req,res)=>{
-  res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':bytes.length});
+  const probe=req.headers.range==='bytes=0-0';
+  fileRequests.push({url:req.url,method:req.method,headers:req.headers,probe});
+  // An unresponsive one-byte probe must not block confirmation or overwrite
+  // the browser's filename and size when it eventually completes.
+  if(probe && req.url==='/delayed.exe') {
+    setTimeout(()=>res.writeHead(206,{'Content-Length':1,'Content-Range':`bytes 0-0/${bytes.length}`}).end(bytes.subarray(0,1)),3_000);
+    return;
+  }
+  const range=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range||'');
+  const start=range?Number(range[1]):0;
+  const end=range&&range[2]?Math.min(Number(range[2])+1,bytes.length):bytes.length;
+  res.writeHead(range?206:200,{'Content-Type':'application/octet-stream','Content-Length':end-start,
+    ...(range?{'Content-Range':`bytes ${start}-${end-1}/${bytes.length}`}:{})});
   if(req.method==='HEAD') { res.end(); return; }
-  let offset=0;
+  let offset=start;
   const timer=setInterval(()=>{
-    const end=Math.min(bytes.length,offset+64_000);
-    res.write(bytes.subarray(offset,end)); offset=end;
-    if(offset===bytes.length) { clearInterval(timer); res.end(); }
+    const next=Math.min(end,offset+64_000);
+    res.write(bytes.subarray(offset,next)); offset=next;
+    if(offset===end) { clearInterval(timer); res.end(); }
   },req.url==='/slow.bin'?2_000:200);
   res.on('close',()=>clearInterval(timer));
 });
@@ -134,7 +147,7 @@ const server=http.createServer((req,res)=>{
     },'WebView2 debugging endpoint did not start',30_000);
     browser=await chromium.connectOverCDP('http://127.0.0.1:9222');
     const pages=()=>browser.contexts().flatMap(context=>context.pages());
-    const main=await until(()=>pages().find(page=>!page.url().includes('#progress/')&&page.url().includes(':1420')),'Main WebView was not found');
+    const main=await until(()=>pages().find(page=>!page.url().includes('#')&&page.url().includes(':1420')),'Main WebView was not found');
     await main.getByRole('button',{name:'Settings',exact:true}).waitFor({timeout:20_000});
     async function invoke(command,args={}) {
       return bounded(main.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args}),`${command} blocked the Windows UI thread`);
@@ -169,6 +182,101 @@ const server=http.createServer((req,res)=>{
     async function prompt(pageUrl) {
       await invoke('plugin:event|emit',{event:'sdm:media-prompt',payload:{pageUrl,title:'Home / X'}});
     }
+
+    async function capture(name, route='/delayed.exe') {
+      const response=await fetch('http://127.0.0.1:17360/api/download',{
+        method:'POST',headers:{'Content-Type':'application/json','X-SDM-Client':'extension','X-SDM-Browser':'chrome'},
+        body:JSON.stringify({url:`${source}${route}`,fileName:name,fileSize:bytes.length,
+          cookies:'download_session=fixture',referrer:'https://github.com/example/releases',userAgent:'SDM-native-browser-fixture'}),
+      });
+      assert.equal(response.status,200);
+      const page=await until(async()=>{
+        for(const candidate of pages().filter(p=>p.url().includes('#add/'))) {
+          if(await candidate.getByRole('textbox',{name:'File name',exact:true}).inputValue().catch(()=>null)===name) return candidate;
+        }
+      },`Browser confirmation for ${name} did not open`);
+      await page.getByRole('button',{name:'Download now',exact:true}).waitFor();
+      assert(await invoke('plugin:window|is_minimized',{label:'main'}),'Capture restored the main SDM window');
+      assert.equal(await main.getByRole('dialog').count(),0,'Capture opened a modal in the main window');
+      const rectangle=await page.getByRole('dialog').boundingBox();
+      assert(rectangle.width<=560 && rectangle.height<=400,`Confirmation is too large: ${JSON.stringify(rectangle)}`);
+      await page.getByText('250 KB',{exact:true}).waitFor();
+      assert(!(await invoke('list_downloads')).some(d=>d.fileName===name),'Capture started without confirmation');
+      return page;
+    }
+    async function closeAdd(page, action) {
+      await Promise.all([page.waitForEvent('close',{timeout:8_000}),action()]);
+      assert(await invoke('plugin:window|is_minimized',{label:'main'}));
+      await invoke('list_downloads'); // Closing a confirmation must not quit SDM.
+    }
+    await invoke('plugin:window|minimize',{label:'main'});
+    await until(()=>invoke('plugin:window|is_minimized',{label:'main'}),'Main SDM window did not minimize');
+    await assert.rejects(invoke('get_add_prompt'),/no browser download/);
+    const cancelled=await capture('browser-installer.exe');
+    await cancelled.screenshot({path:path.join(output,'browser-confirmation.png')});
+    const cancelledPrompt=await cancelled.evaluate(()=>window.__TAURI_INTERNALS__.invoke('get_add_prompt'));
+    assert.equal(cancelledPrompt.fileName,'browser-installer.exe');
+    assert(cancelledPrompt.directory.endsWith('Programs'));
+    assert(cancelledPrompt.headers.some(([key,value])=>key==='Cookie' && value==='download_session=fixture'));
+    await sleep(3_500);
+    assert.equal(await cancelled.getByRole('textbox',{name:'File name',exact:true}).inputValue(),'browser-installer.exe');
+    nativeResponsive();
+    await closeAdd(cancelled,()=>cancelled.getByRole('button',{name:'Cancel',exact:true}).click());
+    assert(!fileRequests.some(r=>r.method==='GET' && !r.probe && r.url==='/delayed.exe'));
+    report.push({name:'browser-small-independent-confirmation',passed:true,mainMinimized:true,filenamePreserved:true});
+
+    const first=await capture('browser-first.zip','/first.zip');
+    const second=await capture('browser-second.exe','/second.exe');
+    assert.equal(await first.getByRole('textbox',{name:'File name',exact:true}).inputValue(),'browser-first.zip');
+    await closeAdd(second,()=>second.keyboard.press('Escape'));
+    assert(!first.isClosed());
+    await closeAdd(first,()=>first.getByRole('button',{name:'Close',exact:true}).click());
+    report.push({name:'browser-multiple-cancel-escape',passed:true});
+
+    const later=await capture('browser-later.zip','/later.zip');
+    // At the smallest supported size the fields scroll but all actions fit.
+    await later.evaluate(()=>window.__TAURI_INTERNALS__.invoke('plugin:window|set_size',{
+      label:window.__TAURI_INTERNALS__.metadata.currentWindow.label,
+      value:{Logical:{width:320,height:240}},
+    }));
+    await until(async()=>await later.evaluate(()=>window.innerWidth<=320),'Confirmation did not resize');
+    for(const name of ['Cancel','Download later','Download now']) {
+      const button=later.getByRole('button',{name,exact:true});
+      const fits=await button.evaluate(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth;});
+      assert(fits,`${name} is clipped in the small window`);
+    }
+    await later.screenshot({path:path.join(output,'browser-confirmation-small.png')});
+    await closeAdd(later,()=>later.getByRole('button',{name:'Download later',exact:true}).click());
+    const paused=(await invoke('list_downloads')).find(d=>d.fileName==='browser-later.zip');
+    assert(paused && paused.state==='paused');
+    assert(!fileRequests.some(r=>r.method==='GET' && !r.probe && r.url==='/later.zip'));
+    await invoke('remove_downloads',{ids:[paused.id],deleteFiles:false});
+    report.push({name:'browser-download-later-small-window',passed:true});
+
+    const now=await capture('browser-now.zip','/now.zip');
+    const custom=path.join(directory,'browser-custom');
+    await now.getByRole('textbox',{name:'File name',exact:true}).fill('renamed.zip');
+    await now.locator('.input-row input').fill(custom);
+    await closeAdd(now,()=>now.getByRole('button',{name:'Download now',exact:true}).click());
+    const downloaded=await until(async()=>{
+      const d=(await invoke('list_downloads')).find(d=>d.fileName==='renamed.zip');
+      return d?.state==='completed'?d:null;
+    },'Confirmed browser file did not complete');
+    assert.equal(path.dirname(downloaded.path),custom);
+    assert.equal(crypto.createHash('sha256').update(fs.readFileSync(downloaded.path)).digest('hex'),crypto.createHash('sha256').update(bytes).digest('hex'));
+    const request=fileRequests.find(r=>r.method==='GET' && !r.probe && r.url==='/now.zip');
+    assert.equal(request.headers.cookie,'download_session=fixture');
+    assert.equal(request.headers.referer,'https://github.com/example/releases');
+    assert.equal(request.headers['user-agent'],'SDM-native-browser-fixture');
+    await closeProgress(await progress(downloaded.id,'browser-confirmed-download'));
+    report.push({name:'browser-confirmed-download-content-and-auth',passed:true});
+    // Restore through a native user action after testing that capture leaves
+    // it minimized; these checks never grant an extra application permission.
+    execFileSync('powershell.exe',['-NoProfile','-Command',`
+      Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class RestoreSdm { [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int command); }';
+      [RestoreSdm]::ShowWindowAsync((Get-Process -Id ${desktop.pid}).MainWindowHandle,9) | Out-Null;
+    `],{timeout:10_000,stdio:'pipe'});
+    await until(async()=>!await invoke('plugin:window|is_minimized',{label:'main'}),'Main window did not restore');
 
     // The old extension sent Home rather than the post. Fail promptly with
     // an actionable message, without starting an extractor for the feed.
@@ -256,6 +364,7 @@ const server=http.createServer((req,res)=>{
     fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({passed:report.length,report},null,2));
     console.log(JSON.stringify({passed:report.length,report},null,2));
   } catch(e) {
+    console.error(`::error::Native Windows smoke: ${String(e.message).replaceAll('\n',' ')}`);
     fs.writeFileSync(path.join(output,'failure.txt'),e.stack||String(e));
     for(const name of ['desktop','vite']) {
       const log=path.join(output,`${name}.log`);

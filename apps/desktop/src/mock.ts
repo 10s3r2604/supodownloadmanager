@@ -356,6 +356,16 @@ export const mockApi: Api = {
     whenDone.set(id, choice);
   },
   async closeWindow() {},
+  async showWindow() {},
+  async getAddPrompt() {
+    return {
+      url: "https://example.org/releases/download/latest/installer.exe",
+      fileName: "Supo.Download.Manager_x64-setup.exe",
+      fileSize: 100_977_868,
+      directory: folderFor("program"),
+      headers: [],
+    };
+  },
   async minimizeWindow() {},
   async setWindowTitle(title) {
     document.title = title;

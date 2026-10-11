@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { type AddPrompt, MAIN_QUEUE, type ProbeResult, type Queue, type Settings, type TorrentSource, api } from "../api";
 import { errorText, useI18n } from "../context";
@@ -12,14 +12,16 @@ interface Props {
   initialUrl?: string;
   settings: Settings;
   queues: Queue[];
+  standalone?: boolean;
+  error?: string | null;
   onClose: () => void;
   onError: (message: string) => void;
   /** Switches to the video quality picker for a page. */
-  onMedia: (pageUrl: string) => void;
+  onMedia?: (pageUrl: string) => void;
   /** Switches to the torrent dialog. */
-  onTorrent: (source: TorrentSource) => void;
+  onTorrent?: (source: TorrentSource) => void;
   /** Switches to the batch download dialog. */
-  onBatch: () => void;
+  onBatch?: () => void;
 }
 
 const isLink = (text: string) => /^https?:\/\/\S+$/i.test(text.trim());
@@ -38,7 +40,7 @@ function isVideoPage(url: string) {
   }
 }
 
-export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onError, onMedia, onTorrent, onBatch }: Props) {
+export function AddDialog({ prompt, initialUrl, settings, queues, standalone, error, onClose, onError, onMedia, onTorrent, onBatch }: Props) {
   const { t, language } = useI18n();
   const headers = prompt?.headers ?? [];
   const [url, setUrl] = useState(prompt?.url ?? initialUrl ?? "");
@@ -46,7 +48,7 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
   const [probing, setProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
   const [fileName, setFileName] = useState(prompt?.fileName ?? "");
-  const [nameEdited, setNameEdited] = useState(false);
+  const nameEdited = useRef(Boolean(prompt?.fileName));
   const [directory, setDirectory] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [queue, setQueue] = useState(MAIN_QUEUE);
@@ -54,7 +56,7 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
 
   // Magnet links have no server to ask; they go to the torrent dialog.
   useEffect(() => {
-    if (isMagnet(url)) onTorrent({ link: url.trim() });
+    if (isMagnet(url)) onTorrent?.({ link: url.trim() });
   }, [url, onTorrent]);
 
   useEffect(() => {
@@ -71,7 +73,7 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
         const result = await api.probe(url.trim(), headers);
         if (cancelled) return;
         setProbe(result);
-        if (!nameEdited) setFileName(result.fileName);
+        if (!nameEdited.current) setFileName(result.fileName);
       } catch (error) {
         if (!cancelled) setProbeError(errorText(error));
       } finally {
@@ -85,16 +87,21 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
     // Only the link decides what to ask the server.
   }, [url]);
 
-  const shownDirectory = directory ?? probe?.directory ?? settings.downloadDir;
+  const shownDirectory = directory ?? prompt?.directory ?? probe?.directory ?? settings.downloadDir;
+  const shownSize = probe?.size ?? prompt?.fileSize;
 
   async function browse() {
-    const folder = await api.pickFolder();
-    if (folder) setDirectory(folder);
+    try {
+      const folder = await api.pickFolder();
+      if (folder) setDirectory(folder);
+    } catch (error) {
+      onError(errorText(error));
+    }
   }
 
   async function openTorrentFile() {
     const path = await api.pickTorrentFile();
-    if (path) onTorrent({ path });
+    if (path) onTorrent?.({ path });
   }
 
   const torrentLink =
@@ -111,7 +118,7 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
         url: url.trim(),
         headers,
         fileName: fileName.trim() || undefined,
-        directory: directory ?? undefined,
+        directory: standalone ? shownDirectory : directory ?? undefined,
         start,
         queue,
       });
@@ -125,6 +132,7 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
   return (
     <Dialog
       title={t("addTitle")}
+      standalone={standalone}
       onClose={onClose}
       footer={
         <>
@@ -153,25 +161,27 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
           <input
             autoFocus
             value={url}
+            readOnly={standalone}
+            title={standalone ? url : undefined}
             placeholder="https://… / magnet:?…"
             spellCheck={false}
             onChange={(event) => setUrl(event.target.value)}
           />
         </label>
-        <div className="add-extra">
-          {!prompt && (
+        {!standalone && <div className="add-extra">
+          {!prompt && onBatch && (
             <button type="button" className="link-button" onClick={onBatch}>
               <Icon name="layers" size={14} />
               {t("batch")}
             </button>
           )}
-          <button type="button" className="link-button" onClick={openTorrentFile}>
+          {onTorrent && <button type="button" className="link-button" onClick={openTorrentFile}>
             <Icon name="magnet" size={14} />
             {t("openTorrentFile")}
-          </button>
-        </div>
+          </button>}
+        </div>}
         {url.trim() && !valid && !isMagnet(url) && <p className="hint warning">{t("invalidUrl")}</p>}
-        {torrentLink && (
+        {torrentLink && onTorrent && (
           <div className="video-banner">
             <Icon name="magnet" size={18} />
             <span>{t("addTorrentHint")}</span>
@@ -180,7 +190,7 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
             </button>
           </div>
         )}
-        {valid && (isVideoPage(url) || probe?.contentType?.startsWith("text/html")) && (
+        {onMedia && valid && (isVideoPage(url) || probe?.contentType?.startsWith("text/html")) && (
           <div className="video-banner">
             <Icon name="video" size={18} />
             <span>{isVideoPage(url) ? t("addVideoHint") : t("addPageHint")}</span>
@@ -191,6 +201,9 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
         )}
 
         <div className="probe">
+          {(probe || prompt?.fileSize != null) && (
+            <span className="chip">{shownSize == null ? t("unknownSize") : formatBytes(shownSize, language)}</span>
+          )}
           {probing && <span className="muted">{t("checking")}</span>}
           {probeError && (
             <span className="warning">
@@ -203,13 +216,12 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
                 <Icon name={categoryIcon[probe.category]} size={14} />
                 {t(`cat.${probe.category}`)}
               </span>
-              <span className="chip">{probe.size == null ? t("unknownSize") : formatBytes(probe.size, language)}</span>
               <span className={`chip ${probe.resumable ? "good" : "warn"}`}>
                 {probe.resumable ? t("resumableYes") : t("resumableNo")}
               </span>
             </>
           )}
-          {headers.length > 0 && (
+          {!standalone && headers.length > 0 && (
             <span className="chip">
               <Icon name="globe" size={14} />
               {t("fromBrowser")}
@@ -224,7 +236,7 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
             spellCheck={false}
             onChange={(event) => {
               setFileName(event.target.value);
-              setNameEdited(true);
+              nameEdited.current = true;
             }}
           />
         </label>
@@ -251,6 +263,7 @@ export function AddDialog({ prompt, initialUrl, settings, queues, onClose, onErr
             </select>
           </label>
         )}
+        {error && <p className="hint warning" role="alert">{error}</p>}
         <button type="submit" hidden />
       </form>
     </Dialog>

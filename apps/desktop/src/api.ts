@@ -178,6 +178,8 @@ export interface LinksPrompt {
 export interface AddPrompt {
   url: string;
   fileName: string | null;
+  fileSize?: number | null;
+  directory?: string | null;
   headers: Headers;
 }
 
@@ -324,6 +326,8 @@ export interface Api {
   setWhenDone(id: number, choice: WhenDone): Promise<void>;
   /** Controls the window the page runs in. */
   closeWindow(): Promise<void>;
+  showWindow(): Promise<void>;
+  getAddPrompt(): Promise<AddPrompt>;
   minimizeWindow(): Promise<void>;
   setWindowTitle(title: string): Promise<void>;
   resizeWindow(width: number, height: number): Promise<void>;
@@ -395,6 +399,11 @@ const tauriApi: Api = {
   getWhenDone: (id) => invoke("get_when_done", { id }),
   setWhenDone: (id, choice) => invoke("set_when_done", { id, choice }),
   closeWindow: () => getCurrentWindow().close(),
+  async showWindow() {
+    await getCurrentWindow().show();
+    await getCurrentWindow().setFocus();
+  },
+  getAddPrompt: () => invoke("get_add_prompt"),
   minimizeWindow: () => getCurrentWindow().minimize(),
   setWindowTitle: (title) => getCurrentWindow().setTitle(title),
   async resizeWindow(width, height) {

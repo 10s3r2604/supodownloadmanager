@@ -153,3 +153,18 @@ jobs:
           name: sdm-browser-extension
           path: extension/dist/chromium/
           if-no-files-found: error
+      - name: Bundle video tools for the Windows test installer
+        if: runner.os == 'Windows' && success()
+        shell: bash
+        run: bash .github/scripts/bundle-tools.sh Windows deno-x86_64-pc-windows-msvc.zip
+      - name: Build the Windows test installer
+        if: runner.os == 'Windows' && success()
+        working-directory: apps/desktop
+        run: npm run tauri build -- --bundles nsis
+      - name: Upload the Windows test installer
+        if: runner.os == 'Windows' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdm-windows-test-installer
+          path: target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

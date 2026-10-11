@@ -1,13 +1,14 @@
-//! The small per-download progress windows.
+//! The small browser confirmation and per-download progress windows.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::AppState;
 use crate::settings::Settings;
+use crate::{AddPrompt, AppState};
 
 fn label(id: u64) -> String {
     format!("progress-{id}")
@@ -74,6 +75,92 @@ pub fn close_progress(app: &AppHandle, id: u64) {
     }
 }
 
+pub fn add_window_id(label: &str) -> Option<u64> {
+    label.strip_prefix("add-")?.parse().ok()
+}
+
+/// Keeps credentials in memory until the corresponding window closes.
+/// Each window reads its own prompt after its frontend is ready; no startup
+/// event can be lost and no later browser link can overwrite an open form.
+#[derive(Default)]
+pub(crate) struct AddPrompts {
+    next: AtomicU64,
+    prompts: Mutex<HashMap<u64, AddPrompt>>,
+}
+
+impl AddPrompts {
+    fn insert(&self, prompt: AddPrompt) -> u64 {
+        let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        self.prompts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id, prompt);
+        id
+    }
+
+    pub fn get(&self, id: u64) -> Option<AddPrompt> {
+        self.prompts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&id)
+            .cloned()
+    }
+
+    pub fn remove(&self, id: u64) {
+        self.prompts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&id);
+    }
+}
+
+/// Opens an independent, small confirmation window over the browser.
+/// Call from a worker; WebView2 construction can deadlock on the UI thread.
+pub(crate) fn open_add(app: &AppHandle, prompt: AddPrompt) {
+    let state = app.state::<AppState>();
+    let id = state.pending_add.insert(prompt.clone());
+    let monitor = app
+        .get_webview_window("main")
+        .and_then(|window| window.current_monitor().ok().flatten());
+    let (width, height) = monitor.map_or((560.0, 400.0), |monitor| {
+        let area = monitor.work_area();
+        let scale = monitor.scale_factor();
+        (
+            (area.size.width as f64 / scale - 32.0).clamp(320.0, 560.0),
+            (area.size.height as f64 / scale - 32.0).clamp(240.0, 400.0),
+        )
+    });
+    let builder = WebviewWindowBuilder::new(
+        app,
+        format!("add-{id}"),
+        WebviewUrl::App(format!("index.html#add/{id}").into()),
+    )
+    .title("Supo Download Manager")
+    .inner_size(width, height)
+    .min_inner_size(320.0, 240.0)
+    .maximizable(false)
+    .decorations(false)
+    .shadow(true)
+    .always_on_top(true)
+    // Show only after the page has its settings and prompt, avoiding an
+    // empty native window while the WebView initializes.
+    .visible(false)
+    .center();
+    #[cfg(all(debug_assertions, target_os = "windows"))]
+    let builder = match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+        Ok(args) => builder.additional_browser_args(&args),
+        Err(_) => builder,
+    };
+    if let Err(error) = builder.build() {
+        state.pending_add.remove(id);
+        tracing::warn!(%error, "could not open the browser download window");
+        // An accepted browser link must still be reviewable if the platform
+        // cannot create another native window.
+        crate::show_main_window(app);
+        let _ = app.emit(crate::ADD_PROMPT_EVENT, prompt);
+    }
+}
+
 /// What to do when a download finishes, chosen in its progress window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,6 +216,38 @@ mod tests {
     fn recognises_progress_windows() {
         assert!(is_progress_window(&label(7)));
         assert!(!is_progress_window("main"));
+    }
+
+    #[test]
+    fn keeps_browser_prompts_independent_and_discards_closed_credentials() {
+        let prompts = AddPrompts::default();
+        let first = prompts.insert(AddPrompt {
+            url: "https://example.org/first.exe".into(),
+            file_name: Some("installer.exe".into()),
+            file_size: Some(1024),
+            directory: Some("Downloads/Programs".into()),
+            headers: vec![("Cookie".into(), "session=first".into())],
+        });
+        let second = prompts.insert(AddPrompt {
+            url: "https://example.org/second.zip".into(),
+            file_name: None,
+            file_size: None,
+            directory: None,
+            headers: vec![],
+        });
+        assert_ne!(first, second);
+        assert_eq!(prompts.get(first).unwrap().file_size, Some(1024));
+        // StrictMode and a frontend reload can read the same pending prompt.
+        assert_eq!(prompts.get(first).unwrap().headers[0].1, "session=first");
+        prompts.remove(first);
+        assert!(prompts.get(first).is_none());
+        assert_eq!(
+            prompts.get(second).unwrap().url,
+            "https://example.org/second.zip"
+        );
+        assert_eq!(add_window_id(&format!("add-{second}")), Some(second));
+        assert_eq!(add_window_id("main"), None);
+        assert_eq!(add_window_id("progress-1"), None);
     }
 
     #[test]

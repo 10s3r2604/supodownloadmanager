@@ -18,6 +18,11 @@ Firefox.
   are captured as EXE/ZIP. SDM receives the original request URL and its cookies.
   Multiple download events create only one SDM handover; a refused handover
   returns the link to the browser.
+  With browser-download confirmation enabled (the default), captured files
+  open a small separate SDM window over the browser. Review the filename,
+  size and save folder, then choose **Download now**, **Download later** or
+  **Cancel**. The main SDM window stays in the background. Each pending link
+  has its own confirmation, and closing one does not quit the app.
 - **Puts a "Download this video" button on videos.** Hover any video that is
   at least 200 × 112 pixels and the button appears in its top right corner
   (also in full screen). Click to choose quality, format and estimated file

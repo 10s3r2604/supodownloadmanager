@@ -422,6 +422,23 @@ textarea:focus-visible {
   width: min(660px, 100%);
 }
 
+.add-window {
+  width: 100%;
+  height: 100%;
+}
+
+.dialog.window-dialog {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.window-dialog .form {
+  gap: 12px;
+}
+
 .dialog-header {
   flex-shrink: 0;
   display: flex;

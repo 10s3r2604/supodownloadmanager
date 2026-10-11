@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use sdm_core::RemoteInfo;
 use serde::Serialize;
 use tauri::path::BaseDirectory;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -18,7 +18,7 @@ use crate::settings::Settings;
 use crate::torrent::{AddTorrentRequest, TorrentFile, TorrentInfo, TorrentSource};
 use crate::tray;
 use crate::windows::WhenDone;
-use crate::{AppState, PowerCountdown};
+use crate::{AddPrompt, AppState, PowerCountdown};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -36,6 +36,20 @@ pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadVi
 #[tauri::command]
 pub async fn get_download(state: State<'_, AppState>, id: u64) -> Result<Option<DownloadView>> {
     Ok(state.manager.get(id))
+}
+
+/// Returns only the prompt owned by the calling confirmation window.
+#[tauri::command]
+pub async fn get_add_prompt(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<AddPrompt> {
+    let id = crate::windows::add_window_id(window.label())
+        .ok_or_else(|| "This window has no browser download to confirm".to_owned())?;
+    state
+        .pending_add
+        .get(id)
+        .ok_or_else(|| "This browser download is no longer pending".to_owned())
 }
 
 /// Opens the progress window of a download.

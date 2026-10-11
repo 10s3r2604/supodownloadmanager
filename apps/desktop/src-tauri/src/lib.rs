@@ -63,6 +63,8 @@ pub struct AppState {
     pub prober: Arc<media::Prober>,
     /// What to do when running downloads finish, chosen in their windows.
     pub when_done: windows::WhenDoneChoices,
+    /// Browser downloads waiting for confirmation in their own windows.
+    pub(crate) pending_add: windows::AddPrompts,
     /// Torrents SDM was started with, until the window asks for them.
     pub pending_torrents: Mutex<Vec<torrent::TorrentSource>>,
     /// The power action counting down, if any.
@@ -86,9 +88,11 @@ pub struct PowerCountdown {
 /// A download offered by the browser, shown in the "add download" dialog.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AddPrompt {
+pub(crate) struct AddPrompt {
     url: String,
     file_name: Option<String>,
+    file_size: Option<u64>,
+    directory: Option<PathBuf>,
     headers: Vec<(String, String)>,
 }
 
@@ -115,6 +119,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_downloads,
             commands::get_download,
+            commands::get_add_prompt,
             commands::open_progress_window,
             commands::get_when_done,
             commands::media_tools,
@@ -233,6 +238,7 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         tools: tools.clone(),
         prober: Arc::default(),
         when_done: windows::WhenDoneChoices::default(),
+        pending_add: windows::AddPrompts::default(),
         pending_torrents: Mutex::new(torrent_sources(
             std::env::args().skip(1),
             &std::env::current_dir().unwrap_or_default(),
@@ -280,6 +286,16 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
 }
 
 fn on_window_event(window: &Window, event: &WindowEvent) {
+    if let Some(id) = windows::add_window_id(window.label()) {
+        if matches!(event, WindowEvent::Destroyed) {
+            window
+                .app_handle()
+                .state::<AppState>()
+                .pending_add
+                .remove(id);
+        }
+        return;
+    }
     if windows::is_progress_window(window.label()) {
         return;
     }
@@ -492,15 +508,22 @@ impl Handler for AppBridge {
             return;
         }
         if self.manager.settings().confirm_browser_downloads {
-            show_main_window(&self.app);
-            let _ = self.app.emit(
-                ADD_PROMPT_EVENT,
-                AddPrompt {
-                    url: download.url,
-                    file_name,
-                    headers,
-                },
-            );
+            let directory = file_name.as_deref().map(|name| {
+                self.manager
+                    .settings()
+                    .directory_for(category::Category::from_file_name(name))
+            });
+            let prompt = AddPrompt {
+                url: download.url,
+                file_name,
+                file_size: download.file_size.filter(|size| *size > 0),
+                directory,
+                headers,
+            };
+            let app = self.app.clone();
+            // Creating WebView2 must not run on the Windows message loop or
+            // delay the extension's HTTP handover response.
+            tauri::async_runtime::spawn_blocking(move || windows::open_add(&app, prompt));
             return;
         }
         let manager = self.manager.clone();
