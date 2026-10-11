@@ -15,9 +15,12 @@ Firefox.
   login therefore work in SDM too.
 - **Puts a "Download this video" button on videos.** Hover any video that is
   at least 200 × 112 pixels and the button appears in its top right corner
-  (also in full screen). A click sends the page to SDM, which finds the video
-  with yt-dlp and asks for the quality. The button can be turned off in the
-  popup.
+  (also in full screen). Click to choose quality, format and estimated file
+  size right on the page. SDM discovers formats in the background; a download
+  starts only after you choose an option. On X feeds the extension finds the
+  hovered video's post and retains its clip index. Errors and **Try again**
+  stay in the page menu, and the X video context menu opens that same picker.
+  The button can be turned off in the popup. SDM must be running.
 
   <img src="images/video-button-en.png" alt="Download this video" width="416">
 
@@ -55,6 +58,11 @@ browser". Until then it is installed from a folder:
 3. Click **Load unpacked** and choose the folder SDM shows (or drag the folder
    onto the page).
 
+When updating an unpacked extension, replace its files and click **Reload**
+on its card in the browser's extension page, then reload open video tabs.
+An app update alone does not reload an already installed unpacked extension.
+If loading a new folder, remove the old SDM extension first so only one is active.
+
 ### Firefox
 
 1. In SDM, click **Browsers → Install extension** next to Firefox. Firefox
@@ -84,6 +92,8 @@ downloaded without your confirmation.
 | `GET /api/ping`      | Is SDM running? Returns its version and settings          |
 | `POST /api/download` | Hand over a download: `url`, `referrer`, `cookies`, `userAgent`, `fileName`, `fileSize` |
 | `POST /api/media`    | Hand over a page with a video: `pageUrl`, `title`, `mediaUrl`, `cookies` (list), `userAgent`, `referrer` |
+| `POST /api/media/probe` | Read qualities in the background for the page menu |
+| `POST /api/media/add` | Start the quality explicitly selected in the page menu |
 
 The cookies of a video page go only to the SDM app on your computer. SDM
 writes them into the download's private work folder for yt-dlp and deletes
