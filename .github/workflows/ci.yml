@@ -118,3 +118,10 @@ jobs:
           name: windows-progress-smoke
           path: progress-smoke/
           if-no-files-found: ignore
+      - name: Upload the Chromium extension for testing
+        if: runner.os == 'Windows' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdm-browser-extension
+          path: extension/dist/chromium/
+          if-no-files-found: error
