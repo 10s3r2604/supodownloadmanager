@@ -78,7 +78,12 @@ jobs:
       - run: cargo test -p sdm-desktop --locked
       - name: Build the native Windows app
         if: runner.os == 'Windows'
-        run: cargo build -p sdm-desktop --locked
+        shell: pwsh
+        run: |
+          $config = Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $config.app.windows[0] | Add-Member -NotePropertyName additionalBrowserArgs -NotePropertyValue "--remote-debugging-port=9222" -Force
+          $env:TAURI_CONFIG = $config | ConvertTo-Json -Depth 100 -Compress
+          cargo build -p sdm-desktop --locked
       - name: Ensure WebView2 is installed for the native app
         if: runner.os == 'Windows'
         shell: pwsh
