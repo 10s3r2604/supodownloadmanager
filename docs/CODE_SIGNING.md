@@ -46,6 +46,8 @@ file names and the application/NSIS product name and version. It also checks
 that packaging did not change the signed application. When signing is enabled,
 missing configuration or failed verification stops the release; there is no
 fallback to unsigned Windows installers.
+The release stays a draft until all desktop and CLI builds complete and the
+publish job succeeds.
 
 Release assets for an already published Windows version are not replaced.
 Use a new version for the first signed release. Only verified installer

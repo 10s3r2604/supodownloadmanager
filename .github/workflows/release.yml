@@ -92,6 +92,8 @@ jobs:
             throw 'Unable to check existing release assets; refusing to continue signing.'
           }
           "PACKAGE_VERSION=$($config.version)" >> $env:GITHUB_ENV
+          # gh returns 1 for the expected 404 on a new release; do not propagate it.
+          exit 0
       - name: Install system libraries
         if: runner.os == 'Linux'
         run: |
@@ -219,6 +221,7 @@ jobs:
           projectPath: apps/desktop
           tagName: ${{ env.VERSION }}
           releaseName: Supo Download Manager ${{ env.VERSION }}
+          releaseDraft: true
           releaseBody: |
             Free, open-source download manager with multi-connection downloads, a video grabber and BitTorrent (magnet links and .torrent files).
 
@@ -322,6 +325,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
+          draft: false
           overwrite_files: false
           files: |
             dist/*
