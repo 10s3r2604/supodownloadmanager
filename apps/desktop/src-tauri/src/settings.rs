@@ -64,7 +64,7 @@ pub struct Settings {
     pub seed_ratio: u16,
     /// Upload limit for torrents in bytes per second, `0` for unlimited.
     pub upload_limit: u64,
-    /// Port for incoming BitTorrent connections, `0` to pick one.
+    /// Port for incoming Torrent connections, `0` to pick one.
     pub torrent_port: u16,
 }
 

@@ -57,7 +57,7 @@ macOS and Linux. This extension connects your browser to the SDM app.
 • Downloads that need a login keep working: the extension passes the page's cookies,
   referer and user agent to SDM on your computer.
 • Videos from web pages: hover a video and click "Download this video", then pick the
-  quality in SDM.
+  quality and estimated size in the browser menu.
 • Magnet links: click a magnet link and SDM shows what is inside the torrent so you can
   pick the files.
 • Right-click any link, image or audio and choose "Download with SDM".
@@ -67,8 +67,9 @@ macOS and Linux. This extension connects your browser to the SDM app.
 The extension needs the free SDM app: https://github.com/10s3r2604/supodownloadmanager
 When the app is not running, your browser downloads as usual.
 
-Privacy: nothing is collected. The extension talks only to the SDM app on your own
-computer (127.0.0.1). No accounts, no analytics, no ads. Source code (GPL-3.0):
+Privacy: no analytics or ads. Download details go to the SDM app on your own computer
+(127.0.0.1), which uses them to download from the selected website. No accounts.
+See the privacy policy for Torrent connections and update checks. Source code (GPL-3.0):
 https://github.com/10s3r2604/supodownloadmanager
 ```
 
@@ -82,7 +83,8 @@ Windows, macOS và Linux. Extension này kết nối trình duyệt với ứng 
   tạm dừng và tải tiếp bất cứ lúc nào, kể cả sau khi tắt máy.
 • Link cần đăng nhập vẫn tải được: extension gửi cookie, trang nguồn và user agent cho
   SDM trên máy bạn.
-• Tải video trên trang web: rê chuột lên video, bấm "Tải video này" rồi chọn chất lượng.
+• Tải video trên trang web: rê chuột lên video, bấm "Tải video này" rồi chọn chất lượng
+  và dung lượng ước tính trong menu của trình duyệt.
 • Link magnet: bấm vào link magnet, SDM hiện nội dung torrent để bạn chọn tệp muốn tải.
 • Chuột phải vào link, ảnh, âm thanh và chọn "Tải bằng SDM".
 • Chọn loại file SDM nhận, đặt dung lượng tối thiểu, hoặc tắt hẳn ngay trên thanh công cụ.
@@ -90,8 +92,9 @@ Windows, macOS và Linux. Extension này kết nối trình duyệt với ứng 
 Cần cài ứng dụng SDM miễn phí: https://github.com/10s3r2604/supodownloadmanager
 Khi ứng dụng không chạy, trình duyệt tải như bình thường.
 
-Quyền riêng tư: không thu thập gì. Extension chỉ nói chuyện với ứng dụng SDM trên chính
-máy bạn (127.0.0.1). Không tài khoản, không thống kê, không quảng cáo.
+Quyền riêng tư: không thống kê hay quảng cáo. Thông tin tải được chuyển cho SDM trên
+máy bạn (127.0.0.1) để tải từ website đã chọn. Không tài khoản. Xem chính sách quyền
+riêng tư về kết nối Torrent và kiểm tra cập nhật.
 ```
 
 ## 3. Privacy form answers

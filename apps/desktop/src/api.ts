@@ -51,7 +51,7 @@ export interface Download {
   media: boolean;
   /** Video and audio are being merged. */
   processing: boolean;
-  /** A BitTorrent download; `connections` counts peers then. */
+  /** A Torrent download; `connections` counts peers then. */
   torrent: boolean;
   /** Sharing a finished torrent with others. */
   seeding: boolean;

@@ -2,6 +2,8 @@
 
 ## 0.7.0
 
+- Use the name **Torrent** consistently in the interface, native file picker,
+  status labels, diagnostics and repository documentation.
 - Compact IDM-style Supo layout: toolbar, category and queue sidebar, download
   table, selection, search, details and status bar. The default main window is
   880 × 560, constrained to the monitor work area and display scaling.

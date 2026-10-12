@@ -59,7 +59,7 @@ export function categoryOf(name: string): Category {
 }
 
 export function hostOf(url: string): string {
-  if (/^magnet:/i.test(url)) return "BitTorrent";
+  if (/^magnet:/i.test(url)) return "Torrent";
   try {
     return new URL(url).host;
   } catch {
