@@ -4,6 +4,7 @@ import { type AddPrompt, MAIN_QUEUE, type ProbeResult, type Queue, type Settings
 import { errorText, useI18n } from "../context";
 import { formatBytes } from "../format";
 import { Icon, categoryIcon } from "../icons";
+import { categoryOf, hostOf } from "../model";
 import { Dialog } from "./Dialog";
 import { queueName } from "./SchedulerDialog";
 
@@ -52,7 +53,9 @@ export function AddDialog({ prompt, initialUrl, settings, queues, standalone, er
   const [directory, setDirectory] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [queue, setQueue] = useState(MAIN_QUEUE);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const valid = isLink(url);
+  const compact = standalone || Boolean(prompt);
 
   // Magnet links have no server to ask; they go to the torrent dialog.
   useEffect(() => {
@@ -112,19 +115,22 @@ export function AddDialog({ prompt, initialUrl, settings, queues, standalone, er
 
   async function submit(start: boolean) {
     if (!valid || busy) return;
+    setSubmissionError(null);
     setBusy(true);
     try {
       await api.add({
         url: url.trim(),
         headers,
         fileName: fileName.trim() || undefined,
-        directory: standalone ? shownDirectory : directory ?? undefined,
+        directory: compact ? shownDirectory : directory ?? undefined,
         start,
         queue,
       });
       onClose();
     } catch (error) {
-      onError(errorText(error));
+      const message = errorText(error);
+      setSubmissionError(message);
+      onError(message);
       setBusy(false);
     }
   }
@@ -150,25 +156,54 @@ export function AddDialog({ prompt, initialUrl, settings, queues, standalone, er
       }
     >
       <form
-        className="form"
+        className={`form${compact ? " add-compact" : ""}`}
         onSubmit={(event) => {
           event.preventDefault();
           submit(true);
         }}
       >
+        {compact ? <>
+          <div className="capture-file-row">
+            <span className="capture-file-icon"><Icon name={categoryIcon[probe?.category ?? categoryOf(fileName)]} size={23} /></span>
+            <label className="capture-file-info">
+              <span className="sr-only">{t("fileName")}</span>
+              <input className="capture-file-name" autoFocus aria-label={t("fileName")} title={fileName} placeholder={t("fileNamePlaceholder")} value={fileName} spellCheck={false} onChange={(event) => { setFileName(event.target.value); nameEdited.current = true; }} />
+              <span className="capture-host" title={hostOf(url)}>{hostOf(url)}</span>
+            </label>
+          </div>
+          <div className="capture-meta" role="status">
+            <span className="chip">{shownSize == null ? t("unknownSize") : formatBytes(shownSize, language)}</span>
+            {probe && <span className="chip"><Icon name={categoryIcon[probe.category]} size={12} />{t(`cat.${probe.category}`)}</span>}
+            <span className={probe ? probe.resumable ? "good" : "warning" : "muted"}>{probe ? probe.resumable ? t("resumableYes") : t("resumableNo") : probing ? t("awaitingResumeInfo") : t("resumeSupportUnknown")}</span>
+          </div>
+          <div className="field capture-save">
+            <span>{t("saveIn")}</span>
+            <div className="input-row">
+              <input aria-label={t("saveIn")} title={shownDirectory} value={shownDirectory} spellCheck={false} onChange={(event) => setDirectory(event.target.value)} />
+              <button type="button" className="button" onClick={browse}><Icon name="folder" size={14} />{t("browse")}</button>
+            </div>
+          </div>
+          <details className="capture-advanced">
+            <summary><Icon name="chevron" size={12} />{t("advancedDownloadDetails")}</summary>
+            <div className="capture-advanced-body">
+              <label className="field"><span>{t("urlLabel")}</span><input aria-label={t("urlLabel")} value={url} readOnly title={url} spellCheck={false} /></label>
+              {headers.length > 0 && <span className="capture-browser-info"><Icon name="globe" size={13} />{t("fromBrowser")}</span>}
+              {queues.length > 1 && <label className="field"><span>{t("queue")}</span><select value={queue} onChange={(event) => setQueue(event.target.value)}>{queues.map((q) => <option key={q.id} value={q.id}>{queueName(q, t)}</option>)}</select></label>}
+            </div>
+          </details>
+          {probeError && <p className="capture-error warning"><Icon name="alert" size={13} /> {t("probeFailed", { error: probeError })}</p>}
+        </> : <>
         <label className="field">
           <span>{t("urlLabel")}</span>
           <input
             autoFocus
             value={url}
-            readOnly={standalone}
-            title={standalone ? url : undefined}
             placeholder="https://… / magnet:?…"
             spellCheck={false}
             onChange={(event) => setUrl(event.target.value)}
           />
         </label>
-        {!standalone && <div className="add-extra">
+        <div className="add-extra">
           {!prompt && onBatch && (
             <button type="button" className="link-button" onClick={onBatch}>
               <Icon name="layers" size={14} />
@@ -179,7 +214,7 @@ export function AddDialog({ prompt, initialUrl, settings, queues, standalone, er
             <Icon name="magnet" size={14} />
             {t("openTorrentFile")}
           </button>}
-        </div>}
+        </div>
         {url.trim() && !valid && !isMagnet(url) && <p className="hint warning">{t("invalidUrl")}</p>}
         {torrentLink && onTorrent && (
           <div className="video-banner">
@@ -221,7 +256,7 @@ export function AddDialog({ prompt, initialUrl, settings, queues, standalone, er
               </span>
             </>
           )}
-          {!standalone && headers.length > 0 && (
+          {headers.length > 0 && (
             <span className="chip">
               <Icon name="globe" size={14} />
               {t("fromBrowser")}
@@ -263,7 +298,8 @@ export function AddDialog({ prompt, initialUrl, settings, queues, standalone, er
             </select>
           </label>
         )}
-        {error && <p className="hint warning" role="alert">{error}</p>}
+        </>}
+        {(submissionError || error) && <p className={`warning${compact ? " capture-error" : " hint"}`} role="alert">{submissionError ?? error}</p>}
         <button type="submit" hidden />
       </form>
     </Dialog>

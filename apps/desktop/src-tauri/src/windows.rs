@@ -29,6 +29,19 @@ fn size_of(style: &str) -> (f64, f64) {
     }
 }
 
+fn monitor_size(app: &AppHandle, width: f64, height: f64) -> (f64, f64) {
+    app.get_webview_window("main")
+        .and_then(|window| window.current_monitor().ok().flatten())
+        .map_or((width, height), |monitor| {
+            let area = monitor.work_area();
+            let scale = monitor.scale_factor();
+            (
+                width.min((area.size.width as f64 / scale - 32.0).max(1.0)),
+                height.min((area.size.height as f64 / scale - 32.0).max(1.0)),
+            )
+        })
+}
+
 /// Shows the progress window of a download, creating it when needed.
 /// Call from an async command or a worker: WebView2 creation deadlocks in a
 /// synchronous command on the Windows UI thread.
@@ -41,6 +54,7 @@ pub fn open_progress(app: &AppHandle, id: u64) {
     }
     let style = app.state::<AppState>().manager.settings().progress_style;
     let (width, height) = size_of(&style);
+    let (width, height) = monitor_size(app, width, height);
     let url = WebviewUrl::App(format!("index.html#progress/{id}").into());
     // No system title bar: the page draws its own, so the window looks the
     // same everywhere. The shadow also gives rounded corners on Windows 11.
@@ -119,17 +133,7 @@ impl AddPrompts {
 pub(crate) fn open_add(app: &AppHandle, prompt: AddPrompt) {
     let state = app.state::<AppState>();
     let id = state.pending_add.insert(prompt.clone());
-    let monitor = app
-        .get_webview_window("main")
-        .and_then(|window| window.current_monitor().ok().flatten());
-    let (width, height) = monitor.map_or((560.0, 400.0), |monitor| {
-        let area = monitor.work_area();
-        let scale = monitor.scale_factor();
-        (
-            (area.size.width as f64 / scale - 32.0).clamp(320.0, 560.0),
-            (area.size.height as f64 / scale - 32.0).clamp(240.0, 400.0),
-        )
-    });
+    let (width, height) = monitor_size(app, 480.0, 320.0);
     let builder = WebviewWindowBuilder::new(
         app,
         format!("add-{id}"),
@@ -137,7 +141,7 @@ pub(crate) fn open_add(app: &AppHandle, prompt: AddPrompt) {
     )
     .title("Supo Download Manager")
     .inner_size(width, height)
-    .min_inner_size(320.0, 240.0)
+    .min_inner_size(width.min(320.0), height.min(240.0))
     .maximizable(false)
     .decorations(false)
     .shadow(true)

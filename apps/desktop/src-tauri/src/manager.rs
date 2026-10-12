@@ -199,6 +199,12 @@ pub enum Notice {
 
 pub type Notify = Box<dyn Fn(Notice) + Send + Sync>;
 
+#[derive(Debug)]
+pub enum UpdatePreparationError {
+    Busy,
+    Persistence(std::io::Error),
+}
+
 pub struct Manager {
     inner: Mutex<Inner>,
     store: PathBuf,
@@ -223,6 +229,8 @@ struct Inner {
     next_id: u64,
     dirty: bool,
     closing: bool,
+    /// An updater holds scheduling stopped after a successful durable save.
+    update_prepared: bool,
     queues: Vec<Queue>,
     /// What to do once every download is done; not remembered.
     after_all: PowerAction,
@@ -364,6 +372,7 @@ impl Manager {
                 next_id,
                 dirty: false,
                 closing: false,
+                update_prepared: false,
                 queues,
                 after_all: PowerAction::Nothing,
                 checked_at: None,
@@ -1179,6 +1188,7 @@ impl Manager {
         {
             let mut inner = self.lock();
             inner.closing = true;
+            inner.update_prepared = false;
             for active in inner.active.values_mut() {
                 active.stopping = true;
                 active.control.pause();
@@ -1201,6 +1211,57 @@ impl Manager {
             self.save(&mut inner);
         }
         let _ = tokio::time::timeout(Duration::from_secs(5), self.torrents.shutdown()).await;
+    }
+
+    /// Reserve an idle manager for installing an update. Unlike normal quit,
+    /// this never pauses transfers or sharing, and a failed durable save must
+    /// keep the current app running. The scheduling gate and readiness check
+    /// share one lock so an incoming link cannot start between them.
+    pub fn prepare_update(&self) -> Result<(), UpdatePreparationError> {
+        let mut inner = self.lock();
+        if inner.closing
+            || !inner.active.is_empty()
+            || !inner.migrating.is_empty()
+            || !inner.cleanup_pending.is_empty()
+            || !inner.cleanup_running.is_empty()
+            || !inner.cleanup_remove.is_empty()
+            || inner.busy(None)
+            || inner.records.iter().any(|record| {
+                record
+                    .torrent
+                    .as_ref()
+                    .is_some_and(|spec| self.torrents.seeding(&spec.info_hash).is_some())
+            })
+        {
+            return Err(UpdatePreparationError::Busy);
+        }
+        inner.closing = true;
+        inner.sync_progress();
+        let save = store::save_json(&self.store, &inner.records)
+            .and_then(|()| store::save_json(&self.queue_store, &inner.queues));
+        if let Err(error) = save {
+            inner.closing = false;
+            inner.dirty = true;
+            return Err(UpdatePreparationError::Persistence(error));
+        }
+        inner.dirty = false;
+        inner.update_prepared = true;
+        Ok(())
+    }
+
+    /// An installer could not start: release its reservation so downloads can
+    /// be added and scheduled normally. A simultaneous ordinary quit keeps
+    /// its own closing gate intact.
+    pub fn cancel_update(self: &Arc<Self>) {
+        {
+            let mut inner = self.lock();
+            if !inner.update_prepared {
+                return;
+            }
+            inner.update_prepared = false;
+            inner.closing = false;
+        }
+        self.schedule();
     }
 
     /// Starts queued downloads while there are free slots.
@@ -1616,6 +1677,9 @@ impl Manager {
 
 impl Inner {
     fn allocate_id(&mut self) -> Result<u64, String> {
+        if self.update_prepared {
+            return Err("An update is being installed; please try again after SDM restarts".into());
+        }
         let next = self
             .next_id
             .checked_add(1)
@@ -2182,6 +2246,11 @@ echo "SDMF $home/$name"
         assert!(matches!(shares.wait().await, Ok(Outcome::Completed { .. })));
 
         let manager = fixture.manager();
+        manager.torrents.set_config(torrent::EngineConfig {
+            local_only: true,
+            seed_ratio: torrent::SEED_FOREVER,
+            ..torrent::EngineConfig::default()
+        });
         let info = manager.inspect_torrent(source.clone()).await.unwrap();
         assert_eq!(info.directory, fixture.downloads().join("Video"));
         assert_eq!(info.existing, None);
@@ -2210,6 +2279,15 @@ echo "SDMF $home/$name"
         assert_eq!(done.path, folder);
         assert_eq!(done.file_name, "Holiday");
         assert!(done.torrent);
+        assert!(done.seeding);
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Busy)
+        ));
+        assert!(
+            manager.get(id).unwrap().seeding,
+            "updates never stop sharing"
+        );
         assert_eq!(done.size, Some(900_000));
         assert!(done.url.starts_with("magnet:?xt=urn:btih:"));
         assert_eq!(std::fs::read(folder.join("beach.mp4")).unwrap(), video);
@@ -3067,6 +3145,153 @@ echo "SDMF $home/$name"
         assert_eq!(manager.settings(), previous);
         assert_eq!(manager.downloader().speed_limit(), previous.speed_limit());
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_reservation_saves_history_and_releases_downloads_after_installer_failure() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let base = server().await;
+        let id = manager
+            .add(request(format!("{base}/kept.zip"), false))
+            .await
+            .unwrap();
+        assert!(manager.prepare_update().is_ok());
+        let saved: Vec<Record> = store::load_json(&fixture.dir.path().join("downloads.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved[0].id, id);
+        assert_eq!(saved[0].state, State::Paused);
+        let rejected = AddRequest {
+            file_name: Some("blocked.zip".into()),
+            ..request(format!("{base}/blocked.zip"), true)
+        };
+        assert!(manager.add(rejected).await.is_err());
+        assert_eq!(
+            manager.list().len(),
+            1,
+            "no incoming transfer races installer launch"
+        );
+        manager.resume(&[id]);
+        assert!(
+            manager.lock().active.is_empty(),
+            "scheduling is reserved for the installer"
+        );
+        manager.cancel_update();
+        let done = wait_for(&manager, id, State::Completed).await;
+        assert_eq!(std::fs::read(done.path).unwrap(), DATA);
+        wait_for_cleanup(&manager, id).await;
+        assert!(
+            manager.prepare_update().is_ok(),
+            "a failed installer can be retried after cleanup"
+        );
+        manager.cancel_update();
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn update_reservation_rejects_history_failure_without_closing_or_losing_data() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let added = AddRequest {
+            file_name: Some("kept.zip".into()),
+            ..request("http://127.0.0.1:1/kept.zip".into(), false)
+        };
+        let id = manager.add(added).await.unwrap();
+        let path = fixture.dir.path().join("downloads.json");
+        let bytes = std::fs::read(&path).unwrap();
+        let backup = with_suffix(&path, ".bak");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Persistence(_))
+        ));
+        assert!(
+            !manager.lock().closing,
+            "failed persistence leaves the running app usable"
+        );
+        assert!(!manager.lock().update_prepared);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(manager.get(id).unwrap().state, State::Paused);
+        std::fs::remove_dir(&backup).unwrap();
+        assert!(
+            manager.prepare_update().is_ok(),
+            "retry succeeds after fixing storage"
+        );
+        manager.cancel_update();
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn update_reservation_rejects_queue_failure_and_pending_recovery_cleanup() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        std::fs::create_dir(&manager.queue_store).unwrap();
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Persistence(_))
+        ));
+        assert!(!manager.lock().closing);
+        std::fs::remove_dir(&manager.queue_store).unwrap();
+        {
+            let mut inner = manager.lock();
+            inner.migrating.insert(1, None);
+        }
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Busy)
+        ));
+        {
+            let mut inner = manager.lock();
+            inner.migrating.clear();
+            inner.cleanup_pending.insert(1);
+        }
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Busy)
+        ));
+        {
+            let mut inner = manager.lock();
+            inner.cleanup_pending.clear();
+            inner.cleanup_running.insert(1);
+        }
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Busy)
+        ));
+        manager.lock().cleanup_running.clear();
+        assert!(manager.prepare_update().is_ok());
+        manager.cancel_update();
+        manager.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_reservation_never_pauses_an_active_transfer() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let mut settings = manager.settings();
+        settings.speed_limit = 16 * 1024;
+        manager.update_settings(settings).unwrap();
+        let (base, _) = big_file_server().await;
+        let id = manager
+            .add(request(format!("{base}/large.zip"), true))
+            .await
+            .unwrap();
+        wait_for(&manager, id, State::Downloading).await;
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Busy)
+        ));
+        let live = manager.get(id).unwrap();
+        assert_eq!(live.state, State::Downloading);
+        assert!(!live.stopping, "an updater must not pause a live transfer");
+        assert!(!manager.lock().closing);
+        manager.pause(&[id]);
+        wait_for(&manager, id, State::Paused).await;
+        assert!(manager.prepare_update().is_ok());
+        manager.cancel_update();
         manager.shutdown().await;
     }
 

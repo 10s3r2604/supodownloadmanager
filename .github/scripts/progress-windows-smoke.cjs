@@ -10,17 +10,22 @@ const {chromium} = require(path.join(process.env.SDM_SMOKE_NODE_MODULES, 'playwr
 
 if (process.platform !== 'win32') throw new Error('This smoke test requires Windows/WebView2.');
 const root = process.cwd();
+const appVersion=JSON.parse(fs.readFileSync(path.join(root,'apps/desktop/src-tauri/tauri.conf.json'),'utf8')).version;
 const output = path.join(root, 'progress-smoke');
 const directory = path.join(process.env.RUNNER_TEMP, 'sdm-progress-downloads');
 fs.mkdirSync(output, {recursive:true});
 fs.mkdirSync(directory, {recursive:true});
 const data = path.join(process.env.APPDATA, 'com.supodownloadmanager.app');
 fs.mkdirSync(data, {recursive:true});
-fs.writeFileSync(path.join(data, 'settings.json'), JSON.stringify({
+const originalSettings = ['settings.json','settings.json.bak'].map(name=>({
+  file:path.join(data,name), bytes:fs.existsSync(path.join(data,name))?fs.readFileSync(path.join(data,name)):null,
+}));
+const fixtureSettings = {
   downloadDir:directory, language:'en', progressWindow:true, progressStyle:'graph',
   completeDialog:true, clipboardMonitor:false, notifications:false, closeToTray:false,
   connections:1, maxParallel:1, proxy:'none', confirmBrowserDownloads:true,
-}));
+  startWithWindows:false, autoUpdate:false,
+};
 // A deterministic subprocess fixture writes media bytes and progress lines.
 // This tests the native media manager without relying on an external site.
 const tools=path.join(data,'tools');
@@ -109,12 +114,12 @@ public class NativeSdmSmoke {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr window, StringBuilder text, int capacity);
   [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr w, IntPtr l, uint flags, uint timeout, out UIntPtr result);
   static string Text(IntPtr window) { var text=new StringBuilder(4096); GetWindowText(window,text,text.Capacity); return text.ToString(); }
-  public static long MainWindow(uint process) {
+  public static long MainWindow(uint process, bool requireVisible) {
     IntPtr main=IntPtr.Zero;
     int matches=0;
     EnumWindows((window,state)=>{
       uint owner; GetWindowThreadProcessId(window,out owner);
-      if(owner==process && IsWindowVisible(window) && GetWindow(window,4)==IntPtr.Zero && Text(window)=="Supo Download Manager") {
+      if(owner==process && (!requireVisible || IsWindowVisible(window)) && GetWindow(window,4)==IntPtr.Zero && Text(window)=="Supo Download Manager") {
         matches+=1; main=window;
       }
       return true;
@@ -134,6 +139,7 @@ public class NativeSdmSmoke {
     if(SendMessageTimeout(window,message,w,IntPtr.Zero,2,1000,out result)==IntPtr.Zero) throw new Exception("Native Windows message loop stopped responding");
   }
   public static void Responsive(uint process, long handle) { Message(MainHandle(process,handle),0,UIntPtr.Zero); }
+  public static bool Visible(uint process, long handle) { return IsWindowVisible(MainHandle(process,handle)); }
   public static void Restore(uint process, long handle) { ShowWindowAsync(MainHandle(process,handle),9); }
   public static bool DismissRecovery(uint process) {
     IntPtr dialog=IntPtr.Zero;
@@ -159,7 +165,9 @@ public class NativeSdmSmoke {
 }
 '@
 switch ($Action) {
-  'main' { [NativeSdmSmoke]::MainWindow($TargetProcess) }
+  'main' { [NativeSdmSmoke]::MainWindow($TargetProcess,$true) }
+  'main-any' { [NativeSdmSmoke]::MainWindow($TargetProcess,$false) }
+  'visible' { [NativeSdmSmoke]::Visible($TargetProcess,$WindowHandle) }
   'responsive' { [NativeSdmSmoke]::Responsive($TargetProcess,$WindowHandle); 'responsive' }
   'restore' { [NativeSdmSmoke]::Restore($TargetProcess,$WindowHandle); 'restored' }
   'recovery' { [NativeSdmSmoke]::DismissRecovery($TargetProcess) }
@@ -184,6 +192,56 @@ async function native(action,processId,handle='0') {
     const elapsed=Date.now()-started;
     if(elapsed>8_000) console.log(`Windows automation ${action} host + interop took ${elapsed} ms; the native message timeout remains 1000 ms.`);
   }
+}
+// Read the unexpanded raw values, including Task Manager's approval bytes.
+// Restore the caller's original values after every success/failure path.
+async function startupRegistry() {
+  return JSON.parse(await shell(`
+    $snapshot = @{}
+    foreach ($spec in @(
+      @{name='run'; path='Software\\Microsoft\\Windows\\CurrentVersion\\Run'},
+      @{name='approval'; path='Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run'}
+    )) {
+      $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($spec.path)
+      try {
+        if ($null -eq $key -or -not ($key.GetValueNames() -contains 'Supo Download Manager')) {
+          $snapshot[$spec.name] = @{exists=$false}; continue
+        }
+        $kind = $key.GetValueKind('Supo Download Manager').ToString()
+        $value = $key.GetValue('Supo Download Manager',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        if ($kind -eq 'Binary' -or $kind -eq 'None') { $value = [Convert]::ToBase64String($value) }
+        elseif ($kind -eq 'DWord' -or $kind -eq 'QWord') { $value = $value.ToString([Globalization.CultureInfo]::InvariantCulture) }
+        $snapshot[$spec.name] = @{exists=$true; kind=$kind; value=$value}
+      } finally { if ($null -ne $key) { $key.Dispose() } }
+    }
+    ConvertTo-Json -InputObject $snapshot -Depth 5 -Compress
+  `));
+}
+async function restoreStartupRegistry(snapshot) {
+  const encoded=Buffer.from(JSON.stringify(snapshot),'utf8').toString('base64');
+  await shell(`
+    $snapshot = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')))
+    foreach ($spec in @(
+      @{name='run'; path='Software\\Microsoft\\Windows\\CurrentVersion\\Run'},
+      @{name='approval'; path='Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run'}
+    )) {
+      $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($spec.path)
+      try {
+        $saved = $snapshot.($spec.name)
+        if (-not $saved.exists) { $key.DeleteValue('Supo Download Manager',$false); continue }
+        $value = $saved.value
+        switch ($saved.kind) {
+          'Binary' { $value = [Convert]::FromBase64String($value) }
+          'None' { $value = [Convert]::FromBase64String($value) }
+          'DWord' { $value = [int32]::Parse($value,[Globalization.CultureInfo]::InvariantCulture) }
+          'QWord' { $value = [int64]::Parse($value,[Globalization.CultureInfo]::InvariantCulture) }
+          'MultiString' { $value = [string[]]$value }
+        }
+        $kind = [Enum]::Parse([Microsoft.Win32.RegistryValueKind],[string]$saved.kind)
+        $key.SetValue('Supo Download Manager',$value,$kind)
+      } finally { $key.Dispose() }
+    }
+  `);
 }
 async function until(fn, message, timeout=20_000) {
   const end=Date.now()+timeout;
@@ -237,7 +295,11 @@ const server=http.createServer((req,res)=>{
 
 (async()=>{
   let browser;
+  let originalStartup;
   try {
+    originalStartup=await startupRegistry();
+    await restoreStartupRegistry({run:{exists:false},approval:{exists:false}});
+    fs.writeFileSync(path.join(data,'settings.json'),JSON.stringify(fixtureSettings));
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
     const source=`http://127.0.0.1:${server.address().port}`;
     child(process.execPath,[path.join(root,'apps/desktop/node_modules/vite/bin/vite.js'),path.join(root,'apps/desktop'),'--host','127.0.0.1','--port','1420'],'vite');
@@ -288,6 +350,15 @@ const server=http.createServer((req,res)=>{
       await invoke('plugin:event|emit',{event:'sdm:media-prompt',payload:{pageUrl,title:'Home / X'}});
     }
 
+    await main.locator('.idm-toolbar').waitFor();
+    const mainDimensions=await main.evaluate(()=>({width:innerWidth,height:innerHeight,
+      overflow:document.documentElement.scrollWidth>innerWidth}));
+    assert(mainDimensions.width<=882 && mainDimensions.height<=562,
+      `Main window is too large: ${JSON.stringify(mainDimensions)}`);
+    assert.equal(mainDimensions.overflow,false);
+    await main.screenshot({path:path.join(output,'idm-main.png')});
+    report.push({name:'compact-idm-main-window',passed:true,...mainDimensions});
+
     async function capture(name, route='/delayed.exe') {
       const response=await fetch('http://127.0.0.1:17360/api/download',{
         method:'POST',headers:{'Content-Type':'application/json','X-SDM-Client':'extension','X-SDM-Browser':'chrome'},
@@ -304,7 +375,7 @@ const server=http.createServer((req,res)=>{
       assert(await invoke('plugin:window|is_minimized',{label:'main'}),'Capture restored the main SDM window');
       assert.equal(await main.getByRole('dialog').count(),0,'Capture opened a modal in the main window');
       const rectangle=await page.getByRole('dialog').boundingBox();
-      assert(rectangle.width<=560 && rectangle.height<=400,`Confirmation is too large: ${JSON.stringify(rectangle)}`);
+      assert(rectangle.width<=482 && rectangle.height<=322,`Confirmation is too large: ${JSON.stringify(rectangle)}`);
       await page.getByText('250 KB',{exact:true}).waitFor();
       assert(!(await invoke('list_downloads')).some(d=>d.fileName===name),'Capture started without confirmation');
       return page;
@@ -361,7 +432,7 @@ const server=http.createServer((req,res)=>{
     const now=await capture('browser-now.zip','/now.zip');
     const custom=path.join(directory,'browser-custom');
     await now.getByRole('textbox',{name:'File name',exact:true}).fill('renamed.zip');
-    await now.locator('.input-row input').fill(custom);
+    await now.locator('.capture-save input').fill(custom);
     await closeAdd(now,()=>now.getByRole('button',{name:'Download now',exact:true}).click());
     const downloaded=await until(async()=>{
       const d=(await invoke('list_downloads')).find(d=>d.fileName==='renamed.zip');
@@ -598,9 +669,9 @@ const server=http.createServer((req,res)=>{
       return until(async()=>await native('recovery',desktop.pid)==='True',
       'The recovered-data notice was not shown',10_000);
     }
-    async function startDesktop(recovered=false) {
+    async function startDesktop(recovered=false,autostart=false) {
       restartIndex+=1;
-      desktop=child(path.join(root,'target/debug/sdm-desktop.exe'),[],`desktop-restart-${restartIndex}`,{
+      desktop=child(path.join(root,'target/debug/sdm-desktop.exe'),autostart?['--autostart']:[],`desktop-restart-${restartIndex}`,{
         ...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9222',
       });
       await until(async()=>{
@@ -612,7 +683,7 @@ const server=http.createServer((req,res)=>{
         'Restarted main WebView was not found');
       await main.getByRole('button',{name:'Settings',exact:true}).waitFor({timeout:20_000});
       if(recovered) await dismissRecoveryNotice();
-      mainWindowHandle=await native('main',desktop.pid);
+      mainWindowHandle=await native(autostart?'main-any':'main',desktop.pid);
       assert(/^\d+$/.test(mainWindowHandle) && Number(mainWindowHandle)>0);
       await nativeResponsive();
     }
@@ -658,6 +729,154 @@ const server=http.createServer((req,res)=>{
     await main.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();
     await nativeResponsive();
     report.push({name:'damaged-history-recovers-last-good-backup',passed:true,originalPreserved:true,mainResponsive:true});
+
+    // Keep the real updater disconnected from GitHub in this fixture. The
+    // signed-package/tamper tests exercise its download and install boundary.
+    const updateState=await invoke('get_update_state');
+    assert.equal(updateState.supported,true);
+    assert.equal(updateState.currentVersion,appVersion);
+    assert.equal(updateState.phase,'disabled');
+    assert.equal(updateState.downloaded,0);
+    assert.equal(updateState.lastChecked,undefined);
+    assert.equal((await invoke('get_settings')).autoUpdate,false);
+    await main.getByRole('button',{name:'Settings',exact:true}).click();
+    const updateDialog=main.getByRole('dialog',{name:'Settings',exact:true});
+    await updateDialog.getByRole('tab',{name:'Updates',exact:true}).click();
+    const updateCheckbox=updateDialog.getByRole('checkbox',{name:'Automatically download stable updates',exact:true});
+    assert(await updateCheckbox.isEnabled());
+    assert(!await updateCheckbox.isChecked());
+    await updateDialog.getByText(`Installed version: ${appVersion}`,{exact:true}).waitFor();
+    await updateDialog.getByText('Automatic updates are off. You can still check manually.',{exact:true}).waitFor();
+    // Exercise the preference control while saving only the disabled state;
+    // checking the unsaved draft must not start an automatic network request.
+    await updateCheckbox.check();
+    await updateCheckbox.uncheck();
+    await updateDialog.getByRole('button',{name:'Save',exact:true}).click();
+    await until(async()=>!(await updateDialog.count()),'The automatic-update preference did not save');
+    assert.equal(JSON.parse(fs.readFileSync(settingsFile,'utf8')).autoUpdate,false);
+    assert.equal((await invoke('get_update_state')).phase,'disabled');
+    report.push({name:'updates-disabled-settings-persist-current-version',passed:true,version:appVersion,externalCheckStarted:false});
+
+    await main.getByRole('button',{name:'Settings',exact:true}).click();
+    const startupDialog=main.getByRole('dialog',{name:'Settings',exact:true});
+    await startupDialog.getByRole('tab',{name:'General',exact:true}).click();
+    const startupCheckbox=startupDialog.getByRole('checkbox',{name:'Start SDM with the computer',exact:true});
+    assert(!await startupCheckbox.isChecked());
+    await startupCheckbox.check();
+    await startupDialog.getByRole('button',{name:'Save',exact:true}).click();
+    await until(async()=>!(await startupDialog.count()),'The startup preference did not save');
+    assert.equal((await invoke('get_settings')).startWithWindows,true);
+    assert.equal(JSON.parse(fs.readFileSync(settingsFile,'utf8')).startWithWindows,true);
+    const registered=await startupRegistry();
+    assert.equal(registered.run.kind,'String');
+    assert.equal(registered.run.value,`"${path.join(root,'target/debug/sdm-desktop.exe')}" --autostart`);
+    assert.equal(registered.approval.kind,'Binary');
+    assert.deepEqual([...Buffer.from(registered.approval.value,'base64')],[2,0,0,0,0,0,0,0,0,0,0,0]);
+    report.push({name:'startup-checkbox-registers-quoted-per-user-command',passed:true,actualOsState:true});
+
+    // Simulate Task Manager disabling an existing registration, including
+    // nonzero timestamp bytes. get_settings must reflect the OS immediately.
+    const disabledApproval=Buffer.from([3,0,0,0,1,2,3,4,5,6,7,8]);
+    await restoreStartupRegistry({...registered,approval:{exists:true,kind:'Binary',value:disabledApproval.toString('base64')}});
+    assert.equal((await invoke('get_settings')).startWithWindows,false);
+    assert.equal(JSON.parse(fs.readFileSync(settingsFile,'utf8')).startWithWindows,true);
+    await main.getByRole('button',{name:'Settings',exact:true}).click();
+    const externallyDisabled=main.getByRole('dialog',{name:'Settings',exact:true});
+    await externallyDisabled.getByRole('tab',{name:'General',exact:true}).click();
+    assert(!await externallyDisabled.getByRole('checkbox',{name:'Start SDM with the computer',exact:true}).isChecked());
+    await externallyDisabled.getByRole('button',{name:'Cancel',exact:true}).click();
+    report.push({name:'startup-read-reflects-task-manager-disable',passed:true,storedPreferenceDoesNotOverrideOs:true});
+
+    // Deny replacement of settings.json after Windows startup is changed.
+    // A failed durable save must restore the exact Run/approval raw values.
+    const beforeLockedSave=await invoke('get_settings');
+    const registryBeforeLock=await startupRegistry();
+    const diskBeforeLock=fs.readFileSync(settingsFile);
+    const lockReady=path.join(output,'settings-lock.ready');
+    const lockRelease=path.join(output,'settings-lock.release');
+    fs.rmSync(lockReady,{force:true}); fs.rmSync(lockRelease,{force:true});
+    const lockedPaths=Buffer.from(JSON.stringify({settingsFile,lockReady,lockRelease}),'utf8').toString('base64');
+    const lockProcess=child(pwsh,['-NoLogo','-NoProfile','-NonInteractive','-Command',`
+      $ErrorActionPreference='Stop'
+      $paths = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${lockedPaths}')))
+      $lock = [IO.File]::Open($paths.settingsFile,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+      try {
+        [IO.File]::WriteAllText($paths.lockReady,'locked')
+        $deadline = [DateTime]::UtcNow.AddSeconds(60)
+        while (-not [IO.File]::Exists($paths.lockRelease)) {
+          if ([DateTime]::UtcNow -gt $deadline) { throw 'Settings lock was not released' }
+          Start-Sleep -Milliseconds 100
+        }
+      } finally { $lock.Dispose() }
+    `],'settings-file-lock');
+    try {
+      await until(()=>fs.existsSync(lockReady),'The settings file lock did not become ready',15_000);
+      await assert.rejects(invoke('save_settings',{settings:{...beforeLockedSave,startWithWindows:true}}));
+      assert.deepEqual(await startupRegistry(),registryBeforeLock);
+      assert.deepEqual(await invoke('get_settings'),beforeLockedSave);
+      assert.deepEqual(fs.readFileSync(settingsFile),diskBeforeLock);
+      await nativeResponsive();
+    } finally {
+      fs.writeFileSync(lockRelease,'release');
+      await until(()=>lockProcess.exitCode!==null || lockProcess.signalCode!==null,'The settings lock process did not stop',8_000);
+    }
+    assert.equal(lockProcess.exitCode,0);
+    report.push({name:'startup-disk-save-failure-restores-raw-os-values',passed:true,approvalTimestampPreserved:true,runtimeAndDiskUnchanged:true});
+
+    await invoke('save_settings',{settings:{...await invoke('get_settings'),startWithWindows:false}});
+    assert.equal((await invoke('get_settings')).startWithWindows,false);
+    assert.equal(JSON.parse(fs.readFileSync(settingsFile,'utf8')).startWithWindows,false);
+    assert.deepEqual(await startupRegistry(),{run:{exists:false},approval:{exists:false}});
+    report.push({name:'startup-disable-removes-run-and-approval-values',passed:true,actualOsState:false});
+
+    const beforeStartupProxy=await invoke('get_settings');
+    const registryBeforeProxy=await startupRegistry();
+    const diskBeforeStartupProxy=fs.readFileSync(settingsFile);
+    await assert.rejects(invoke('save_settings',{settings:{...beforeStartupProxy,proxy:invalidProxy,startWithWindows:true}}));
+    assert.deepEqual(await startupRegistry(),registryBeforeProxy);
+    assert.deepEqual(await invoke('get_settings'),beforeStartupProxy);
+    assert.deepEqual(fs.readFileSync(settingsFile),diskBeforeStartupProxy);
+    await nativeResponsive();
+    report.push({name:'invalid-proxy-startup-change-keeps-os-runtime-disk',passed:true});
+
+    async function secondaryAutostart(name) {
+      const secondary=child(path.join(root,'target/debug/sdm-desktop.exe'),['--autostart'],name,{
+        ...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port=9222',
+      });
+      if(secondary.exitCode===null) await bounded(new Promise(resolve=>secondary.once('exit',resolve)),
+        'The secondary autostart process did not exit',8_000);
+      assert.equal(secondary.exitCode,0);
+      await sleep(500);
+    }
+    await invoke('plugin:window|minimize',{label:'main'});
+    await until(()=>invoke('plugin:window|is_minimized',{label:'main'}),'Main SDM window did not minimize before secondary autostart');
+    await secondaryAutostart('desktop-autostart-secondary');
+    assert.equal(await invoke('plugin:window|is_minimized',{label:'main'}),true);
+    await nativeResponsive();
+    await stopDesktop();
+    await startDesktop(false,true);
+    assert.equal(await native('visible',desktop.pid,mainWindowHandle),'False');
+    assert.equal(await invoke('plugin:window|is_visible',{label:'main'}),false);
+    await nativeResponsive();
+    await secondaryAutostart('desktop-autostart-hidden-secondary');
+    assert.equal(await native('visible',desktop.pid,mainWindowHandle),'False');
+    assert.equal(await invoke('plugin:window|is_visible',{label:'main'}),false);
+    report.push({name:'secondary-autostart-keeps-main-minimized-or-hidden',passed:true,existingProcessResponsive:true});
+
+    await invoke('plugin:window|show',{label:'main'});
+    assert.equal(await native('restore',desktop.pid,mainWindowHandle),'restored');
+    await until(async()=>await invoke('plugin:window|is_visible',{label:'main'})
+      && !await invoke('plugin:window|is_minimized',{label:'main'}),'The hidden autostart process did not open normally');
+    assert.equal(await native('visible',desktop.pid,mainWindowHandle),'True');
+    await nativeResponsive();
+    await main.getByRole('button',{name:'Settings',exact:true}).click();
+    const restartedUpdates=main.getByRole('dialog',{name:'Settings',exact:true});
+    await restartedUpdates.getByRole('tab',{name:'Updates',exact:true}).click();
+    assert(!await restartedUpdates.getByRole('checkbox',{name:'Automatically download stable updates',exact:true}).isChecked());
+    await restartedUpdates.getByRole('button',{name:'Cancel',exact:true}).click();
+    assert.equal((await invoke('get_update_state')).phase,'disabled');
+    assert.equal((await invoke('get_update_state')).currentVersion,appVersion);
+    report.push({name:'fresh-autostart-hidden-responsive-and-manual-open',passed:true,automaticUpdatesRemainDisabled:true});
     fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({passed:report.length,report},null,2));
     console.log(JSON.stringify({passed:report.length,report},null,2));
   } catch(e) {
@@ -681,6 +900,14 @@ const server=http.createServer((req,res)=>{
         try { await execFileAsync('taskkill',['/pid',String(processHandle.pid),'/t','/f'],{timeout:10_000,windowsHide:true}); } catch {}
       }
     }
-    server.closeAllConnections(); server.close();
+    try {
+      if(originalStartup) await restoreStartupRegistry(originalStartup);
+    } finally {
+      for(const saved of originalSettings) {
+        if(saved.bytes) fs.writeFileSync(saved.file,saved.bytes);
+        else fs.rmSync(saved.file,{force:true});
+      }
+      server.closeAllConnections(); server.close();
+    }
   }
 })().catch(e=>{console.error(e);process.exit(1)});

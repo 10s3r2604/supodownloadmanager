@@ -1,6 +1,6 @@
 # 8 phương án giao diện SDM cỡ IDM
 
-Đây là bản mẫu để chọn bố cục trước khi áp dụng vào ứng dụng. Các cửa sổ, nút và cài đặt trong mẫu chỉ minh họa; chưa thay đổi giao diện hay cấu hình SDM đang dùng.
+Anh đã chọn **mẫu 3 — IDM tối, màu Supo**. Bố cục này được triển khai trong SDM 0.7.0; tám bản mẫu bên dưới được giữ lại để tham khảo quá trình chọn thiết kế.
 
 ![So sánh 8 phương án](idm-ui-options-overview.png)
 
@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | [1 — IDM cổ điển](previews/01-idm-classic.png) | Menu, nút lớn, cây loại file, bảng nhiều cột; gần cách bố trí IDM cổ điển nhất. | Giao diện sáng, thiên về công cụ Windows truyền thống. |
 | [2 — IDM Windows 11](previews/02-idm-windows11.png) | Giữ bố cục IDM, dùng khoảng cách và nút kiểu Windows hiện đại. | Cân bằng giữa thông tin và độ dễ đọc; phù hợp giao diện sáng. |
-| [3 — IDM tối, màu Supo](previews/03-idm-dark.png) | Bảng và thanh công cụ như IDM, nền tối và màu xanh cùng popup hiện tại. | **Đề xuất chọn** nếu muốn gọn kiểu IDM nhưng giữ diện mạo SDM. |
+| [3 — IDM tối, màu Supo](previews/03-idm-dark.png) | Bảng và thanh công cụ như IDM, nền tối và màu xanh cùng popup hiện tại. | **Đã chọn và triển khai trong 0.7.0.** |
 | [4 — IDM mật độ cao](previews/04-idm-dense.png) | Thanh công cụ nhỏ, hàng thấp, dành phần lớn diện tích cho danh sách. | Xem nhiều lượt tải cùng lúc; chữ và nút nhỏ hơn các mẫu khác. |
 | [5 — IDM có chi tiết phía dưới](previews/05-idm-bottom-details.png) | Bảng tải ở trên, thông tin và biểu đồ của file đang chọn ở dưới. | Theo dõi một file thuận tiện; danh sách có ít hàng hiện cùng lúc hơn. |
 | [6 — IDM ưu tiên hàng chờ](previews/06-idm-queues.png) | Hàng chờ, lịch tải và thao tác bắt đầu/dừng hàng chờ được đưa ra trước. | Phù hợp tải nhiều file theo lịch; bố cục chú trọng hàng chờ. |
@@ -31,4 +31,4 @@ Hành vi đã chốt cho phần triển khai tiếp theo:
 - **Cập nhật tự động:** nhận **bản phát hành ổn định đã qua kiểm tra**, theo lựa chọn của anh. Commit được kiểm tra và đưa vào bản phát hành có phiên bản mới; ứng dụng nhận bản phát hành đó. Kiểm tra/tải nền, cài khi các tác vụ đã dừng an toàn hoặc khi thoát; có nút kiểm tra ngay và tùy chọn tắt.
 - Bản 0.6.1 hiện chưa có updater. Bản đầu tiên bổ sung tính năng này cần được cài thủ công một lần. Chữ ký bảo vệ gói cập nhật là cơ chế riêng; ký EXE để hiện nhà phát hành trên Windows vẫn là phần việc riêng.
 
-Chưa áp dụng các tính năng trên vào ứng dụng trong giai đoạn review 8 phương án này.
+Chi tiết hoạt động và cấu hình phát hành: [Khởi động và cập nhật ổn định](../AUTO_UPDATES.md). Bộ cài từ CI dùng để review; cập nhật công khai cần bản phát hành ổn định đã ký.

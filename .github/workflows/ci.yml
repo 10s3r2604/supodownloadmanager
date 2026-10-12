@@ -90,6 +90,7 @@ jobs:
           npm ci
           npm run build
       - run: node .github/scripts/check-version.mjs
+      - run: node --test .github/scripts/release/*.test.mjs
       - run: cargo fmt --all --check
       - run: node --test extension/tests/*.test.mjs
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -196,7 +197,12 @@ jobs:
       - name: Build the Windows test installer
         if: runner.os == 'Windows' && success()
         working-directory: apps/desktop
-        run: npm run tauri build -- --bundles nsis
+        shell: pwsh
+        run: |
+          $testConfig = Join-Path $env:RUNNER_TEMP "sdm-test-installer.json"
+          '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Path $testConfig -Encoding utf8
+          npm run tauri build -- --bundles nsis --config $testConfig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload the Windows test installer
         if: runner.os == 'Windows' && success()
         uses: actions/upload-artifact@v4

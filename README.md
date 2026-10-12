@@ -25,7 +25,7 @@
   <a href="#tiếng-việt">Tiếng Việt</a>
 </p>
 
-![Supo Download Manager](docs/images/sdm-main-en.png)
+![Supo Download Manager](docs/images/sdm-idm-en.png)
 
 ## Why another download manager?
 
@@ -50,6 +50,14 @@ computer you own, and the code is right here.
 | Accounts, ads, tracking         | Varies                                        | **None**                              |
 
 ## Features
+
+**Compact desktop and updates (0.7.0)**
+- An IDM-style toolbar, categories, queues and download table in an 880 × 560
+  default window. Browser captures use a separate 480 × 320 confirmation window.
+- Optional startup in the Windows tray; off by default in **Settings → General**.
+- Signed stable updates on Windows, with background download, manual checks and
+  installation after work stops. Install 0.7.0 manually once. Repository signing
+  setup and release behavior are described in [AUTO_UPDATES.md](docs/AUTO_UPDATES.md).
 
 **Faster downloads**
 - Up to 32 connections per file. When a connection finishes its part, it takes over half

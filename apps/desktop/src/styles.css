@@ -71,6 +71,32 @@
   --shadow: 0 18px 50px rgb(20 35 26 / 0.14);
 }
 
+/* The compact IDM layout uses the same Supo accent as its download windows. */
+:root[data-skin="minimal"][data-theme="dark"] {
+  --bg: #101820;
+  --panel: #0d1318;
+  --panel-2: #152027;
+  --border: #26333b;
+  --border-2: #35434d;
+  --border-soft: #1c282f;
+  --text: #e2e9ed;
+  --strong: #eef3f5;
+  --muted: #91a2ac;
+  --faint: #80919b;
+  --accent: #11d6a0;
+  --accent-ink: #11d6a0;
+  --accent-deep: #009471;
+  --accent-text: #04251b;
+  --accent-soft: rgb(17 214 160 / .10);
+  --selected: #16352d;
+  --danger: #f18e7c;
+  --good: #11d6a0;
+  --good-soft: rgb(17 214 160 / .14);
+  --track: #26363c;
+  --done: #11d6a0;
+  --paused: #91a2ac;
+}
+
 /* Neon is always dark, whatever the color theme says. */
 
 :root[data-skin="neon"],
@@ -437,6 +463,45 @@ textarea:focus-visible {
 
 .window-dialog .form {
   gap: 12px;
+}
+
+/* Browser captures keep the essential choices above the expandable details. */
+.dialog:has(.add-compact) { width: min(480px, 100%); }
+.dialog:has(.add-compact) .dialog-header { min-height: 36px; padding: 4px 8px 4px 14px; border-bottom: 1px solid var(--border); background: var(--bg); }
+:root[data-skin] .dialog:has(.add-compact) .dialog-header h2 { font-size: 12px; letter-spacing: 0; }
+.dialog:has(.add-compact) .dialog-header .icon-button { width: 28px; height: 28px; }
+.dialog:has(.add-compact) .dialog-body { padding: 14px; }
+.dialog:has(.add-compact) .dialog-footer { min-height: 49px; align-items: center; gap: 7px; padding: 8px 14px; background: var(--bg); }
+.dialog:has(.add-compact) .dialog-footer .button { height: 31px; padding: 0 11px; border-radius: 5px; font-size: 11px; }
+.dialog:has(.add-compact) .dialog-footer .button.primary { padding: 0 13px; }
+.dialog .form.add-compact { gap: 10px; }
+.capture-file-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.capture-file-icon { display: flex; align-items: center; justify-content: center; height: 42px; width: 42px; flex: none; border: 1px solid var(--border); border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
+.capture-file-info { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.capture-file-name { width: 100%; min-width: 0; height: 24px; padding: 2px 0; border: 0; border-bottom: 1px solid transparent; border-radius: 0; background: transparent; color: var(--strong); font-size: 12px; font-weight: 600; text-overflow: ellipsis; }
+.capture-file-name:focus { border-bottom-color: var(--accent); outline-offset: 2px; }
+.capture-host { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; }
+.capture-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 10px; }
+.capture-meta .chip { padding: 2px 6px; border-radius: 4px; font-size: 10px; }
+.add-compact .field { gap: 4px; font-size: 10px; }
+.add-compact .field input, .add-compact .field select { height: 28px; padding: 4px 7px; border-radius: 4px; font-size: 10px; }
+.capture-save .input-row { gap: 6px; }
+.capture-save .button { height: 28px; padding: 0 8px; font-size: 10px; border-radius: 4px; flex: none; }
+.capture-advanced { font-size: 10px; color: var(--muted); }
+.capture-advanced > summary { display: flex; align-items: center; gap: 4px; list-style: none; cursor: pointer; }
+.capture-advanced > summary::-webkit-details-marker { display: none; }
+.capture-advanced > summary .icon { transform: rotate(-90deg); }
+.capture-advanced[open] > summary .icon { transform: none; }
+.capture-advanced-body { display: flex; flex-direction: column; gap: 9px; padding-top: 10px; }
+.capture-browser-info { display: flex; align-items: center; gap: 5px; line-height: 1.5; }
+.dialog-body p.capture-error { margin: 0; font-size: 10px; overflow-wrap: anywhere; user-select: text; }
+/* A progress window clamped to a small monitor still exposes its lower controls. */
+.pw { height: 100dvh; overflow-y: auto; overflow-x: hidden; }
+@media (max-width: 380px) {
+  .dialog:has(.add-compact) .dialog-body { padding: 10px; }
+  .dialog:has(.add-compact) .dialog-footer { padding: 7px 10px; gap: 5px; }
+  .dialog:has(.add-compact) .dialog-footer .button { padding: 0 7px; font-size: 10px; }
+  .dialog:has(.add-compact) .dialog-footer .button.primary { padding: 0 8px; }
 }
 
 .dialog-header {

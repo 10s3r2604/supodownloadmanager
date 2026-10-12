@@ -11,10 +11,12 @@ mod media;
 mod power;
 mod queue;
 mod settings;
+mod startup;
 mod store;
 mod texts;
 mod torrent;
 mod tray;
+mod updates;
 mod windows;
 
 use std::path::{Path, PathBuf};
@@ -58,6 +60,8 @@ pub struct AppState {
     pub bridge_port: u16,
     pub bridge_error: Mutex<Option<String>>,
     pub data_dir: PathBuf,
+    /// Serializes durable settings and this user's OS startup registration.
+    pub(crate) startup: startup::StartupSettings,
     /// yt-dlp and ffmpeg for videos from web pages.
     pub tools: Arc<media::Tools>,
     /// What yt-dlp found on video pages recently.
@@ -101,12 +105,24 @@ pub fn run() {
     init_logging();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-            show_main_window(app);
             // Opening a magnet link or .torrent file while SDM runs.
-            for source in torrent_sources(args.iter().skip(1), Path::new(&cwd)) {
+            let sources = torrent_sources(args.iter().skip(1), Path::new(&cwd));
+            // An OS login launch must not unminimize an already-running SDM
+            // or steal focus from another application.
+            if !startup::is_autostart(args.iter().skip(1)) || !sources.is_empty() {
+                show_main_window(app);
+            }
+            for source in sources {
                 let _ = app.emit(TORRENT_PROMPT_EVENT, source);
             }
         }))
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name(startup::STARTUP_ENTRY_NAME)
+                .args([startup::AUTOSTART_ARGUMENT])
+                .build(),
+        )
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -115,9 +131,9 @@ pub fn run() {
         .setup(|app| {
             if let Err(error) = setup(app.handle()) {
                 tracing::error!(%error, "could not load the application data");
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
-                }
+                // Recovery needs the user's attention even for a tray launch.
+                startup::fit_main_window(app.handle());
+                show_main_window(app.handle());
                 let handle = app.handle().clone();
                 app.dialog().message(format!(
                     "Supo Download Manager could not open its saved data.\n\n{error}\n\nKeep the original files and restore a known-good backup at the paths above, then reopen the app."
@@ -177,6 +193,9 @@ pub fn run() {
             commands::install_extension,
             commands::open_extension_folder,
             commands::app_info,
+            updates::get_update_state,
+            updates::check_for_updates,
+            updates::install_update,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Supo Download Manager")
@@ -214,6 +233,7 @@ fn init_logging() {
 }
 
 fn setup(app: &AppHandle) -> anyhow::Result<()> {
+    startup::fit_main_window(app);
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
     let (mut settings, settings_notice) = Settings::load(&data_dir.join("settings.json"))?;
@@ -243,20 +263,24 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         app: app.clone(),
         manager: manager.clone(),
     });
+    let pending_torrents = torrent_sources(
+        std::env::args().skip(1),
+        &std::env::current_dir().unwrap_or_default(),
+    );
+    let background_launch =
+        startup::is_autostart(std::env::args().skip(1)) && pending_torrents.is_empty();
     app.manage(AppState {
         manager: manager.clone(),
         bridge: bridge.clone(),
         bridge_port: settings.bridge_port,
         bridge_error: Mutex::new(None),
         data_dir,
+        startup: startup::StartupSettings::default(),
         tools: tools.clone(),
         prober: Arc::default(),
         when_done: windows::WhenDoneChoices::default(),
         pending_add: windows::AddPrompts::default(),
-        pending_torrents: Mutex::new(torrent_sources(
-            std::env::args().skip(1),
-            &std::env::current_dir().unwrap_or_default(),
-        )),
+        pending_torrents: Mutex::new(pending_torrents),
         power: Mutex::new(None),
         power_turn: AtomicU64::new(0),
         quitting: AtomicBool::new(false),
@@ -268,12 +292,16 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         .collect::<Vec<_>>()
         .join("\n\n");
     if !recovery_notice.is_empty() {
+        show_main_window(app);
         app.dialog()
             .message(recovery_notice)
             .title("Saved data recovered")
             .kind(MessageDialogKind::Warning)
             .show(|_| {});
+    } else if !background_launch {
+        show_main_window(app);
     }
+    updates::start(app.clone(), manager.clone());
 
     // Sites change all the time; keep our copy of yt-dlp fresh.
     let update_manager = manager.clone();
@@ -358,6 +386,9 @@ pub(crate) fn quit(app: &AppHandle) {
     let manager = state.manager.clone();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        if updates::install_on_exit(&app).await {
+            return;
+        }
         manager.shutdown().await;
         app.exit(0);
     });

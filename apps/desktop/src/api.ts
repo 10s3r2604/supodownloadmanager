@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 
 export type State = "queued" | "downloading" | "paused" | "completed" | "failed";
 export type Category =
@@ -98,6 +98,17 @@ export interface PowerCountdown {
   at: number;
 }
 
+export interface UpdateState {
+  phase: "disabled" | "idle" | "checking" | "downloading" | "ready" | "waiting" | "installing" | "error";
+  supported: boolean;
+  currentVersion: string;
+  version?: string | null;
+  downloaded: number;
+  total?: number | null;
+  lastChecked?: number | null;
+  error?: string | null;
+}
+
 export interface Settings {
   downloadDir: string;
   tempDir: string;
@@ -113,6 +124,8 @@ export interface Settings {
   progressStyle: ProgressStyle;
   completeDialog: boolean;
   closeToTray: boolean;
+  startWithWindows: boolean;
+  autoUpdate: boolean;
   notifications: boolean;
   clipboardMonitor: boolean;
   browserIntegration: boolean;
@@ -341,6 +354,9 @@ export interface Api {
   resumeAll(): Promise<void>;
   open(id: number): Promise<void>;
   showInFolder(id: number): Promise<void>;
+  getUpdateState(): Promise<UpdateState>;
+  checkForUpdates(): Promise<UpdateState>;
+  installUpdate(): Promise<UpdateState>;
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<Settings>;
   pickFolder(): Promise<string | null>;
@@ -410,6 +426,12 @@ const tauriApi: Api = {
   async resizeWindow(width, height) {
     // Pin the size with min = max: GTK will not shrink a window that is not resizable.
     const window = getCurrentWindow();
+    const monitor = await currentMonitor().catch(() => null);
+    if (monitor) {
+      const scale = Number.isFinite(monitor.scaleFactor) && monitor.scaleFactor > 0 ? monitor.scaleFactor : 1;
+      width = Math.min(width, Math.max(1, Math.floor(monitor.workArea.size.width / scale - 24)));
+      height = Math.min(height, Math.max(1, Math.floor(monitor.workArea.size.height / scale - 24)));
+    }
     const size = new LogicalSize(width, height);
     await window.setMaxSize(null);
     await window.setMinSize(size);
@@ -425,6 +447,9 @@ const tauriApi: Api = {
   resumeAll: () => invoke("resume_all"),
   open: (id) => invoke("open_download", { id }),
   showInFolder: (id) => invoke("show_in_folder", { id }),
+  getUpdateState: () => invoke("get_update_state"),
+  checkForUpdates: () => invoke("check_for_updates"),
+  installUpdate: () => invoke("install_update"),
   getSettings: () => invoke("get_settings"),
   saveSettings: (settings) => invoke("save_settings", { settings }),
   pickFolder: () => invoke("pick_folder"),

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.0
+
+- Compact IDM-style Supo layout: toolbar, category and queue sidebar, download
+  table, selection, search, details and status bar. The default main window is
+  880 × 560, constrained to the monitor work area and display scaling.
+- Browser confirmation windows are 480 × 320, with file name, size, resume
+  capability and destination visible. URL and queue details expand on demand;
+  the action buttons remain accessible in a smaller window.
+- Optional start with Windows opens SDM in the tray. Registration is per-user,
+  quotes executable paths, reflects Task Manager changes and rolls back on save failure.
+- Windows receives signed stable updates in the background, with manual check,
+  an off switch and installation only after work stops and history is saved.
+  Installer failures preserve the verified package and allow retry.
+- A versioned main commit can publish a stable release after exact-commit full
+  CI, complete platform builds and signature/checksum verification. Development
+  installers remain separate review artifacts. See [automatic updates](docs/AUTO_UPDATES.md).
+
 ## 0.6.1
 
 - Browser-captured downloads open a small, separate window with file name, size,

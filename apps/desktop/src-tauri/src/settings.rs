@@ -43,6 +43,10 @@ pub struct Settings {
     pub complete_dialog: bool,
     /// Keep running in the tray when the window is closed.
     pub close_to_tray: bool,
+    /// Start in the tray when this user signs in to the computer.
+    pub start_with_windows: bool,
+    /// Check for and install verified stable releases when no download runs.
+    pub auto_update: bool,
     /// Show a notification when a download finishes.
     pub notifications: bool,
     /// Offer to download links copied to the clipboard.
@@ -81,6 +85,8 @@ impl Default for Settings {
             progress_style: "graph".into(),
             complete_dialog: true,
             close_to_tray: true,
+            start_with_windows: false,
+            auto_update: true,
             notifications: true,
             clipboard_monitor: true,
             browser_integration: true,
@@ -274,6 +280,8 @@ mod tests {
         assert!(settings.browser_integration);
         assert_eq!(settings.skin, "minimal");
         assert_eq!(settings.theme, "dark");
+        assert!(!settings.start_with_windows);
+        assert!(settings.auto_update);
     }
 
     #[test]

@@ -328,8 +328,8 @@ pub fn show_in_folder(app: AppHandle, state: State<'_, AppState>, id: u64) -> Re
 }
 
 #[tauri::command]
-pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings> {
-    Ok(state.manager.settings())
+pub async fn get_settings(app: AppHandle, state: State<'_, AppState>) -> Result<Settings> {
+    state.startup.read(&app, &state.manager)
 }
 
 #[tauri::command]
@@ -365,10 +365,12 @@ pub async fn save_settings(
         .map_err(text_error)?;
     drop(file);
     std::fs::remove_file(probe).map_err(text_error)?;
-    state
-        .manager
-        .save_settings(&state.data_dir.join("settings.json"), settings.clone())
-        .map_err(text_error)?;
+    state.startup.save(
+        &app,
+        &state.manager,
+        &state.data_dir.join("settings.json"),
+        &settings,
+    )?;
     tray::set_language(&app, settings.resolved_language());
     Ok(settings)
 }

@@ -42,12 +42,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trash = "5"
 url = "2"
 tauri-plugin-deep-link = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2.13.3"
 zip = { version = "9.0.1", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6"
+
 [dev-dependencies]
+tauri = { version = "2", features = ["test"] }
 tempfile = "3"
 tokio = { workspace = true, features = ["full", "test-util"] }
 tower = { version = "0.5", features = ["util"] }
