@@ -37,8 +37,8 @@ const settings: Settings = {
 
 const updatePhase = new URLSearchParams(location.search).get("update") as UpdateState["phase"] | null;
 const updateState: UpdateState = {
-  phase: updatePhase ?? "idle", supported: true, currentVersion: "0.7.0",
-  version: updatePhase && ["ready", "waiting", "downloading"].includes(updatePhase) ? "0.7.1" : undefined,
+  phase: updatePhase ?? "idle", supported: true, currentVersion: "0.7.1",
+  version: updatePhase && ["ready", "waiting", "downloading"].includes(updatePhase) ? "0.7.2" : undefined,
   downloaded: updatePhase === "downloading" ? 24 * MB : 0,
   total: updatePhase === "downloading" ? 101 * MB : undefined,
   error: updatePhase === "error" ? "network" : undefined,
@@ -478,7 +478,7 @@ export const mockApi: Api = {
   },
   async openExtensionFolder() {},
   async appInfo() {
-    return { version: "0.7.0", bridgePort: 17360, bridgeError: null };
+    return { version: "0.7.1", bridgePort: 17360, bridgeError: null };
   },
   async onAddPrompt(handler) {
     const listener = (event: Event) => handler((event as CustomEvent).detail);

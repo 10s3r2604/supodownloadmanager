@@ -1,7 +1,10 @@
 # Startup and stable updates
 
 SDM 0.7.0 adds optional login startup and signed automatic updates on Windows.
-Install this version manually once: earlier versions cannot update themselves.
+The first signed stable update is 0.7.1. Installed 0.7.0 review builds can receive
+it directly through **Settings → Updates → Check now**, then **Install and restart**.
+The signing key and update endpoint are unchanged. Windows builds older than
+0.7.0 need the 0.7.1 installer once because they do not contain the updater.
 Linux and macOS still use their normal installers; their automatic updater is
 disabled until installation and restart behavior has been tested on those systems.
 

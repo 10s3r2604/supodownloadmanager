@@ -46,7 +46,8 @@ latest published release is older, use it for stable installations and treat
   default window. Browser captures use a separate 480 × 320 confirmation window.
 - Optional startup in the Windows tray; off by default in **Settings → General**.
 - Signed stable updates on Windows, with background download, manual checks and
-  installation after work stops. Install 0.7.0 manually once. Repository signing
+  installation after work stops. Installed 0.7.0 builds can update to 0.7.1 from
+  **Settings → Updates → Check now**; older Windows builds need the 0.7.1 installer once. Repository signing
   setup and release behavior are described in [AUTO_UPDATES.md](docs/AUTO_UPDATES.md).
 
 **Faster downloads**
@@ -254,7 +255,8 @@ Nếu bản phát hành mới nhất còn thấp hơn, hãy dùng bản đó đ�
   (vào **Cài đặt → Giao diện**). Bấm đúp tên file để xem biểu đồ tốc độ và chi tiết.
 - **Khởi động cùng Windows** là tùy chọn, mặc định tắt; khi bật, SDM mở ở khay hệ thống.
 - **Cập nhật ổn định có chữ ký trên Windows**: kiểm tra và tải nền, cài khi công việc đã
-  dừng và lịch sử đã được lưu. Cần cài 0.7.0 thủ công một lần để dùng updater.
+  dừng và lịch sử đã được lưu. Bản 0.7.0 có thể lên 0.7.1 bằng **Cài đặt → Cập nhật →
+  Kiểm tra ngay**; bản Windows cũ hơn cần cài 0.7.1 thủ công một lần.
 
 **Cài đặt:** tải bộ cài ở trang [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
 (Windows: `…-setup.exe`; macOS: `.dmg`; Linux: `.deb`, `.rpm`, `.AppImage`), mở SDM rồi

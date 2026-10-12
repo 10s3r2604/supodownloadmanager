@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1
+
+- Publish the signed stable update feed for installed 0.7.0 review builds.
+  Use Settings → Updates → Check now, then Install and restart after downloads
+  and Torrent sharing have stopped. The updater retains the same public key.
+- Include the compact Supo interface, optional Windows startup, Torrent naming,
+  browser capture and download recovery improvements documented below.
+
 ## 0.7.0
 
 - Use the name **Torrent** consistently in the interface, native file picker,
