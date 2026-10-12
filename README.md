@@ -27,27 +27,17 @@
 
 ![Supo Download Manager](docs/images/sdm-idm-en.png)
 
-## Why another download manager?
+## Overview
 
-Why pay a **yearly subscription** for something as simple as a download manager? Or buy a
-**"lifetime" licence that only covers one or two PCs**, and pay again when you get a new
-laptop?
+SDM brings file downloads, video quality selection and Torrent downloads into one
+desktop app. It supports pause and resume, browser capture, queues and scheduling,
+with English and Vietnamese interfaces. It is free software under
+[GPL-3.0-or-later](LICENSE), with no subscription, device limit, accounts or ads.
 
-I didn't want to. So I vibecoded my own: a fully working download manager that splits
-files into many connections, resumes after crashes and restarts, grabs videos from web
-pages, and handles **torrents and magnet links** too. It's free, it runs on every
-computer you own, and the code is right here.
-
-|                                 | Typical paid download manager                 | **Supo Download Manager**             |
-| ------------------------------- | --------------------------------------------- | ------------------------------------- |
-| Price                           | Yearly subscription, or a licence per PC      | **Free, forever**                     |
-| New laptop                      | Buy again or move the licence around          | **Install it and go**                 |
-| How many PCs                    | 1–2 per licence                               | **As many as you like**               |
-| Windows · macOS · Linux         | Usually Windows only                          | **All three**                         |
-| Torrents and magnet links       | Usually a separate program                    | **Built in**                          |
-| Videos from web pages           | Yes                                           | **Yes**, in the quality you pick      |
-| Source code                     | Closed                                        | **Open** ([GPL-3.0](LICENSE))         |
-| Accounts, ads, tracking         | Varies                                        | **None**                              |
+**Release status:** use [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
+for stable installers. The screenshots and features below document 0.7.0. If the
+latest published release is older, use it for stable installations and treat
+0.7.0 CI artifacts as review builds until that version is published.
 
 ## Features
 
@@ -92,12 +82,12 @@ computer you own, and the code is right here.
   through [yt-dlp](https://github.com/yt-dlp/yt-dlp), which SDM downloads, verifies and
   keeps up to date for you.
 
-**Torrents and magnet links**
+**Torrent and magnet links**
 - Click a magnet link, open a `.torrent` file or drop one on the window. SDM shows what is
   inside so you can pick the files.
 - Downloads continue after a restart without checking everything again. Finished torrents
   are shared back for a while (you choose how long), with separate upload limits.
-- Powered by [librqbit](https://github.com/ikatson/rqbit), a fast BitTorrent engine in Rust.
+- Powered by [librqbit](https://github.com/ikatson/rqbit), a fast Torrent engine in Rust.
 
 **Browser integration**
 - Extension for Chrome, Edge, Firefox, Brave, Opera, Vivaldi and Cốc Cốc. Downloads of the
@@ -202,7 +192,7 @@ Linux, also the WebKitGTK libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ```sh
 cd apps/desktop
-npm install
+npm ci
 npm run tauri dev      # run the app
 npm run tauri build -- --config '{"bundle":{"createUpdaterArtifacts":false}}' # local installer
 ```
@@ -214,6 +204,8 @@ matching private signing key. See [AUTO_UPDATES.md](docs/AUTO_UPDATES.md).
 
 Bug reports, ideas, translations, docs and code are all welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [roadmap](docs/ROADMAP.md).
+Repository listing text and presentation assets are in
+[REPOSITORY.md](docs/REPOSITORY.md).
 
 ## Legal
 
@@ -241,9 +233,13 @@ SDM is an independent project, not affiliated with any other download manager.
 **Supo Download Manager (SDM)** là trình quản lý tải xuống **miễn phí, mã nguồn mở** cho
 Windows, macOS và Linux.
 
-Tại sao phải trả **phí thuê bao hằng năm** cho một trình tải file đơn giản, hay mua bản
-**"trọn đời" chỉ dùng được 1–2 máy** rồi mất khi đổi laptop mới? SDM miễn phí mãi mãi,
-cài trên bao nhiêu máy cũng được, và mã nguồn công khai.
+SDM quản lý tải file, video và Torrent trong cùng một ứng dụng, có tạm dừng/tải tiếp,
+hàng đợi, hẹn giờ và tích hợp trình duyệt. Không phí thuê bao, không giới hạn số máy,
+không tài khoản hay quảng cáo. Mã nguồn được phát hành theo [GPL-3.0-or-later](LICENSE).
+
+Trang Releases cung cấp bản ổn định. Ảnh và tính năng trong tài liệu mô tả 0.7.0.
+Nếu bản phát hành mới nhất còn thấp hơn, hãy dùng bản đó để cài ổn định; bộ cài
+0.7.0 từ CI dùng để review cho đến khi phiên bản này được phát hành.
 
 - **Tải nhanh** bằng tối đa 32 kết nối, tạm dừng và tải tiếp kể cả sau khi tắt máy.
 - **Hàng đợi và hẹn giờ**: nhiều hàng đợi, tự chạy/dừng theo giờ, tắt máy hoặc cho máy ngủ

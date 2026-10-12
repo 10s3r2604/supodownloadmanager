@@ -58,9 +58,9 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 - [ ] Playlists and channels
 - [ ] Subtitles
 
-## Phase 5: BitTorrent ✅ (v0.4)
+## Phase 5: Torrent ✅ (v0.4)
 
-Built on [librqbit](https://github.com/ikatson/rqbit), a BitTorrent engine in Rust.
+Built on [librqbit](https://github.com/ikatson/rqbit), a Torrent engine in Rust.
 
 - [x] Magnet links and `.torrent` files (from a link, a file, drag and drop or the command line)
 - [x] "Add torrent" dialog with the files to choose, as a folder tree

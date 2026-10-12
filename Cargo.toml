@@ -33,6 +33,6 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
-# BitTorrent on computers without IPv6; see third_party/librqbit-tracker-comms/README.md.
+# Torrent on computers without IPv6; see third_party/librqbit-tracker-comms/README.md.
 [patch.crates-io]
 librqbit-tracker-comms = { path = "third_party/librqbit-tracker-comms" }

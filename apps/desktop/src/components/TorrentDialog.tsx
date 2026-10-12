@@ -1,5 +1,5 @@
 // Shows what is in a torrent and lets the user pick the files, like the
-// "add torrent" dialog of BitTorrent clients.
+// "add torrent" dialog of Torrent clients.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 

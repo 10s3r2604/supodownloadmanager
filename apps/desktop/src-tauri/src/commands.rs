@@ -391,7 +391,7 @@ pub async fn pick_torrent_file(app: AppHandle) -> Option<String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
-        .add_filter("BitTorrent", &["torrent"])
+        .add_filter("Torrent", &["torrent"])
         .pick_file(move |file| {
             let _ = sender.send(file);
         });

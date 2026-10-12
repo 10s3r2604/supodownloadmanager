@@ -64,7 +64,7 @@ pub struct Record {
     /// page then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaSpec>,
-    /// Set for BitTorrent downloads; `url` is the magnet link or `.torrent`
+    /// Set for Torrent downloads; `url` is the magnet link or `.torrent`
     /// address then, and `path` the file or folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub torrent: Option<TorrentSpec>,
@@ -107,7 +107,7 @@ pub struct DownloadView {
     pub media: bool,
     /// The data is there and is being put together (video and audio merged).
     pub processing: bool,
-    /// A BitTorrent download; `connections` counts peers then.
+    /// A Torrent download; `connections` counts peers then.
     pub torrent: bool,
     /// Sharing a finished torrent with others.
     pub seeding: bool,

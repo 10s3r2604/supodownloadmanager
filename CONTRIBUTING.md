@@ -1,7 +1,7 @@
 # Contributing to SDM
 
 Thank you for helping! Bug reports, ideas, translations, documentation and code
-are all welcome. Issues and discussions can be written in English or
+are all welcome. Issues and pull requests can be written in English or
 Vietnamese (tiếng Việt).
 
 ## Reporting a bug
@@ -15,7 +15,7 @@ Please include:
 
 ## Development setup
 
-1. Install [Rust](https://rustup.rs) (latest stable) and [Node.js](https://nodejs.org) 20 or newer.
+1. Install [Rust](https://rustup.rs) (latest stable) and [Node.js](https://nodejs.org) 22 or newer.
 2. On Linux, install the libraries the desktop app needs. On Debian/Ubuntu:
 
    ```sh
@@ -35,13 +35,22 @@ Please include:
 
 ```sh
 cd apps/desktop
-npm install
+npm ci
 npm run tauri dev
 ```
 
 To work on the interface alone, run `npm run dev` and open
 http://localhost:1420 in a browser. Outside the app the interface uses a
 simulated backend (`src/mock.ts`) with sample downloads.
+
+For a local installer without repository signing credentials:
+
+```sh
+npm run tauri build -- --config '{"bundle":{"createUpdaterArtifacts":false}}'
+```
+
+Stable release builds require the matching updater signing key; see
+[AUTO_UPDATES.md](docs/AUTO_UPDATES.md). Keep private keys outside the checkout.
 
 ### Browser extension
 
@@ -63,9 +72,11 @@ cargo run -p sdm-cli -- get https://example.com/file.zip
 Run the same checks as CI:
 
 ```sh
-cargo fmt --all
+cargo fmt --all --check
+node .github/scripts/check-version.mjs
 (cd apps/desktop && npm run build)    # the desktop crate embeds the built interface
 node --test extension/tests/*.test.mjs
+node --test .github/scripts/release/release.test.mjs
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```

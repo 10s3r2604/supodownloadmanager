@@ -41,7 +41,7 @@ export function MinimalView(p: ViewProps & { dark: boolean }) {
   const resume = () => chosen.length ? p.actions.resume(resumeIds) : p.onResumeAll();
   const pause = () => chosen.length ? p.actions.pause(pauseIds) : p.onPauseAll();
   const currentQueue = p.queues.find((q) => q.id === p.queueFilter);
-  const heading = currentQueue ? queueName(currentQueue, t) : p.typeFilter === "torrent" ? t("bittorrent") : p.typeFilter !== "all" ? t(`cat.${p.typeFilter}`) : t(`tab.${p.filter}` as TextKey);
+  const heading = currentQueue ? queueName(currentQueue, t) : p.typeFilter === "torrent" ? t("torrent") : p.typeFilter !== "all" ? t(`cat.${p.typeFilter}`) : t(`tab.${p.filter}` as TextKey);
   const tool = (icon: IconName, label: string, action: () => void, disabled = false, primary = false, dot?: "ok" | "warning", hint?: string) => (
     <button type="button" className={`idm-tool${primary ? " primary-tool" : ""}`} disabled={disabled} onClick={action} title={hint ?? label}>
       <span className="idm-tool-icon"><Icon name={icon} size={24} />{dot && <i className={`idm-tool-dot ${dot}`} />}</span><span>{label}</span>
@@ -90,7 +90,7 @@ export function MinimalView(p: ViewProps & { dark: boolean }) {
           {CATEGORIES.filter((category) => p.typeFilter === category || p.downloads.some((d) => matchesType(category, d))).map((category) => <button type="button" key={category} className={`idm-side-item${p.typeFilter === category ? " on" : ""}`} onClick={() => { p.setTypeFilter(category); p.setFilter("all"); p.setQueueFilter("all"); }}>
             <Icon name={categoryIcon[category]} size={15} /><span>{t(`cat.${category}`)}</span><small>{p.downloads.filter((d) => matchesType(category, d)).length}</small>
           </button>)}
-          {(p.typeFilter === "torrent" || p.downloads.some((d) => d.torrent)) && <button type="button" className={`idm-side-item${p.typeFilter === "torrent" ? " on" : ""}`} onClick={() => { p.setTypeFilter("torrent"); p.setFilter("all"); p.setQueueFilter("all"); }}><Icon name="magnet" size={15} /><span>{t("bittorrent")}</span><small>{p.downloads.filter((d) => d.torrent).length}</small></button>}
+          {(p.typeFilter === "torrent" || p.downloads.some((d) => d.torrent)) && <button type="button" className={`idm-side-item${p.typeFilter === "torrent" ? " on" : ""}`} onClick={() => { p.setTypeFilter("torrent"); p.setFilter("all"); p.setQueueFilter("all"); }}><Icon name="magnet" size={15} /><span>{t("torrent")}</span><small>{p.downloads.filter((d) => d.torrent).length}</small></button>}
           <h2>{t("queue")}</h2>
           {p.queues.map((queue) => <button type="button" key={queue.id} className={`idm-side-item${p.queueFilter === queue.id ? " on" : ""}`} onClick={() => { p.setQueueFilter(queue.id); p.setFilter("all"); p.setTypeFilter("all"); }}><Icon name="layers" size={15} /><span>{queueName(queue, t)}</span><small>{p.downloads.filter((d) => d.queue === queue.id).length}</small></button>)}
         </aside>
