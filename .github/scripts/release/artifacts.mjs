@@ -54,7 +54,10 @@ async function walk(directory) {
   const result = [];
   for (const entry of entries) {
     const file = join(directory, entry.name);
-    if (entry.isDirectory() && !entry.name.endsWith(".app")) result.push(...await walk(file));
+    // Tauri leaves unpacked macOS bundles and AppImage staging trees here.
+    // Their packaged archives sit alongside them; staging trees contain
+    // internal symlinks (e.g. .DirIcon) and must not become release assets.
+    if (entry.isDirectory() && !entry.name.endsWith(".app") && !entry.name.endsWith(".AppDir")) result.push(...await walk(file));
     else if (entry.isFile()) result.push(file);
     else assert.ok(entry.isDirectory(), `Unexpected symlink in release artifacts: ${entry.name}`);
   }

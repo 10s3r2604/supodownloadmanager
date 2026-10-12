@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -214,6 +214,25 @@ test("stage fails without a signature or with a mismatched signed version", asyn
   await assert.rejects(stageArtifacts(params), /Signed updater version/);
   await writeFile(`${file}.sig`, key.signature(Buffer.from("binary"), "timestamp:1\tfile:fixture"));
   await assert.rejects(stageArtifacts(params), /Signed updater version/);
+});
+
+test("AppImage staging excludes the generated AppDir and its icon symlink", async (t) => {
+  const dir = await fixture(t);
+  const bundleDir = join(dir, "bundle", "appimage");
+  const appDir = join(bundleDir, "Supo.Download.Manager.AppDir");
+  const iconDir = join(appDir, "usr", "share", "icons");
+  await mkdir(iconDir, { recursive: true });
+  await writeFile(join(iconDir, "icon.png"), "unpacked icon");
+  await symlink(iconDir, join(appDir, ".DirIcon"), "junction");
+  const name = "Supo.Download.Manager_0.7.0_amd64.AppImage";
+  const data = Buffer.from("signed AppImage");
+  const key = signingKey();
+  await writeFile(join(bundleDir, name), data);
+  await writeFile(join(bundleDir, `${name}.sig`), key.signature(data));
+  const outputDir = join(dir, "staged");
+  await stageArtifacts({ bundleDir: join(dir, "bundle"), outputDir, platform: "linux-x86_64", version: "0.7.0", pubkey: key.pubkey });
+  assert.deepEqual((await readdir(outputDir)).sort(), [name, `${name}.sig`, "fragment-linux-x86_64.json"].sort());
+  assert.deepEqual(await readFile(join(outputDir, name)), data);
 });
 
 async function publicationFixture(t) {
