@@ -4,7 +4,7 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  font-size: 11px;
+  font-size: 12px;
   background: var(--panel);
 }
 .idm-menubar {
@@ -18,14 +18,14 @@
   position: relative;
   z-index: 2;
 }
-.idm-menu > button, .idm-bridge {
+.idm-menu > button {
   border: 0;
   border-radius: 3px;
   background: transparent;
   color: var(--text);
   padding: 4px 8px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
 }
 .idm-menu > button:hover, .idm-menu > button[aria-expanded="true"] {
   background: var(--selected);
@@ -62,23 +62,6 @@
   color: var(--faint);
   cursor: default;
 }
-.idm-bridge {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 10px;
-}
-.idm-bridge i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--good);
-}
-.idm-bridge.warning i {
-  background: var(--warn);
-}
 .idm-toolbar {
   display: flex;
   align-items: stretch;
@@ -104,10 +87,28 @@
   color: var(--muted);
   cursor: pointer;
   line-height: 1.1;
-  font-size: 10px;
+  font-size: 12px;
 }
 .idm-tool > span {
   white-space: nowrap;
+}
+.idm-tool-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.idm-tool-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -1px;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--bg);
+  border-radius: 50%;
+  background: var(--good);
+}
+.idm-tool-dot.warning {
+  background: var(--warn);
 }
 .idm-tool:hover:not(:disabled) {
   border-color: var(--border);
@@ -115,6 +116,8 @@
   color: var(--strong);
 }
 .idm-tool.primary-tool {
+  flex: 0 0 auto;
+  padding-inline: 10px;
   background: var(--accent-soft);
   border-color: var(--border-2);
   color: var(--strong);
@@ -154,7 +157,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--strong);
 }
 .idm-search:focus-within {
@@ -179,7 +182,7 @@
 .idm-sidebar h2 {
   margin: 0 10px;
   padding: 11px 2px 7px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 650;
   letter-spacing: .04em;
   text-transform: uppercase;
@@ -200,7 +203,7 @@
   text-align: left;
   background: transparent;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text);
 }
 .idm-side-item > span {
@@ -216,7 +219,7 @@
   margin-left: auto;
   padding-left: 3px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .idm-side-item:hover {
@@ -249,7 +252,7 @@
 }
 .idm-viewbar > strong {
   color: var(--strong);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
@@ -257,7 +260,7 @@
   white-space: nowrap;
 }
 .idm-viewbar > span {
-  font-size: 10px;
+  font-size: 12px;
   flex: none;
 }
 .idm-view-actions {
@@ -278,7 +281,7 @@
   cursor: pointer;
   padding: 3px 6px;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: 12px;
 }
 .idm-small-button:hover {
   color: var(--strong);
@@ -296,7 +299,7 @@
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
-  font-size: 11px;
+  font-size: 12px;
 }
 .idm-table th {
   height: 27px;
@@ -305,7 +308,7 @@
   border-right: 1px solid var(--border);
   background: var(--bg);
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 400;
   text-align: left;
   white-space: nowrap;
@@ -392,7 +395,7 @@
   padding: 2px 0;
   text-align: left;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text);
 }
 .idm-file-name:hover {
@@ -411,7 +414,7 @@
   text-align: left;
   background: transparent;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
 }
 .idm-progress-status > i {
   position: absolute;
@@ -487,7 +490,7 @@
   max-width: 340px;
   margin: 0 0 4px;
   line-height: 1.6;
-  font-size: 11px;
+  font-size: 12px;
 }
 .idm-graph {
   position: relative;
@@ -500,7 +503,7 @@
   position: absolute;
   top: 3px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 .idm-graph > small {
   right: 0;
@@ -515,7 +518,7 @@
   border-top: 1px solid var(--border);
   background: var(--bg);
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -533,7 +536,7 @@
   color: var(--muted);
   padding: 0;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
 }
 .idm-status-right {
   display: flex;
@@ -544,7 +547,7 @@
 }
 .idm-status-right b {
   color: var(--strong);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
 }
 .idm-when {
@@ -560,7 +563,7 @@
   border-radius: 3px;
   padding: 1px 0;
   background: transparent;
-  font-size: 10px;
+  font-size: 12px;
   color: inherit;
   cursor: pointer;
 }

@@ -202,7 +202,7 @@ const en = {
   save: "Save",
   skinNeon: "Neon",
   skinNeonHint: "Dark and detailed: live speed chart, segments, connections",
-  skinMinimal: "IDM · Supo",
+  skinMinimal: "Compact",
   skinMinimalHint: "Compact toolbar, categories and download table",
 
   batch: "Batch download…",
@@ -605,7 +605,7 @@ const vi: Record<TextKey, string> = {
   save: "Lưu",
   skinNeon: "Neon",
   skinNeonHint: "Nền tối, nhiều thông số: biểu đồ tốc độ, các đoạn, từng kết nối",
-  skinMinimal: "IDM · Supo",
+  skinMinimal: "Gọn",
   skinMinimalHint: "Thanh công cụ, danh mục và bảng tải gọn",
 
   batch: "Tải hàng loạt…",

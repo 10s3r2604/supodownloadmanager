@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { Download, PowerAction } from "../api";
+import { type Download, MAIN_QUEUE, type PowerAction } from "../api";
 import { AreaChart, niceMax } from "../components/Charts";
 import { POWER_ACTIONS, queueName } from "../components/SchedulerDialog";
 import { useI18n } from "../context";
@@ -42,8 +42,10 @@ export function MinimalView(p: ViewProps & { dark: boolean }) {
   const pause = () => chosen.length ? p.actions.pause(pauseIds) : p.onPauseAll();
   const currentQueue = p.queues.find((q) => q.id === p.queueFilter);
   const heading = currentQueue ? queueName(currentQueue, t) : p.typeFilter === "torrent" ? t("bittorrent") : p.typeFilter !== "all" ? t(`cat.${p.typeFilter}`) : t(`tab.${p.filter}` as TextKey);
-  const tool = (icon: IconName, label: string, action: () => void, disabled = false, primary = false) => (
-    <button type="button" className={`idm-tool${primary ? " primary-tool" : ""}`} disabled={disabled} onClick={action} title={label}><Icon name={icon} size={24} /><span>{label}</span></button>
+  const tool = (icon: IconName, label: string, action: () => void, disabled = false, primary = false, dot?: "ok" | "warning", hint?: string) => (
+    <button type="button" className={`idm-tool${primary ? " primary-tool" : ""}`} disabled={disabled} onClick={action} title={hint ?? label}>
+      <span className="idm-tool-icon"><Icon name={icon} size={24} />{dot && <i className={`idm-tool-dot ${dot}`} />}</span><span>{label}</span>
+    </button>
   );
   const menuItem = (label: string, action: () => void, disabled = false) => (
     <button type="button" role="menuitem" disabled={disabled} onClick={() => runMenu(action)}>{label}</button>
@@ -63,7 +65,6 @@ export function MinimalView(p: ViewProps & { dark: boolean }) {
             </div>}
           </div>
         ))}
-        <button type="button" className={`idm-bridge${p.info?.bridgeError ? " warning" : ""}`} onClick={p.onBrowsers} title={p.info?.bridgeError ?? t("browsers")}><i /><span>{t("browsers")}</span></button>
       </nav>
       <header className="idm-toolbar" aria-label={t("downloadsTitle")}>
         {tool("plus", t("add"), p.onAdd, false, true)}
@@ -71,10 +72,10 @@ export function MinimalView(p: ViewProps & { dark: boolean }) {
         {tool("pause", t("pause"), pause, chosen.length ? !pauseIds.length : !hasActive)}
         {tool("trash", t("delete"), () => p.actions.remove(p.selected), !chosen.length)}
         <span className="idm-tool-divider" />
-        {tool("layers", t("queue"), p.onScheduler)}
+        {tool("playAll", t("startQueue"), () => p.onStartQueue(currentQueue?.id ?? MAIN_QUEUE), false, false, undefined, `${t("startQueue")}: ${queueName(currentQueue ?? p.queues[0], t)}`)}
         {tool("clock", t("scheduler"), p.onScheduler)}
         {tool("settings", t("settings"), p.onSettings)}
-        {tool("globe", t("browsers"), p.onBrowsers)}
+        {tool("globe", t("browsers"), p.onBrowsers, false, false, p.info?.bridgeError ? "warning" : "ok", p.info?.bridgeError ?? undefined)}
         <label className="idm-search"><Icon name="search" size={13} /><input type="search" aria-label={t("search")} placeholder={t("search")} value={p.query} onChange={(event) => p.setQuery(event.target.value)} /></label>
       </header>
       <div className="idm-workspace">
@@ -86,10 +87,10 @@ export function MinimalView(p: ViewProps & { dark: boolean }) {
             </button>
           ))}
           <h2>{t("categories")}</h2>
-          {CATEGORIES.map((category) => <button type="button" key={category} className={`idm-side-item${p.typeFilter === category ? " on" : ""}`} onClick={() => { p.setTypeFilter(category); p.setFilter("all"); p.setQueueFilter("all"); }}>
+          {CATEGORIES.filter((category) => p.typeFilter === category || p.downloads.some((d) => matchesType(category, d))).map((category) => <button type="button" key={category} className={`idm-side-item${p.typeFilter === category ? " on" : ""}`} onClick={() => { p.setTypeFilter(category); p.setFilter("all"); p.setQueueFilter("all"); }}>
             <Icon name={categoryIcon[category]} size={15} /><span>{t(`cat.${category}`)}</span><small>{p.downloads.filter((d) => matchesType(category, d)).length}</small>
           </button>)}
-          <button type="button" className={`idm-side-item${p.typeFilter === "torrent" ? " on" : ""}`} onClick={() => { p.setTypeFilter("torrent"); p.setFilter("all"); p.setQueueFilter("all"); }}><Icon name="magnet" size={15} /><span>{t("bittorrent")}</span><small>{p.downloads.filter((d) => d.torrent).length}</small></button>
+          {(p.typeFilter === "torrent" || p.downloads.some((d) => d.torrent)) && <button type="button" className={`idm-side-item${p.typeFilter === "torrent" ? " on" : ""}`} onClick={() => { p.setTypeFilter("torrent"); p.setFilter("all"); p.setQueueFilter("all"); }}><Icon name="magnet" size={15} /><span>{t("bittorrent")}</span><small>{p.downloads.filter((d) => d.torrent).length}</small></button>}
           <h2>{t("queue")}</h2>
           {p.queues.map((queue) => <button type="button" key={queue.id} className={`idm-side-item${p.queueFilter === queue.id ? " on" : ""}`} onClick={() => { p.setQueueFilter(queue.id); p.setFilter("all"); p.setTypeFilter("all"); }}><Icon name="layers" size={15} /><span>{queueName(queue, t)}</span><small>{p.downloads.filter((d) => d.queue === queue.id).length}</small></button>)}
         </aside>
@@ -128,6 +129,8 @@ function CompactRow({ d, selected, actions }: { d: Download } & ViewProps) {
   const isSelected = selected.includes(d.id);
   const value = d.state === "completed" ? 100 : percent(d.downloaded, d.size);
   const running = d.state === "downloading";
+  // While data flows the bar and the speed say enough; words are for the rest.
+  const plainDownloading = running && !d.stopping && !d.checking && !d.processing && d.speed > 0;
   const status = d.stopping ? t("stopping") : d.seeding ? t("seeding") : running && d.checking ? t("checkingData") : running && d.processing ? t("processing") : running && !d.speed ? t("connecting") : t(`state.${d.state}`);
   const size = d.size == null ? (d.downloaded ? formatBytes(d.downloaded, language) : t("unknownSize")) : formatBytes(d.size, language);
   const extension = d.fileName.match(/\.([a-z0-9]{1,8})$/i)?.[1].toUpperCase();
@@ -141,7 +144,7 @@ function CompactRow({ d, selected, actions }: { d: Download } & ViewProps) {
       <td className="idm-check-cell"><input type="checkbox" checked={isSelected} aria-label={t("selectDownload", { name: d.fileName })} onChange={() => actions.select(d.id, "toggle")} /></td>
       <td title={detail}><div className="idm-file-cell"><span className="idm-extension" aria-hidden="true">{d.torrent ? <Icon name="magnet" size={12} /> : extension || <Icon name={categoryIcon[d.category]} size={12} />}</span><button type="button" className="idm-file-name" onClick={(event) => actions.select(d.id, event.shiftKey ? "range" : event.ctrlKey || event.metaKey ? "toggle" : "single")} onDoubleClick={() => actions.details(d)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); actions.details(d); } }}>{d.fileName}</button></div></td>
       <td title={`${formatBytes(d.downloaded, language)} / ${size}`}>{size}</td>
-      <td><button type="button" className={`idm-progress-status${d.error ? " has-error" : ""}`} onClick={() => actions.details(d)} title={d.error ?? status}>{value != null && <i style={{ width: `${Math.min(100, value)}%` }} />}<span>{d.error ? <Icon name="alert" size={11} /> : d.state === "completed" ? <Icon name="tick" size={11} /> : null}{value == null ? "" : `${Math.floor(value)}% · `}{d.error ?? status}</span></button></td>
+      <td><button type="button" className={`idm-progress-status${d.error ? " has-error" : ""}`} onClick={() => actions.details(d)} title={d.error ?? status}>{value != null && <i style={{ width: `${Math.min(100, value)}%` }} />}<span>{d.error ? <Icon name="alert" size={11} /> : d.state === "completed" ? <Icon name="tick" size={11} /> : null}{value == null || d.state === "completed" ? "" : `${Math.floor(value)}%`}{plainDownloading && value != null ? "" : `${value == null || d.state === "completed" ? "" : " · "}${status}`}</span></button></td>
       <td>{d.seeding ? `↑ ${formatSpeed(d.uploadSpeed, language)}` : running && !d.checking && !d.processing ? formatSpeed(d.speed, language) : "—"}</td>
       <td title={d.eta == null ? undefined : formatHuman(d.eta, language)}>{running && !d.checking && !d.processing && d.eta != null ? formatHuman(d.eta, language) : "—"}</td>
       <td className="idm-row-actions"><button type="button" className="idm-row-action" disabled={d.stopping} onClick={() => actions.primary(d)} aria-label={`${action}: ${d.fileName}`} title={action}><Icon name={running || d.state === "queued" ? "pause" : d.state === "completed" ? "open" : d.state === "failed" ? "retry" : "play"} size={13} /></button><button type="button" className="idm-row-action" aria-label={`${t("more")}: ${d.fileName}`} aria-haspopup="menu" onClick={(event) => { const box = event.currentTarget.getBoundingClientRect(); actions.menu({ clientX: box.right - 220, clientY: box.bottom + 4 }, d); }}><Icon name="more" size={13} /></button></td>

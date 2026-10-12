@@ -107,7 +107,7 @@ computer you own, and the code is right here.
 **Pleasant to use**
 - A small progress window per download, in three styles (speed graph, ring or classic),
   with "open the file when done".
-- Two looks: **IDM · Supo** (the default: dark, light or like the system, with a file's
+- Two looks: **Compact** (the default: dark, light or like the system, with a file's
   speed chart, connections and torrent files one click away) and **Neon** (dark, with a
   live speed chart and every connection on screen). English and Vietnamese.
 - Categories with their own folders, clipboard monitoring, tray icon and notifications.
@@ -121,7 +121,7 @@ computer you own, and the code is right here.
     <td width="50%"><img src="docs/images/sdm-video-en.png" alt="Choosing the quality of a video"><br><sub><b>Videos:</b> pick the quality</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/images/sdm-idm-en.png" alt="Compact IDM-style Supo window"><br><sub><b>IDM · Supo</b>, dark (default)</sub></td>
+    <td><img src="docs/images/sdm-idm-en.png" alt="Compact IDM-style Supo window"><br><sub><b>Compact</b>, dark (default)</sub></td>
     <td><img src="docs/images/sdm-capture-compact-en.png" alt="Compact download confirmation"><br><sub><b>Browser capture:</b> choose where and when to download</sub></td>
   </tr>
   <tr>
@@ -230,7 +230,7 @@ install ffmpeg with your package manager for merging and converting media. Bundl
 tools come from their official releases and are checksum-verified when packaged.
 SDM keeps its own copy of yt-dlp up to date; source and licenses are available from
 the linked upstream projects. Torrents use [librqbit](https://github.com/ikatson/rqbit)
-(Apache-2.0). The interface uses the [Inter](https://rsms.me/inter/) typeface
+(Apache-2.0). The interface uses the [Hanken Grotesk](https://github.com/marcologous/hanken-grotesk) typeface
 (SIL Open Font License).
 SDM is an independent project, not affiliated with any other download manager.
 
@@ -254,7 +254,7 @@ cài trên bao nhiêu máy cũng được, và mã nguồn công khai.
   chọn tệp muốn tải.
 - **Extension** cho Chrome, Edge, Firefox, Cốc Cốc, Brave, Opera, Vivaldi; tải được cả
   link cần đăng nhập.
-- Hai giao diện: **IDM · Supo** (mặc định, nền tối/sáng/theo hệ thống) và **Neon**, có tiếng Việt
+- Hai giao diện: **Gọn** (mặc định, nền tối/sáng/theo hệ thống) và **Neon**, có tiếng Việt
   (vào **Cài đặt → Giao diện**). Bấm đúp tên file để xem biểu đồ tốc độ và chi tiết.
 - **Khởi động cùng Windows** là tùy chọn, mặc định tắt; khi bật, SDM mở ở khay hệ thống.
 - **Cập nhật ổn định có chữ ký trên Windows**: kiểm tra và tải nền, cài khi công việc đã
