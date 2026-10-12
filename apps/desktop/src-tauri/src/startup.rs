@@ -71,6 +71,9 @@ trait StartupBackend {
     type Snapshot;
     fn capture(&self) -> Result<Self::Snapshot, String>;
     fn snapshot_enabled(snapshot: &Self::Snapshot) -> Result<bool, String>;
+    fn snapshot_registered(snapshot: &Self::Snapshot) -> Result<bool, String> {
+        Self::snapshot_enabled(snapshot)
+    }
     fn set_enabled(&self, enabled: bool) -> Result<(), String>;
     fn restore(&self, snapshot: &Self::Snapshot) -> Result<(), String>;
 }
@@ -161,6 +164,9 @@ mod native {
                     Err("The Windows StartupApproved entry has an invalid registry type".into())
                 }
             }
+        }
+        fn snapshot_registered(snapshot: &Snapshot) -> Result<bool, String> {
+            Ok(snapshot.run.is_some() || snapshot.approved.is_some())
         }
         fn set_enabled(&self, enabled: bool) -> Result<(), String> {
             // Do not use the plugin's Windows registration: its underlying
@@ -276,7 +282,14 @@ fn save_transaction<B: StartupBackend>(
         .map_err(|error| startup_error(language, "read", &error))?;
     let original =
         B::snapshot_enabled(&snapshot).map_err(|error| startup_error(language, "read", &error))?;
-    let changed = wanted != original;
+    // Task Manager can disable a registration without removing its Run value.
+    // Saving "off" must remove that registration as well as an enabled one.
+    let changed = if wanted {
+        !original
+    } else {
+        B::snapshot_registered(&snapshot)
+            .map_err(|error| startup_error(language, "read", &error))?
+    };
     if changed && let Err(error) = backend.set_enabled(wanted) {
         let message = startup_error(language, "change", &error);
         return Err(with_rollback_error(
@@ -399,6 +412,9 @@ mod tests {
         fn snapshot_enabled(snapshot: &FakeSnapshot) -> Result<bool, String> {
             Ok(snapshot.enabled)
         }
+        fn snapshot_registered(snapshot: &FakeSnapshot) -> Result<bool, String> {
+            Ok(snapshot.enabled || snapshot.registration.first().is_some_and(|byte| *byte != 0))
+        }
         fn set_enabled(&self, value: bool) -> Result<(), String> {
             self.changes.borrow_mut().push(value);
             // An OS implementation may partially change state before failing.
@@ -505,6 +521,27 @@ mod tests {
         let backend = FakeStartup::default();
         save_transaction(&backend, false, "en", || Ok(())).unwrap();
         assert!(backend.changes.borrow().is_empty());
+    }
+
+    #[test]
+    fn disabling_removes_an_already_disabled_registration() {
+        let backend = FakeStartup::default();
+        backend.registration.replace(vec![3, 1, 2, 3]);
+        save_transaction(&backend, false, "en", || Ok(())).unwrap();
+        assert!(!backend.enabled.get());
+        assert_eq!(*backend.changes.borrow(), [false]);
+        assert_eq!(*backend.registration.borrow(), [0]);
+    }
+
+    #[test]
+    fn failed_save_restores_an_already_disabled_registration() {
+        let backend = FakeStartup::default();
+        let original = vec![3, 1, 2, 3];
+        backend.registration.replace(original.clone());
+        assert!(save_transaction(&backend, false, "en", || Err("disk full".into())).is_err());
+        assert!(!backend.enabled.get());
+        assert_eq!(*backend.changes.borrow(), [false, false]);
+        assert_eq!(*backend.registration.borrow(), original);
     }
 
     #[test]
