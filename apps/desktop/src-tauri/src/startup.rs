@@ -337,18 +337,22 @@ pub(crate) fn fit_main_window(app: &AppHandle) {
     let work_width = f64::from(area.size.width) / scale;
     let work_height = f64::from(area.size.height) / scale;
     let (width, height, min_width, min_height) = main_window_size(work_width, work_height);
-    let _ = window.set_min_size(Some(LogicalSize::new(min_width, min_height)));
-    let _ = window.set_size(LogicalSize::new(width, height));
+    // GTK may apply set_size after this setup callback returns. Derive frame
+    // insets from the old dimensions rather than centering the requested
+    // window using an outer_size that still belongs to its old small size.
     let frame = window
         .outer_size()
         .ok()
-        .map(|size| {
+        .zip(window.inner_size().ok())
+        .map(|(outer, inner)| {
             (
-                f64::from(size.width) / scale,
-                f64::from(size.height) / scale,
+                width + f64::from(outer.width.saturating_sub(inner.width)) / scale,
+                height + f64::from(outer.height.saturating_sub(inner.height)) / scale,
             )
         })
         .unwrap_or((width, height + 32.0));
+    let _ = window.set_min_size(Some(LogicalSize::new(min_width, min_height)));
+    let _ = window.set_size(LogicalSize::new(width, height));
     let _ = window.set_position(LogicalPosition::new(
         f64::from(area.position.x) / scale + ((work_width - frame.0) / 2.0).max(0.0),
         f64::from(area.position.y) / scale + ((work_height - frame.1) / 2.0).max(0.0),

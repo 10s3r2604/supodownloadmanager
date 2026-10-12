@@ -356,6 +356,15 @@ const server=http.createServer((req,res)=>{
     assert(mainDimensions.width<=882 && mainDimensions.height<=562,
       `Main window is too large: ${JSON.stringify(mainDimensions)}`);
     assert.equal(mainDimensions.overflow,false);
+    const workMonitor=await invoke('plugin:window|current_monitor',{label:'main'});
+    const outerPosition=await invoke('plugin:window|outer_position',{label:'main'});
+    const outerSize=await invoke('plugin:window|outer_size',{label:'main'});
+    assert(workMonitor?.workArea,'The native monitor work area is unavailable');
+    const work=workMonitor.workArea;
+    assert(outerPosition.x>=work.position.x-2 && outerPosition.y>=work.position.y-2
+      && outerPosition.x+outerSize.width<=work.position.x+work.size.width+2
+      && outerPosition.y+outerSize.height<=work.position.y+work.size.height+2,
+      `Main native window exceeds the monitor work area: ${JSON.stringify({outerPosition,outerSize,work})}`);
     await main.screenshot({path:path.join(output,'idm-main.png')});
     report.push({name:'compact-idm-main-window',passed:true,...mainDimensions});
 
