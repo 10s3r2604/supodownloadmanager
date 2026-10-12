@@ -511,7 +511,8 @@ mod tests {
                             bytes
                         }
                     }),
-                );
+                )
+                .route("/paused.zip", get(|| async { BYTES }));
             tokio::spawn(async move {
                 axum::serve(listener, routes).await.unwrap();
             });
@@ -651,7 +652,14 @@ mod tests {
     async fn storage_and_invalid_installer_failures_retain_package_and_allow_retry() {
         let fixture = Fixture::new("99.0.0", BYTES, false).await;
         let request = crate::manager::AddRequest {
-            url: "http://127.0.0.1:1/paused.zip".into(),
+            url: fixture
+                .service
+                .test_endpoint
+                .as_ref()
+                .unwrap()
+                .join("/paused.zip")
+                .unwrap()
+                .to_string(),
             file_name: Some("paused.zip".into()),
             ..crate::manager::AddRequest::default()
         };
@@ -677,14 +685,18 @@ mod tests {
         // The failed installer released the gate, permitting ordinary work.
         fixture.service.manager.resume(&[id]);
         let deadline = Instant::now() + Duration::from_secs(5);
-        while fixture.service.manager.get(id).unwrap().state != crate::manager::State::Failed
+        while fixture.service.manager.get(id).unwrap().state != crate::manager::State::Completed
             && Instant::now() < deadline
         {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(
             fixture.service.manager.get(id).unwrap().state,
-            crate::manager::State::Failed
+            crate::manager::State::Completed
+        );
+        assert_eq!(
+            std::fs::read(fixture.service.manager.get(id).unwrap().path).unwrap(),
+            BYTES
         );
         fixture.service.manager.shutdown().await;
     }
