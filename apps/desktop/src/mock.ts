@@ -1,7 +1,7 @@
 // A simulated backend so the interface can be developed and tested in a
 // normal browser (`npm run dev`). It is never used inside the real app.
 
-import type { Api, Browser, Category, Download, MediaInfo, MediaOption, PowerAction, PowerCountdown, Queue, Settings, ToolStatus, TorrentFile, TorrentInfo, WhenDone } from "./api";
+import type { Api, Browser, Category, Download, MediaInfo, MediaOption, PowerAction, PowerCountdown, Queue, Settings, ToolStatus, TorrentFile, TorrentInfo, UpdateState, WhenDone } from "./api";
 import { categoryOf } from "./model";
 
 const MB = 1024 * 1024;
@@ -9,6 +9,7 @@ const now = Date.now();
 
 const settings: Settings = {
   downloadDir: "/home/demo/Downloads",
+  tempDir: "/home/demo/.local/share/com.supodownloadmanager.app/temp",
   categoryFolders: true,
   connections: 8,
   maxParallel: 3,
@@ -21,6 +22,8 @@ const settings: Settings = {
   progressStyle: (new URLSearchParams(location.search).get("pstyle") as Settings["progressStyle"]) || "graph",
   completeDialog: true,
   closeToTray: true,
+  startWithWindows: false,
+  autoUpdate: true,
   notifications: true,
   clipboardMonitor: true,
   browserIntegration: true,
@@ -30,6 +33,15 @@ const settings: Settings = {
   seedRatio: 100,
   uploadLimit: 0,
   torrentPort: 0,
+};
+
+const updatePhase = new URLSearchParams(location.search).get("update") as UpdateState["phase"] | null;
+const updateState: UpdateState = {
+  phase: updatePhase ?? "idle", supported: true, currentVersion: "0.7.1",
+  version: updatePhase && ["ready", "waiting", "downloading"].includes(updatePhase) ? "0.7.2" : undefined,
+  downloaded: updatePhase === "downloading" ? 24 * MB : 0,
+  total: updatePhase === "downloading" ? 101 * MB : undefined,
+  error: updatePhase === "error" ? "network" : undefined,
 };
 
 function folderFor(category: Category) {
@@ -356,6 +368,16 @@ export const mockApi: Api = {
     whenDone.set(id, choice);
   },
   async closeWindow() {},
+  async showWindow() {},
+  async getAddPrompt() {
+    return {
+      url: "https://example.org/releases/download/latest/installer.exe",
+      fileName: "Supo.Download.Manager_x64-setup.exe",
+      fileSize: 100_977_868,
+      directory: folderFor("program"),
+      headers: [],
+    };
+  },
   async minimizeWindow() {},
   async setWindowTitle(title) {
     document.title = title;
@@ -410,6 +432,27 @@ export const mockApi: Api = {
   },
   async open() {},
   async showInFolder() {},
+  async getUpdateState() {
+    const value = clone(updateState);
+    if (!settings.autoUpdate && value.phase === "idle") value.phase = "disabled";
+    return value;
+  },
+  async checkForUpdates() {
+    updateState.phase = "checking";
+    updateState.error = undefined;
+    const state = clone(updateState);
+    setTimeout(() => {
+      updateState.phase = updateState.version ? "ready" : settings.autoUpdate ? "idle" : "disabled";
+      updateState.lastChecked = Date.now();
+    }, 300);
+    return state;
+  },
+  async installUpdate() {
+    if (updateState.version) {
+      updateState.phase = downloads.some(d => d.state === "downloading" || d.stopping || d.seeding) ? "waiting" : "installing";
+    }
+    return clone(updateState);
+  },
   async getSettings() {
     return clone(settings);
   },
@@ -435,7 +478,7 @@ export const mockApi: Api = {
   },
   async openExtensionFolder() {},
   async appInfo() {
-    return { version: "0.6.0", bridgePort: 17360, bridgeError: null };
+    return { version: "0.7.1", bridgePort: 17360, bridgeError: null };
   },
   async onAddPrompt(handler) {
     const listener = (event: Event) => handler((event as CustomEvent).detail);

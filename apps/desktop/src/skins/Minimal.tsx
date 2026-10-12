@@ -1,493 +1,153 @@
-import { useRef, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import type { Download, PowerAction } from "../api";
-import { wordmark } from "../brand";
+import { type Download, MAIN_QUEUE, type PowerAction } from "../api";
+import { AreaChart, niceMax } from "../components/Charts";
+import { POWER_ACTIONS, queueName } from "../components/SchedulerDialog";
 import { useI18n } from "../context";
 import { formatBytes, formatHuman, formatSpeed, percent } from "../format";
 import type { TextKey } from "../i18n";
-import { Icon } from "../icons";
-import {
-  CATEGORIES,
-  type Filter,
-  type TypeFilter,
-  hostOf,
-  matches,
-  matchesType,
-} from "../model";
+import { Icon, categoryIcon, type IconName } from "../icons";
+import { CATEGORIES, type Filter, hostOf, matches, matchesType } from "../model";
 import type { ViewProps } from "../views";
-import { AreaChart, niceMax } from "../components/Charts";
-import { POWER_ACTIONS, queueName } from "../components/SchedulerDialog";
 import "./minimal.css";
 
+/** Compact desktop layout, retaining the saved `minimal` appearance preference. */
 export function MinimalView(p: ViewProps & { dark: boolean }) {
   const { t, language } = useI18n();
   const [graph, setGraph] = useState(false);
-  const count = (f: Filter) =>
-    p.downloads.filter((d) => matchesType(p.typeFilter, d) && matches(f, d))
-      .length;
-  const tabs: Filter[] = ["all", "active", "completed", "attention"];
+  const [menu, setMenu] = useState<string | null>(null);
+  const menuBar = useRef<HTMLElement>(null);
   const chosen = p.visible.filter((d) => p.selected.includes(d.id));
-  const canPause = chosen.some(
-    (d) => d.state === "downloading" || d.state === "queued",
-  );
-  const canResume = chosen.some(
-    (d) => d.state === "paused" || d.state === "failed",
-  );
-  const hasPaused = p.downloads.some(
-    (d) => d.state === "paused" || d.state === "failed",
-  );
-  const hasActive = p.downloads.some(
-    (d) => d.state === "downloading" || d.state === "queued",
-  );
+  const pauseIds = chosen.filter((d) => d.state === "downloading" || d.state === "queued").map((d) => d.id);
+  const resumeIds = chosen.filter((d) => d.state === "paused" || d.state === "failed").map((d) => d.id);
+  const hasActive = p.downloads.some((d) => d.state === "downloading" || d.state === "queued");
+  const hasPaused = p.downloads.some((d) => d.state === "paused" || d.state === "failed");
   const all = p.visible.length > 0 && chosen.length === p.visible.length;
   const selectAll = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (selectAll.current)
-      selectAll.current.indeterminate = chosen.length > 0 && !all;
+    if (selectAll.current) selectAll.current.indeterminate = chosen.length > 0 && !all;
   }, [all, chosen.length]);
+  useEffect(() => {
+    const outside = (event: MouseEvent) => { if (!menuBar.current?.contains(event.target as Node)) setMenu(null); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setMenu(null); };
+    window.addEventListener("mousedown", outside);
+    window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("mousedown", outside); window.removeEventListener("keydown", escape); };
+  }, []);
+  const count = (filter: Filter) => p.downloads.filter((d) => matches(filter, d)).length;
+  const chooseFilter = (filter: Filter) => { p.setFilter(filter); p.setTypeFilter("all"); p.setQueueFilter("all"); };
+  const selectVisible = () => p.actions.selectAll(all ? [] : p.visible.map((d) => d.id));
+  const runMenu = (action: () => void) => { setMenu(null); action(); };
+  const resume = () => chosen.length ? p.actions.resume(resumeIds) : p.onResumeAll();
+  const pause = () => chosen.length ? p.actions.pause(pauseIds) : p.onPauseAll();
+  const currentQueue = p.queues.find((q) => q.id === p.queueFilter);
+  const heading = currentQueue ? queueName(currentQueue, t) : p.typeFilter === "torrent" ? t("torrent") : p.typeFilter !== "all" ? t(`cat.${p.typeFilter}`) : t(`tab.${p.filter}` as TextKey);
+  const tool = (icon: IconName, label: string, action: () => void, disabled = false, primary = false, dot?: "ok" | "warning", hint?: string) => (
+    <button type="button" className={`idm-tool${primary ? " primary-tool" : ""}`} disabled={disabled} onClick={action} title={hint ?? label}>
+      <span className="idm-tool-icon"><Icon name={icon} size={24} />{dot && <i className={`idm-tool-dot ${dot}`} />}</span><span>{label}</span>
+    </button>
+  );
+  const menuItem = (label: string, action: () => void, disabled = false) => (
+    <button type="button" role="menuitem" disabled={disabled} onClick={() => runMenu(action)}>{label}</button>
+  );
 
   return (
-    <main className="minimal">
-      <header className="mn-head">
-        <img
-          src={wordmark(p.dark ? "#eef4ef" : "#20332a")}
-          height={48}
-          alt="supo"
-        />
-        <span className="mn-space" />
-        <button type="button" className="mn-link" onClick={p.onBrowsers}>
-          {t("browsers")}
-          {p.info?.bridgeError && (
-            <span
-              className="mn-warn-dot"
-              title={t("bridgeError", { error: p.info.bridgeError })}
-            />
-          )}
-        </button>
-        <button type="button" className="mn-link" onClick={p.onScheduler}>
-          {t("scheduler")}
-        </button>
-        <button type="button" className="mn-link" onClick={p.onSettings}>
-          {t("settings")}
-        </button>
-        <button
-          type="button"
-          className="button primary mn-add"
-          onClick={p.onAdd}
-          title={`${t("add")} (Ctrl+N)`}
-        >
-          <Icon name="plus" size={18} /> {t("add")}
-        </button>
+    <main className="minimal idm">
+      <nav className="idm-menubar" ref={menuBar} aria-label={t("menuTools")}>
+        {(["menuFile", "menuDownloads", "menuView", "menuTools"] as const).map((key) => (
+          <div className="idm-menu" key={key}>
+            <button type="button" aria-haspopup="menu" aria-expanded={menu === key} onClick={() => setMenu(menu === key ? null : key)}>{t(key)}</button>
+            {menu === key && <div className="idm-menu-items" role="menu" aria-label={t(key)}>
+              {key === "menuFile" && <>{menuItem(`${t("add")} · Ctrl+N`, p.onAdd)}{menuItem(t("scheduler"), p.onScheduler)}</>}
+              {key === "menuDownloads" && <>{menuItem(t("resumeAll"), p.onResumeAll, !hasPaused)}{menuItem(t("pauseAll"), p.onPauseAll, !hasActive)}{menuItem(t("delete"), () => p.actions.remove(p.selected), !chosen.length)}</>}
+              {key === "menuView" && <>{menuItem(t("selectAllVisible"), selectVisible, !p.visible.length)}{menuItem(t("clearSelection"), () => p.actions.selectAll([]), !chosen.length)}{menuItem(t(graph ? "hideSpeedGraph" : "showSpeedGraph"), () => setGraph(!graph))}</>}
+              {key === "menuTools" && <>{menuItem(t("settings"), p.onSettings)}{menuItem(t("browsers"), p.onBrowsers)}{menuItem(t("scheduler"), p.onScheduler)}</>}
+            </div>}
+          </div>
+        ))}
+      </nav>
+      <header className="idm-toolbar" aria-label={t("downloadsTitle")}>
+        {tool("plus", t("add"), p.onAdd, false, true)}
+        {tool("play", t("resume"), resume, chosen.length ? !resumeIds.length : !hasPaused)}
+        {tool("pause", t("pause"), pause, chosen.length ? !pauseIds.length : !hasActive)}
+        {tool("trash", t("delete"), () => p.actions.remove(p.selected), !chosen.length)}
+        <span className="idm-tool-divider" />
+        {tool("playAll", t("startQueue"), () => p.onStartQueue(currentQueue?.id ?? MAIN_QUEUE), false, false, undefined, `${t("startQueue")}: ${queueName(currentQueue ?? p.queues[0], t)}`)}
+        {tool("clock", t("scheduler"), p.onScheduler)}
+        {tool("settings", t("settings"), p.onSettings)}
+        {tool("globe", t("browsers"), p.onBrowsers, false, false, p.info?.bridgeError ? "warning" : "ok", p.info?.bridgeError ?? undefined)}
+        <label className="idm-search"><Icon name="search" size={13} /><input type="search" aria-label={t("search")} placeholder={t("search")} value={p.query} onChange={(event) => p.setQuery(event.target.value)} /></label>
       </header>
-
-      <section className="mn-hero">
-        <h1>{t("downloadsTitle")}</h1>
-        <p className="mn-lead">
-          {p.totals.active > 0 ? (
-            <>
-              <span className="mn-live" />{" "}
-              {t("downloadingCount", { n: p.totals.active })}
-              {" · "}
-              {formatSpeed(p.totals.speed, language)}
-              {p.totals.remaining != null && (
-                <>
-                  {" "}
-                  ·{" "}
-                  {t("aboutRemaining", {
-                    time: formatHuman(p.totals.remaining, language),
-                  })}
-                </>
-              )}
-            </>
-          ) : p.downloads.length === 0 ? (
-            t("emptyBody")
-          ) : (
-            t("leadIdle", {
-              count: p.downloads.length,
-              today: formatBytes(p.totals.downloadedToday, language),
-            })
-          )}
-          {p.totals.speedLimit != null && (
-            <>
-              {" "}
-              · {t("limit")}: {formatSpeed(p.totals.speedLimit, language)}
-            </>
-          )}
-        </p>
-      </section>
-
-      <div className="mn-filters">
-        <nav className="mn-tabs" aria-label={t("colStatus")}>
-          {tabs.map((f) => (
-            <button
-              type="button"
-              key={f}
-              aria-current={p.filter === f ? "true" : undefined}
-              className={p.filter === f ? "on" : ""}
-              onClick={() => p.setFilter(f)}
-            >
-              {t(`tab.${f}` as TextKey)} <span>{count(f)}</span>
+      <div className="idm-workspace">
+        <aside className="idm-sidebar" aria-label={t("categories")}>
+          <h2>{t("downloadsTitle")}</h2>
+          {(["all", "active", "completed", "attention", "unfinished"] as Filter[]).map((filter) => (
+            <button type="button" key={filter} className={`idm-side-item${p.filter === filter && p.typeFilter === "all" && p.queueFilter === "all" ? " on" : ""}`} onClick={() => chooseFilter(filter)}>
+              <Icon name={filter === "all" ? "list" : filter === "active" ? "download" : filter === "completed" ? "tick" : filter === "attention" ? "alert" : "pause"} size={15} /><span>{t(`tab.${filter}` as TextKey)}</span><small>{count(filter)}</small>
             </button>
           ))}
-        </nav>
-        <div className="mn-tools">
-          {p.queues.length > 1 && (
-            <label className="mn-type">
-              <select
-                aria-label={t("queue")}
-                value={p.queueFilter}
-                onChange={(e) => p.setQueueFilter(e.target.value)}
-              >
-                <option value="all">{t("allQueues")}</option>
-                {p.queues.map((q) => (
-                  <option key={q.id} value={q.id}>
-                    {queueName(q, t)}
-                  </option>
-                ))}
-              </select>
-              <Icon name="chevron" size={14} />
-            </label>
-          )}
-          <label className="mn-type">
-            <select
-              aria-label={t("categories")}
-              value={p.typeFilter}
-              onChange={(e) => p.setTypeFilter(e.target.value as TypeFilter)}
-            >
-              <option value="all">{t("allCategories")}</option>
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {t(`cat.${c}` as TextKey)}
-                </option>
-              ))}
-              <option value="torrent">{t("bittorrent")}</option>
-            </select>
-            <Icon name="chevron" size={14} />
-          </label>
-          <label className="mn-search">
-            <Icon name="search" size={16} />
-            <input
-              type="search"
-              aria-label={t("search")}
-              value={p.query}
-              placeholder={t("search")}
-              onChange={(e) => p.setQuery(e.target.value)}
-            />
-          </label>
-        </div>
-      </div>
-
-      <div className="mn-list-head">
-        <label className="mn-select-all" title={t("selectAllVisible")}>
-          <input
-            ref={selectAll}
-            type="checkbox"
-            aria-label={t("selectAllVisible")}
-            checked={all}
-            disabled={!p.visible.length}
-            onChange={() =>
-              p.actions.selectAll(all ? [] : p.visible.map((d) => d.id))
-            }
-          />
-          <span>
-            {chosen.length
-              ? t("selectedCount", { n: chosen.length })
-              : t("yourDownloads")}
-          </span>
-        </label>
-        <div className="mn-bulk">
-          {chosen.length > 0 ? (
-            <>
-              {canPause && (
-                <button
-                  type="button"
-                  className="mn-link"
-                  onClick={() => p.actions.pause(p.selected)}
-                >
-                  {t("pause")}
-                </button>
-              )}
-              {canResume && (
-                <button
-                  type="button"
-                  className="mn-link"
-                  onClick={() => p.actions.resume(p.selected)}
-                >
-                  {t("resume")}
-                </button>
-              )}
-              <button
-                type="button"
-                className="mn-link"
-                onClick={() => p.actions.remove(p.selected)}
-              >
-                {t("delete")}
-              </button>
-              <button
-                type="button"
-                className="mn-link"
-                onClick={() => p.actions.selectAll([])}
-              >
-                {t("clearSelection")}
-              </button>
-            </>
-          ) : (
-            <>
-              {p.queueFilter !== "all" && (
-                <>
-                  <button
-                    type="button"
-                    className="mn-link"
-                    onClick={() => p.onStartQueue(p.queueFilter)}
-                  >
-                    {t("startQueue")}
-                  </button>
-                  <button
-                    type="button"
-                    className="mn-link"
-                    onClick={() => p.onStopQueue(p.queueFilter)}
-                  >
-                    {t("stopQueue")}
-                  </button>
-                </>
-              )}
-              {(hasActive || p.afterAll !== "nothing") && (
-                <label
-                  className={`mn-type mn-when${p.afterAll !== "nothing" ? " on" : ""}`}
-                  title={t("whenAllDone")}
-                >
-                  <Icon name="power" size={14} />
-                  <select
-                    aria-label={t("whenAllDone")}
-                    value={p.afterAll}
-                    onChange={(e) =>
-                      p.setAfterAll(e.target.value as PowerAction)
-                    }
-                  >
-                    {POWER_ACTIONS.map((action) => (
-                      <option key={action} value={action}>
-                        {action === "nothing"
-                          ? t("whenAllDone")
-                          : t(`power.${action}` as TextKey)}
-                      </option>
-                    ))}
-                  </select>
-                  <Icon name="chevron" size={14} />
-                </label>
-              )}
-              {hasActive && (
-                <button
-                  type="button"
-                  className="mn-link"
-                  onClick={p.onPauseAll}
-                >
-                  {t("pauseAll")}
-                </button>
-              )}
-              {hasPaused && (
-                <button
-                  type="button"
-                  className="mn-link"
-                  onClick={p.onResumeAll}
-                >
-                  {t("resumeAll")}
-                </button>
-              )}
-              <button
-                type="button"
-                className="mn-link"
-                aria-expanded={graph}
-                onClick={() => setGraph(!graph)}
-              >
-                {t(graph ? "hideSpeedGraph" : "showSpeedGraph")}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-      {graph && (
-        <div
-          className="mn-graph"
-          role="img"
-          aria-label={`${t("totalSpeed")}: ${formatSpeed(p.totals.speed, language)}`}
-        >
-          <AreaChart
-            values={p.history.total}
-            max={niceMax(Math.max(0, ...p.history.total))}
-            slots={100}
-            id="total-speed"
-          />
-          <span>
-            {t("totalSpeed")} · {formatSpeed(p.totals.speed, language)}
-          </span>
-          <small>{t("lastMinute")}</small>
-        </div>
-      )}
-      <div className="mn-list" aria-label={t("downloadsTitle")}>
-        {p.visible.length === 0 && (
-          <div className="mn-empty">
-            <Icon name="download" size={28} />
-            <h2>{t(p.downloads.length === 0 ? "emptyTitle" : "noMatch")}</h2>
-            {p.downloads.length === 0 && (
-              <button
-                type="button"
-                className="button primary"
-                onClick={p.onAdd}
-              >
-                {t("add")}
-              </button>
-            )}
+          <h2>{t("categories")}</h2>
+          {CATEGORIES.filter((category) => p.typeFilter === category || p.downloads.some((d) => matchesType(category, d))).map((category) => <button type="button" key={category} className={`idm-side-item${p.typeFilter === category ? " on" : ""}`} onClick={() => { p.setTypeFilter(category); p.setFilter("all"); p.setQueueFilter("all"); }}>
+            <Icon name={categoryIcon[category]} size={15} /><span>{t(`cat.${category}`)}</span><small>{p.downloads.filter((d) => matchesType(category, d)).length}</small>
+          </button>)}
+          {(p.typeFilter === "torrent" || p.downloads.some((d) => d.torrent)) && <button type="button" className={`idm-side-item${p.typeFilter === "torrent" ? " on" : ""}`} onClick={() => { p.setTypeFilter("torrent"); p.setFilter("all"); p.setQueueFilter("all"); }}><Icon name="magnet" size={15} /><span>{t("torrent")}</span><small>{p.downloads.filter((d) => d.torrent).length}</small></button>}
+          <h2>{t("queue")}</h2>
+          {p.queues.map((queue) => <button type="button" key={queue.id} className={`idm-side-item${p.queueFilter === queue.id ? " on" : ""}`} onClick={() => { p.setQueueFilter(queue.id); p.setFilter("all"); p.setTypeFilter("all"); }}><Icon name="layers" size={15} /><span>{queueName(queue, t)}</span><small>{p.downloads.filter((d) => d.queue === queue.id).length}</small></button>)}
+        </aside>
+        <section className="idm-content" aria-label={t("downloadsTitle")}>
+          <div className="idm-viewbar"><strong title={heading}>{heading}</strong><span>{chosen.length ? t("selectedCount", { n: chosen.length }) : p.visible.length}</span>
+            <div className="idm-view-actions">
+              {p.queueFilter !== "all" && <><button type="button" className="idm-small-button" onClick={() => p.onStartQueue(p.queueFilter)} title={t("startQueue")}><Icon name="play" size={12} />{t("startQueue")}</button><button type="button" className="idm-small-button" onClick={() => p.onStopQueue(p.queueFilter)} title={t("stopQueue")}><Icon name="pause" size={12} />{t("stopQueue")}</button></>}
+              <button type="button" className="idm-small-button" aria-expanded={graph} onClick={() => setGraph(!graph)} title={t(graph ? "hideSpeedGraph" : "showSpeedGraph")}><Icon name="sliders" size={12} /><span>{t(graph ? "hideSpeedGraph" : "showSpeedGraph")}</span></button>
+            </div>
           </div>
-        )}
-        {p.visible.map((d) => (
-          <MinimalRow key={d.id} d={d} {...p} />
-        ))}
+          {graph && <div className="idm-graph" role="img" aria-label={`${t("totalSpeed")}: ${formatSpeed(p.totals.speed, language)}`}><AreaChart values={p.history.total} max={niceMax(Math.max(0, ...p.history.total))} slots={100} id="total-speed" /><span>{t("totalSpeed")} · {formatSpeed(p.totals.speed, language)}</span><small>{t("lastMinute")}</small></div>}
+          <div className="idm-table-scroll">
+            <table className="idm-table" aria-label={t("downloadsTitle")}>
+              <colgroup><col className="idm-check-col" /><col /><col className="idm-size-col" /><col className="idm-state-col" /><col className="idm-speed-col" /><col className="idm-eta-col" /><col className="idm-action-col" /></colgroup>
+              <thead><tr><th className="idm-check-cell"><input ref={selectAll} type="checkbox" checked={all} disabled={!p.visible.length} aria-label={t("selectAllVisible")} onChange={selectVisible} /></th><th>{t("colName")}</th><th>{t("colSize")}</th><th>{t("colStatus")}</th><th>{t("colSpeed")}</th><th>{t("colEta")}</th><th><span className="sr-only">{t("more")}</span></th></tr></thead>
+              <tbody>{p.visible.map((download) => <CompactRow key={download.id} d={download} {...p} />)}</tbody>
+            </table>
+            {!p.visible.length && <div className="idm-empty"><Icon name="download" size={24} /><h2>{t(p.downloads.length ? "noMatch" : "emptyTitle")}</h2>{!p.downloads.length && <><p>{t("emptyBody")}</p><button type="button" className="button primary" onClick={p.onAdd}>{t("add")}</button></>}</div>}
+          </div>
+        </section>
       </div>
+      <footer className="idm-statusbar"><span>{p.downloads.length} · {t("downloadsTitle")}</span><i /><span>{t("downloadingCount", { n: p.totals.active })}</span>
+        {chosen.length > 0 && <button type="button" onClick={() => p.actions.selectAll([])} title={t("clearSelection")}>{t("selectedCount", { n: chosen.length })} <Icon name="x" size={11} /></button>}
+        <div className="idm-status-right">
+          {(hasActive || p.afterAll !== "nothing") && <label className={`idm-when${p.afterAll !== "nothing" ? " on" : ""}`} title={t("whenAllDone")}><Icon name="power" size={12} /><select aria-label={t("whenAllDone")} value={p.afterAll} onChange={(event) => p.setAfterAll(event.target.value as PowerAction)}>{POWER_ACTIONS.map((action) => <option key={action} value={action}>{action === "nothing" ? t("whenAllDone") : t(`power.${action}` as TextKey)}</option>)}</select></label>}
+          <b title={p.totals.speedLimit == null ? t("totalSpeed") : `${t("limit")}: ${formatSpeed(p.totals.speedLimit, language)}`}>{formatSpeed(p.totals.speed, language)}</b>
+          {p.totals.remaining != null && <span className="idm-total-eta">{formatHuman(p.totals.remaining, language)}</span>}
+        </div>
+      </footer>
     </main>
   );
 }
 
-function MinimalRow({ d, selected, actions }: { d: Download } & ViewProps) {
+function CompactRow({ d, selected, actions }: { d: Download } & ViewProps) {
   const { t, language } = useI18n();
   const isSelected = selected.includes(d.id);
   const value = d.state === "completed" ? 100 : percent(d.downloaded, d.size);
   const running = d.state === "downloading";
-  const source =
-    d.torrent && running
-      ? t("peersShort", { n: d.connections })
-      : hostOf(d.url);
-  const status = d.stopping
-    ? t("stopping")
-    : d.seeding
-      ? t("seeding")
-      : running && d.checking
-        ? t("checkingData")
-        : running && d.processing
-          ? t("processing")
-          : running && d.eta != null
-            ? t("timeLeftShort", { t: formatHuman(d.eta, language) })
-            : running
-              ? t("connecting")
-              : t(`state.${d.state}`);
-  const size =
-    d.state === "completed"
-      ? formatBytes(d.size ?? d.downloaded, language)
-      : `${formatBytes(d.downloaded, language)} / ${d.size == null ? t("unknownSize") : formatBytes(d.size, language)}`;
-  const ext = d.fileName.match(/\.([a-z0-9]{1,8})$/i)?.[1].toUpperCase();
-  const action =
-    running || d.state === "queued"
-      ? t("actPause")
-      : d.state === "completed"
-        ? t("actOpen")
-        : d.state === "failed"
-          ? t("actRetry")
-          : t("actResume");
-
+  // While data flows the bar and the speed say enough; words are for the rest.
+  const plainDownloading = running && !d.stopping && !d.checking && !d.processing && d.speed > 0;
+  const status = d.stopping ? t("stopping") : d.seeding ? t("seeding") : running && d.checking ? t("checkingData") : running && d.processing ? t("processing") : running && !d.speed ? t("connecting") : t(`state.${d.state}`);
+  const size = d.size == null ? (d.downloaded ? formatBytes(d.downloaded, language) : t("unknownSize")) : formatBytes(d.size, language);
+  const extension = d.fileName.match(/\.([a-z0-9]{1,8})$/i)?.[1].toUpperCase();
+  const action = running || d.state === "queued" ? t("actPause") : d.state === "completed" ? t("actOpen") : d.state === "failed" ? t("actRetry") : t("actResume");
+  const detail = `${d.fileName}\n${hostOf(d.url)}\n${formatBytes(d.downloaded, language)} / ${size}${d.error ? `\n${d.error}` : ""}`;
   return (
-    <div
-      className={`mn-row ${d.state}${isSelected ? " sel" : ""}`}
-      onMouseDown={(e) => {
-        if (
-          e.button !== 0 ||
-          (e.target as HTMLElement).closest("button, input, label")
-        )
-          return;
-        actions.select(
-          d.id,
-          e.shiftKey ? "range" : e.ctrlKey || e.metaKey ? "toggle" : "single",
-        );
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        if (!isSelected) actions.select(d.id, "single");
-        actions.menu(e, d);
-      }}
-    >
-      <label
-        className="mn-select"
-        title={t("selectDownload", { name: d.fileName })}
-      >
-        <input
-          type="checkbox"
-          aria-label={t("selectDownload", { name: d.fileName })}
-          checked={isSelected}
-          onChange={() => actions.select(d.id, "toggle")}
-        />
-        <span aria-hidden="true">
-          {d.torrent ? (
-            <Icon name="magnet" size={18} />
-          ) : (
-            ext || <Icon name="file" size={18} />
-          )}
-        </span>
-      </label>
-      <div className="mn-main">
-        <button
-          type="button"
-          className="mn-name"
-          title={`${d.fileName} — ${t("pwDetails")}`}
-          onClick={() => actions.details(d)}
-        >
-          {d.fileName}
-        </button>
-        <div className="mn-meta">
-          <span className="mn-source" title={`${status} · ${source}`}>
-            <span className={d.state === "failed" ? "mn-error" : ""}>
-              {status}
-            </span>{" "}
-            · {source}
-          </span>
-          <span className="mn-size">{size}</span>
-        </div>
-        <div
-          className={`mn-line${value == null && running ? " indeterminate" : ""}`}
-          role="progressbar"
-          aria-label={d.fileName}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={value ?? undefined}
-          aria-valuetext={
-            value == null ? t("unknownSize") : `${Math.floor(value)}%`
-          }
-        >
-          <i style={{ width: `${value ?? 0}%` }} />
-        </div>
-      </div>
-      <div className="mn-num">
-        <b>{value == null ? "—" : `${Math.floor(value)}%`}</b>
-        <span>
-          {d.seeding
-            ? `↑ ${formatSpeed(d.uploadSpeed, language)}`
-            : running
-              ? formatSpeed(d.speed, language)
-              : "—"}
-        </span>
-      </div>
-      <div className="mn-actions">
-        <button
-          type="button"
-          className="mn-act"
-          disabled={d.stopping}
-          onClick={() => actions.primary(d)}
-        >
-          {action}
-        </button>
-        <button
-          type="button"
-          className="mn-more"
-          aria-label={`${t("more")}: ${d.fileName}`}
-          aria-haspopup="menu"
-          onClick={(e) => {
-            const box = e.currentTarget.getBoundingClientRect();
-            actions.menu(
-              { clientX: box.right - 220, clientY: box.bottom + 4 },
-              d,
-            );
-          }}
-        >
-          <Icon name="more" size={18} />
-        </button>
-      </div>
-    </div>
+    <tr className={`${d.state}${isSelected ? " sel" : ""}`} aria-selected={isSelected}
+      onMouseDown={(event) => { if (event.button !== 0 || (event.target as HTMLElement).closest("button, input, label")) return; actions.select(d.id, event.shiftKey ? "range" : event.ctrlKey || event.metaKey ? "toggle" : "single"); }}
+      onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button, input")) actions.details(d); }}
+      onContextMenu={(event) => { event.preventDefault(); if (!isSelected) actions.select(d.id, "single"); actions.menu(event, d); }}>
+      <td className="idm-check-cell"><input type="checkbox" checked={isSelected} aria-label={t("selectDownload", { name: d.fileName })} onChange={() => actions.select(d.id, "toggle")} /></td>
+      <td title={detail}><div className="idm-file-cell"><span className="idm-extension" aria-hidden="true">{d.torrent ? <Icon name="magnet" size={12} /> : extension || <Icon name={categoryIcon[d.category]} size={12} />}</span><button type="button" className="idm-file-name" onClick={(event) => actions.select(d.id, event.shiftKey ? "range" : event.ctrlKey || event.metaKey ? "toggle" : "single")} onDoubleClick={() => actions.details(d)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); actions.details(d); } }}>{d.fileName}</button></div></td>
+      <td title={`${formatBytes(d.downloaded, language)} / ${size}`}>{size}</td>
+      <td><button type="button" className={`idm-progress-status${d.error ? " has-error" : ""}`} onClick={() => actions.details(d)} title={d.error ?? status}>{value != null && <i style={{ width: `${Math.min(100, value)}%` }} />}<span>{d.error ? <Icon name="alert" size={11} /> : d.state === "completed" ? <Icon name="tick" size={11} /> : null}{value == null || d.state === "completed" ? "" : `${Math.floor(value)}%`}{plainDownloading && value != null ? "" : `${value == null || d.state === "completed" ? "" : " · "}${status}`}</span></button></td>
+      <td>{d.seeding ? `↑ ${formatSpeed(d.uploadSpeed, language)}` : running && !d.checking && !d.processing ? formatSpeed(d.speed, language) : "—"}</td>
+      <td title={d.eta == null ? undefined : formatHuman(d.eta, language)}>{running && !d.checking && !d.processing && d.eta != null ? formatHuman(d.eta, language) : "—"}</td>
+      <td className="idm-row-actions"><button type="button" className="idm-row-action" disabled={d.stopping} onClick={() => actions.primary(d)} aria-label={`${action}: ${d.fileName}`} title={action}><Icon name={running || d.state === "queued" ? "pause" : d.state === "completed" ? "open" : d.state === "failed" ? "retry" : "play"} size={13} /></button><button type="button" className="idm-row-action" aria-label={`${t("more")}: ${d.fileName}`} aria-haspopup="menu" onClick={(event) => { const box = event.currentTarget.getBoundingClientRect(); actions.menu({ clientX: box.right - 220, clientY: box.bottom + 4 }, d); }}><Icon name="more" size={13} /></button></td>
+    </tr>
   );
 }

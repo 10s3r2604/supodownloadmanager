@@ -6,8 +6,9 @@
 
 const DEFAULT_PORT = 17360;
 const PING_CACHE_MS = 5000;
-const PREFETCH_CACHE_MS = 60_000;
-const MEDIA_TIMEOUT_MS = 180_000;
+// Adding a video can read the page again or fetch ffmpeg first.
+const MEDIA_ADD_TIMEOUT_MS = 180_000;
+const KEEP_AWAKE_MS = 20_000;
 const DEFAULT_PREFS = { capture: true, videoButton: true, magnets: true, port: DEFAULT_PORT, minSizeMb: 0 };
 
 // Sites where the video button and menu stay away. The Chrome Web Store
@@ -36,11 +37,19 @@ function videoAllowed(pageUrl) {
   }
 }
 
+function isXPage(pageUrl) {
+  try {
+    return ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"].includes(new URL(pageUrl).hostname);
+  } catch { return false; }
+}
+
 let lastPing = { at: 0, status: null };
+let pingRequest = 0;
 let cachedBrowser = null;
 // Links given back to the browser because SDM could not take them.
 const givenBack = new Set();
-const prefetchedPages = new Map();
+const captureJobs = new Map();
+const capturedDownloads = new Set();
 
 async function prefs() {
   return chrome.storage.local.get(DEFAULT_PREFS);
@@ -70,7 +79,7 @@ async function isBrave() {
   }
 }
 
-async function callApp(path, body, timeout = 2500) {
+async function callApp(path, body, timeout = 2500, extraHeaders = {}) {
   const { port } = await prefs();
   return fetch(`http://127.0.0.1:${port}${path}`, {
     method: body ? "POST" : "GET",
@@ -78,6 +87,7 @@ async function callApp(path, body, timeout = 2500) {
       "Content-Type": "application/json",
       "X-SDM-Client": "extension",
       "X-SDM-Browser": await browserId(),
+      ...extraHeaders,
     },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(timeout),
@@ -87,6 +97,7 @@ async function callApp(path, body, timeout = 2500) {
 /** Asks the app whether it is running. Returns its status or `null`. */
 async function ping(fresh = false) {
   if (!fresh && Date.now() - lastPing.at < PING_CACHE_MS) return lastPing.status;
+  const request = ++pingRequest;
   let status = null;
   try {
     const response = await callApp("/api/ping");
@@ -94,6 +105,9 @@ async function ping(fresh = false) {
   } catch {
     // The app is not running.
   }
+  // A slow startup check on the previous port must not overwrite a newer
+  // successful connection and hide the video button for its cache interval.
+  if (request !== pingRequest) return lastPing.status;
   lastPing = { at: Date.now(), status };
   chrome.action.setTitle({
     title: status
@@ -129,9 +143,12 @@ function wanted(item, status, settings) {
   const size = sizeOf(item);
   if (settings.minSizeMb > 0 && size > 0 && size < settings.minSizeMb * 1024 * 1024) return false;
 
-  const extensions = status.captureExtensions?.length ? status.captureExtensions : FALLBACK_EXTENSIONS;
-  const ext = extensionOf(item.filename) || extensionOf(url);
-  if (ext && extensions.includes(ext)) return true;
+  const extensions = Array.isArray(status.captureExtensions) ? status.captureExtensions : FALLBACK_EXTENSIONS;
+  const names = [item.filename, item.url, item.finalUrl].filter(Boolean);
+  const suffixes = names.map(extensionOf).filter(Boolean);
+  if (suffixes.some((ext) => extensions.includes(ext))) return true;
+  if (suffixes.length) return false;
+  if (!extensions.length) return false;
   return CAPTURE_MIME.test(item.mime || "");
 }
 
@@ -182,6 +199,9 @@ async function cookieList(url) {
 /** Sends a page with a video to the app. Returns whether the app took it. */
 async function handOverVideo({ pageUrl, title, mediaUrl, referrer }) {
   if (!videoAllowed(pageUrl)) return false;
+    // X videos are selected in the page menu. Never send its Home feed to
+    // the desktop picker, including messages from an older content script.
+    if (isXPage(pageUrl)) return false;
   try {
     const response = await callApp("/api/media", {
       pageUrl,
@@ -197,31 +217,37 @@ async function handOverVideo({ pageUrl, title, mediaUrl, referrer }) {
   }
 }
 
-/** Reads qualities or starts the chosen download without opening the app dialog. */
+/** Short requests let content scripts resume jobs after an MV3 worker restart. */
 async function videoRequest(message, sender) {
-  const { pageUrl } = message;
-  if (
-    !/^https?:/i.test(pageUrl || "") ||
-    !videoAllowed(pageUrl) ||
-    !videoAllowed(sender.url || sender.tab?.url)
-  ) {
-    return { ok: false, error: chrome.i18n.getMessage("videoUnavailable") };
-  }
-  const [settings, status] = await Promise.all([prefs(), ping()]);
-  if (!settings.videoButton || !status?.enabled || !status?.media) {
-    return { ok: false, error: chrome.i18n.getMessage("statusOffline") };
-  }
-  const prefetch = message.type === "video-prefetch";
-  const key = pageUrl.split("#")[0];
-  const now = Date.now();
-  for (const [page, time] of prefetchedPages) {
-    if (now - time >= PREFETCH_CACHE_MS) prefetchedPages.delete(page);
-  }
-  if (prefetch) {
-    if (prefetchedPages.has(key)) return { ok: true };
-    prefetchedPages.set(key, now);
-  }
+  const probeHeaders = {
+    "X-SDM-Probe-Owner": `${chrome.runtime.id}:${sender.tab?.id ?? "extension"}:${sender.frameId ?? 0}:${sender.documentId || ""}`,
+  };
+  const statusRequest = message.type === "video-probe-status";
+  const cancel = message.type === "video-probe-cancel";
   try {
+    if (statusRequest || cancel) {
+      const response = await callApp(cancel ? "/api/media/probe/cancel" : "/api/media/probe/status",
+        { clientId: message.clientId }, 2500, probeHeaders);
+      if (!response.ok) throw new Error((await response.text()) || chrome.i18n.getMessage("videoFailed"));
+      if (cancel) return { ok: true };
+      const result = await response.json();
+      return result.state === "error" ? { ok: false, error: result.error } : { ok: true, ...result };
+    }
+    const { pageUrl } = message;
+    if (isXPage(pageUrl) && !/^\/(?:[^/]+\/status|i\/web\/status|statuses)\/\d+(?:\/|$)/.test(new URL(pageUrl).pathname)) {
+      return { ok: false, error: chrome.i18n.getMessage("videoPostNotFound") };
+    }
+    if (!/^https?:/i.test(pageUrl || "") || !videoAllowed(pageUrl) || !videoAllowed(sender.url || sender.tab?.url)) {
+      return { ok: false, error: chrome.i18n.getMessage("videoUnavailable") };
+    }
+    const [settings, status] = await Promise.all([prefs(), ping()]);
+    if (!settings.videoButton || !status?.enabled || !status?.media) {
+      return { ok: false, error: chrome.i18n.getMessage("statusOffline") };
+    }
+    const add = message.type === "video-add";
+    // Older desktops retain their legacy protocol for older extensions. A new
+    // extension asks the user to update instead of holding an MV3 fetch open.
+    if (!add && !status.mediaProbeJobs) return { ok: false, error: chrome.i18n.getMessage("videoFailed") };
     const source = {
       pageUrl,
       title: message.title || undefined,
@@ -230,19 +256,35 @@ async function videoRequest(message, sender) {
       cookies: await cookieList(pageUrl),
       userAgent: navigator.userAgent,
     };
-    const add = message.type === "video-add";
-    const response = await callApp(
-      add ? "/api/media/add" : "/api/media/probe",
-      add ? { source, option: message.option } : { ...source, wait: !prefetch },
-      prefetch ? 2500 : MEDIA_TIMEOUT_MS,
-    );
+    const response = add
+      ? await keepingAwake(() => callApp("/api/media/add", { source, option: message.option }, MEDIA_ADD_TIMEOUT_MS, probeHeaders))
+      : await callApp("/api/media/probe/start", { source, clientId: message.clientId }, 2500, probeHeaders);
     if (!response.ok) throw new Error((await response.text()) || chrome.i18n.getMessage("videoFailed"));
-    if (prefetch) return { ok: true };
     const result = await response.json();
-    return add ? { ok: true, id: result.id } : { ok: true, info: result };
+    if (add) return { ok: true, id: result.id };
+    return result.state === "error" ? { ok: false, error: result.error } : { ok: true, ...result };
   } catch (error) {
-    if (prefetch && prefetchedPages.get(key) === now) prefetchedPages.delete(key);
     return { ok: false, error: error instanceof TypeError ? chrome.i18n.getMessage("statusOffline") : error.message };
+  }
+}
+
+/**
+ * Chrome stops an idle extension service worker after 30 seconds, even
+ * while it waits for a reply. Calling an extension API now and then keeps
+ * it awake during a slow request.
+ */
+async function keepingAwake(task) {
+  let done = false;
+  const tick = () => {
+    if (done) return;
+    chrome.runtime.getPlatformInfo?.()?.catch?.(() => {});
+    setTimeout(tick, KEEP_AWAKE_MS)?.unref?.();
+  };
+  setTimeout(tick, KEEP_AWAKE_MS)?.unref?.();
+  try {
+    return await task();
+  } finally {
+    done = true;
   }
 }
 
@@ -284,25 +326,75 @@ async function handOverLinks(tabId, { frameId = 0, selection = false } = {}) {
   }
 }
 
-chrome.downloads.onCreated.addListener(async (item) => {
+// Downloads the user resumed in the browser. Taking one over would erase
+// the part Chrome already has, so they stay in the browser.
+const resumedInBrowser = new Set();
+const STARTED_LONG_AGO_MS = 60_000;
+
+/** A download that was already running before, not one that just started. */
+function alreadyUnderway(item) {
+  if (resumedInBrowser.has(item.id)) return true;
+  const started = Date.parse(item.startTime || "");
+  return item.bytesReceived > 0 && started > 0 && Date.now() - started > STARTED_LONG_AGO_MS;
+}
+
+async function captureDownload(item) {
+  if (capturedDownloads.has(item.id) || item.state !== "in_progress" || !item.filename) return;
+  if (alreadyUnderway(item)) return;
   const settings = await prefs();
-  if (!settings.capture || item.state !== "in_progress") return;
+  if (!settings.capture) return;
   const status = await ping();
   if (!status?.enabled || !wanted(item, status, settings)) return;
 
   try {
     await chrome.downloads.cancel(item.id);
-    await chrome.downloads.erase({ id: item.id });
   } catch {
-    // The download may already be gone.
+    // Do not also create an SDM download if Chrome already completed it.
+    return;
   }
+  capturedDownloads.add(item.id);
+  setTimeout(() => capturedDownloads.delete(item.id), 60_000);
+  await chrome.downloads.erase({ id: item.id }).catch(() => {});
+  // Keep the original request URL and its cookies. GitHub's final release
+  // asset URL is signed, temporary and no longer belongs to github.com.
+  const url = /^https?:/i.test(item.url || "") ? item.url : item.finalUrl;
   const accepted = await handOver({
-    url: item.finalUrl || item.url,
+    url,
     referrer: item.referrer,
     fileName: baseName(item.filename),
     fileSize: sizeOf(item),
   });
-  if (!accepted) giveBack(item.url);
+  if (!accepted) giveBack(url);
+}
+
+// Chrome may create the item before naming it, then fire several events
+// for the same download. Serialize those snapshots to hand it over once.
+function queueCapture(item) {
+  const previous = captureJobs.get(item.id) || Promise.resolve();
+  const job = previous.catch(() => {}).then(() => captureDownload(item));
+  captureJobs.set(item.id, job);
+  job.finally(() => {
+    if (captureJobs.get(item.id) === job) captureJobs.delete(item.id);
+  }).catch(() => {});
+  return job;
+}
+
+chrome.downloads.onCreated.addListener((item) => queueCapture(item));
+chrome.downloads.onDeterminingFilename?.addListener((item, suggest) => {
+  // This event has the response's tentative filename, before Save As.
+  // Always release it, including skipped downloads and connection failures.
+  queueCapture(item).finally(() => suggest()).catch(() => {});
+  return true;
+});
+chrome.downloads.onChanged.addListener(async (delta) => {
+  if (capturedDownloads.has(delta.id)) return;
+  if (delta.state?.previous === "interrupted") {
+    resumedInBrowser.add(delta.id);
+    return;
+  }
+  if (!delta.filename && !delta.url && !delta.finalUrl && !delta.mime && !delta.fileSize && !delta.totalBytes && delta.state?.current !== "in_progress") return;
+  const [item] = await chrome.downloads.search({ id: delta.id }).catch(() => []);
+  if (item) await queueCapture(item);
 });
 
 function createMenus() {
@@ -365,6 +457,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "sdm-video") {
     const pageUrl = info.frameUrl || info.pageUrl || tab?.url;
     if (!pageUrl || !/^https?:/i.test(pageUrl)) return;
+    if (isXPage(pageUrl)) {
+      if (tab?.id != null) await chrome.tabs.sendMessage(tab.id,
+        { type: "video-open-menu", mediaUrl: info.srcUrl }, { frameId: info.frameId ?? 0 }).catch(() => {});
+      return;
+    }
     await handOverVideo({
       pageUrl,
       title: tab?.title,
@@ -428,7 +525,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       .catch(() => reply({ ok: false, error: chrome.i18n.getMessage("statusOffline") }));
     return true;
   }
-  if (["video-prefetch", "video-probe", "video-add"].includes(message?.type)) {
+  if (["video-prefetch", "video-probe", "video-probe-status", "video-probe-cancel", "video-add"].includes(message?.type)) {
     videoRequest(message, sender).then(reply).catch(() => reply({ ok: false, error: chrome.i18n.getMessage("videoFailed") }));
     return true;
   }

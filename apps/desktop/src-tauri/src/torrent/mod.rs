@@ -1,4 +1,4 @@
-//! BitTorrent downloads from magnet links and `.torrent` files, powered by
+//! Torrent downloads from magnet links and `.torrent` files, powered by
 //! [librqbit](https://github.com/ikatson/rqbit).
 
 mod engine;

@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -107,6 +107,10 @@ pub trait Handler: Send + Sync + 'static {
     fn media(&self, source: MediaSource);
     /// The qualities of a video page (read once, then remembered a while).
     fn probe_media(&self, source: MediaSource) -> BoxFuture<Result<MediaInfo, String>>;
+    /// A cancellable browser interest; dropping it must release only that interest.
+    fn probe_media_browser(&self, source: MediaSource) -> BoxFuture<Result<MediaInfo, String>> {
+        self.probe_media(source)
+    }
     /// Starts downloading a video in one of the qualities found.
     fn add_media(&self, source: MediaSource, option: String) -> BoxFuture<Result<u64, String>>;
     /// The links of a page, for the user to pick from.
@@ -135,6 +139,7 @@ struct AddMediaRequest {
 pub struct Bridge {
     handler: Box<dyn Handler>,
     seen: Mutex<HashMap<String, Instant>>,
+    probes: Mutex<HashMap<String, Arc<BrowserProbe>>>,
 }
 
 #[derive(Serialize)]
@@ -144,6 +149,7 @@ struct Ping {
     version: &'static str,
     /// The app downloads videos from web pages (`/api/media`).
     media: bool,
+    media_probe_jobs: bool,
     /// The app takes magnet links in `/api/download`.
     torrent: bool,
     /// The app takes the links of a page (`/api/links`).
@@ -157,6 +163,7 @@ impl Bridge {
         Arc::new(Self {
             handler: Box::new(handler),
             seen: Mutex::new(HashMap::new()),
+            probes: Mutex::new(HashMap::new()),
         })
     }
 
@@ -176,6 +183,9 @@ impl Bridge {
             .route("/api/download", post(download))
             .route("/api/media", post(media))
             .route("/api/media/probe", post(media_probe))
+            .route("/api/media/probe/start", post(media_probe_start))
+            .route("/api/media/probe/status", post(media_probe_status))
+            .route("/api/media/probe/cancel", post(media_probe_cancel))
             .route("/api/media/add", post(media_add))
             .route("/api/links", post(links))
             .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
@@ -230,6 +240,7 @@ async fn ping(State(bridge): State<Arc<Bridge>>, headers: HeaderMap) -> Response
         app: "sdm",
         version: env!("CARGO_PKG_VERSION"),
         media: true,
+        media_probe_jobs: true,
         torrent: true,
         links: true,
         config: bridge.handler.config(),
@@ -301,7 +312,7 @@ async fn media_probe(
     if let Some(refused) = refuse_media(&bridge, &headers, &request.source.page_url) {
         return refused;
     }
-    let probe = bridge.handler.probe_media(request.source);
+    let probe = bridge.handler.probe_media_browser(request.source);
     if !request.wait {
         tokio::spawn(async move {
             let _ = probe.await;
@@ -312,6 +323,242 @@ async fn media_probe(
         Ok(info) => Json(info).into_response(),
         Err(error) => (StatusCode::UNPROCESSABLE_ENTITY, error).into_response(),
     }
+}
+
+/// A client ID is an opaque capability held by one content-script document.
+/// Origin and owner headers isolate tabs, frames, profiles and extensions.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProbeClient {
+    client_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartProbeRequest {
+    source: MediaSource,
+    client_id: String,
+}
+
+struct BrowserProbe {
+    fingerprint: Option<u64>,
+    touched: Mutex<tokio::time::Instant>,
+    result: Mutex<Option<Result<MediaInfo, String>>>,
+    cancel: tokio::sync::watch::Sender<bool>,
+}
+
+const BROWSER_PROBE_LEASE: Duration = Duration::from_secs(20);
+const BROWSER_PROBE_TIMEOUT: Duration = Duration::from_secs(300);
+const BROWSER_PROBE_KEEP: Duration = Duration::from_secs(60);
+const BROWSER_PROBE_LIMIT: usize = 128;
+
+fn probe_client_key(
+    bridge: &Bridge,
+    headers: &HeaderMap,
+    client_id: &str,
+) -> Result<String, (StatusCode, &'static str)> {
+    if !from_extension(headers) {
+        return Err((StatusCode::FORBIDDEN, "video probe forbidden"));
+    }
+    bridge.remember(headers);
+    if !bridge.handler.config().enabled {
+        return Err((StatusCode::CONFLICT, "browser integration is turned off"));
+    }
+    let owner = headers
+        .get("x-sdm-probe-owner")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    if owner.is_empty()
+        || owner.len() > 200
+        || client_id.is_empty()
+        || client_id.len() > 100
+        || !client_id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-')
+    {
+        return Err((StatusCode::BAD_REQUEST, "invalid video probe client"));
+    }
+    let origin = headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let browser = headers
+        .get(BROWSER_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    Ok(format!("{origin}|{browser}|{owner}|{client_id}"))
+}
+
+fn prune_browser_probes(probes: &mut HashMap<String, Arc<BrowserProbe>>) {
+    probes.retain(|_, job| {
+        let finished = job
+            .result
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some();
+        let keep = if finished {
+            BROWSER_PROBE_KEEP
+        } else {
+            BROWSER_PROBE_LEASE
+        };
+        if job
+            .touched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .elapsed()
+            > keep
+        {
+            job.cancel.send_replace(true);
+            false
+        } else {
+            true
+        }
+    });
+}
+
+fn browser_probe_response(job: &BrowserProbe) -> Response {
+    match job
+        .result
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+    {
+        None => Json(serde_json::json!({ "state": "pending" })).into_response(),
+        Some(Ok(info)) => {
+            Json(serde_json::json!({ "state": "done", "info": info })).into_response()
+        }
+        Some(Err(error)) => {
+            Json(serde_json::json!({ "state": "error", "error": error })).into_response()
+        }
+    }
+}
+
+async fn media_probe_start(
+    State(bridge): State<Arc<Bridge>>,
+    headers: HeaderMap,
+    Json(request): Json<StartProbeRequest>,
+) -> Response {
+    if let Some(refused) = refuse_media(&bridge, &headers, &request.source.page_url) {
+        return refused;
+    }
+    let key = match probe_client_key(&bridge, &headers, &request.client_id) {
+        Ok(key) => key,
+        Err(response) => return response.into_response(),
+    };
+    let fingerprint = crate::media::source_key(&request.source, "");
+    let job = {
+        let mut jobs = bridge.probes.lock().unwrap_or_else(PoisonError::into_inner);
+        prune_browser_probes(&mut jobs);
+        if let Some(job) = jobs.get(&key) {
+            if job
+                .fingerprint
+                .is_some_and(|existing| existing != fingerprint)
+            {
+                return (StatusCode::CONFLICT, "video probe client already used").into_response();
+            }
+            *job.touched.lock().unwrap_or_else(PoisonError::into_inner) =
+                tokio::time::Instant::now();
+            return browser_probe_response(job);
+        }
+        if jobs.len() >= BROWSER_PROBE_LIMIT {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                "video discovery is busy; try again shortly",
+            )
+                .into_response();
+        }
+        let job = Arc::new(BrowserProbe {
+            fingerprint: Some(fingerprint),
+            touched: Mutex::new(tokio::time::Instant::now()),
+            result: Mutex::new(None),
+            cancel: tokio::sync::watch::channel(false).0,
+        });
+        jobs.insert(key, job.clone());
+        job
+    };
+    let probe = bridge.handler.probe_media_browser(request.source);
+    let running = job.clone();
+    tokio::spawn(async move {
+        let mut cancelled = running.cancel.subscribe();
+        let abandoned = async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                if running
+                    .touched
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .elapsed()
+                    > BROWSER_PROBE_LEASE
+                {
+                    break;
+                }
+            }
+        };
+        let result = tokio::select! {
+            biased;
+            _ = crate::media::wait_cancelled(&mut cancelled) => Err("video discovery cancelled".into()),
+            _ = abandoned => Err("video discovery expired; try again".into()),
+            _ = tokio::time::sleep(BROWSER_PROBE_TIMEOUT) => Err("the site took too long to answer; try again".into()),
+            result = probe => result,
+        };
+        *running
+            .result
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(result);
+        *running
+            .touched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = tokio::time::Instant::now();
+    });
+    browser_probe_response(&job)
+}
+
+async fn media_probe_status(
+    State(bridge): State<Arc<Bridge>>,
+    headers: HeaderMap,
+    Json(request): Json<ProbeClient>,
+) -> Response {
+    let key = match probe_client_key(&bridge, &headers, &request.client_id) {
+        Ok(key) => key,
+        Err(response) => return response.into_response(),
+    };
+    let mut jobs = bridge.probes.lock().unwrap_or_else(PoisonError::into_inner);
+    prune_browser_probes(&mut jobs);
+    let Some(job) = jobs.get(&key) else {
+        return (StatusCode::NOT_FOUND, "video discovery expired; try again").into_response();
+    };
+    *job.touched.lock().unwrap_or_else(PoisonError::into_inner) = tokio::time::Instant::now();
+    browser_probe_response(job)
+}
+
+async fn media_probe_cancel(
+    State(bridge): State<Arc<Bridge>>,
+    headers: HeaderMap,
+    Json(request): Json<ProbeClient>,
+) -> Response {
+    let key = match probe_client_key(&bridge, &headers, &request.client_id) {
+        Ok(key) => key,
+        Err(response) => return response.into_response(),
+    };
+    let mut jobs = bridge.probes.lock().unwrap_or_else(PoisonError::into_inner);
+    prune_browser_probes(&mut jobs);
+    // Keep a short tombstone: close may arrive while /start is collecting cookies.
+    if let Some(job) = jobs.get(&key) {
+        job.cancel.send_replace(true);
+        *job.result.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(Err("video discovery cancelled".into()));
+    } else if jobs.len() < BROWSER_PROBE_LIMIT {
+        jobs.insert(
+            key,
+            Arc::new(BrowserProbe {
+                fingerprint: None,
+                touched: Mutex::new(tokio::time::Instant::now()),
+                result: Mutex::new(Some(Err("video discovery cancelled".into()))),
+                cancel: tokio::sync::watch::channel(true).0,
+            }),
+        );
+    }
+    StatusCode::ACCEPTED.into_response()
 }
 
 async fn media_add(
@@ -385,6 +632,12 @@ mod tests {
 
         fn probe_media(&self, source: MediaSource) -> BoxFuture<Result<MediaInfo, String>> {
             Box::pin(async move {
+                if source.page_url.contains("slow") {
+                    tokio::time::sleep(Duration::from_secs(45)).await;
+                }
+                if source.page_url.contains("never") {
+                    std::future::pending::<()>().await;
+                }
                 if source.page_url.contains("broken") {
                     return Err("Unsupported URL".into());
                 }
@@ -719,5 +972,219 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    async fn job_request(
+        bridge: &Arc<Bridge>,
+        route: &str,
+        owner: &str,
+        origin: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let response = bridge
+            .clone()
+            .router()
+            .oneshot(
+                Request::post(route)
+                    .header(CLIENT_HEADER, "extension")
+                    .header(BROWSER_HEADER, "chrome")
+                    .header(header::ORIGIN, origin)
+                    .header("x-sdm-probe-owner", owner)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    fn probe_bridge() -> Arc<Bridge> {
+        Bridge::new(Recorder {
+            enabled: true,
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn short_job_polls_keep_discovery_alive_beyond_thirty_seconds() {
+        let bridge = probe_bridge();
+        let owner = "extension:17:2:document";
+        let origin = "chrome-extension://extension";
+        let (_, state) = job_request(&bridge, "/api/media/probe/start", owner, origin,
+            serde_json::json!({"clientId":"long-job", "source":{"pageUrl":"https://slow.example.org/clip"}})).await;
+        assert_eq!(state["state"], "pending");
+        tokio::task::yield_now().await;
+        for _ in 0..4 {
+            tokio::time::advance(Duration::from_secs(10)).await;
+            let (status, state) = job_request(
+                &bridge,
+                "/api/media/probe/status",
+                owner,
+                origin,
+                serde_json::json!({"clientId":"long-job"}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(state["state"], "pending");
+        }
+        tokio::time::advance(Duration::from_secs(6)).await;
+        tokio::task::yield_now().await;
+        let (_, state) = job_request(
+            &bridge,
+            "/api/media/probe/status",
+            owner,
+            origin,
+            serde_json::json!({"clientId":"long-job"}),
+        )
+        .await;
+        assert_eq!(state["state"], "done");
+        assert_eq!(state["info"]["title"], "Clip");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn job_ownership_is_scoped_to_document_and_extension_origin() {
+        let bridge = probe_bridge();
+        let origin = "chrome-extension://extension";
+        let start = serde_json::json!({"clientId":"shared-id", "source":{"pageUrl":"https://never.example.org/clip"}});
+        for owner in ["extension:1:0:a", "extension:2:0:b"] {
+            assert_eq!(
+                job_request(
+                    &bridge,
+                    "/api/media/probe/start",
+                    owner,
+                    origin,
+                    start.clone()
+                )
+                .await
+                .0,
+                StatusCode::OK
+            );
+        }
+        let client = serde_json::json!({"clientId":"shared-id"});
+        assert_eq!(
+            job_request(
+                &bridge,
+                "/api/media/probe/cancel",
+                "extension:1:0:a",
+                origin,
+                client.clone()
+            )
+            .await
+            .0,
+            StatusCode::ACCEPTED
+        );
+        let (_, first) = job_request(
+            &bridge,
+            "/api/media/probe/status",
+            "extension:1:0:a",
+            origin,
+            client.clone(),
+        )
+        .await;
+        let (_, second) = job_request(
+            &bridge,
+            "/api/media/probe/status",
+            "extension:2:0:b",
+            origin,
+            client.clone(),
+        )
+        .await;
+        assert_eq!(first["state"], "error");
+        assert_eq!(second["state"], "pending");
+        assert_eq!(
+            job_request(
+                &bridge,
+                "/api/media/probe/status",
+                "extension:2:0:b",
+                "chrome-extension://unrelated",
+                client.clone()
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            job_request(
+                &bridge,
+                "/api/media/probe/cancel",
+                "extension:2:0:b",
+                "https://web.example",
+                client
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn abandoned_jobs_expire_and_cancel_before_start_is_remembered() {
+        let bridge = probe_bridge();
+        let owner = "extension:17:0:document";
+        let origin = "chrome-extension://extension";
+        let client = serde_json::json!({"clientId":"closed-job"});
+        assert_eq!(
+            job_request(&bridge, "/api/media/probe/cancel", owner, origin, client)
+                .await
+                .0,
+            StatusCode::ACCEPTED
+        );
+        let (_, state) = job_request(&bridge, "/api/media/probe/start", owner, origin,
+            serde_json::json!({"clientId":"closed-job", "source":{"pageUrl":"https://never.example.org/clip"}})).await;
+        assert_eq!(state["state"], "error");
+        assert!(state["error"].as_str().unwrap().contains("cancelled"));
+        job_request(&bridge, "/api/media/probe/start", owner, origin,
+            serde_json::json!({"clientId":"abandoned-job", "source":{"pageUrl":"https://never.example.org/clip"}})).await;
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(26)).await;
+        tokio::task::yield_now().await;
+        let (status, state) = job_request(
+            &bridge,
+            "/api/media/probe/status",
+            owner,
+            origin,
+            serde_json::json!({"clientId":"abandoned-job"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(state["state"], "error");
+        assert!(state["error"].as_str().unwrap().contains("expired"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn repeated_start_deduplicates_but_cannot_replace_authentication_context() {
+        let bridge = probe_bridge();
+        let owner = "extension:17:0:document";
+        let origin = "chrome-extension://extension";
+        let start = serde_json::json!({"clientId":"repeat-job", "source":{"pageUrl":"https://never.example.org/clip"}});
+        for _ in 0..2 {
+            assert_eq!(
+                job_request(
+                    &bridge,
+                    "/api/media/probe/start",
+                    owner,
+                    origin,
+                    start.clone()
+                )
+                .await
+                .0,
+                StatusCode::OK
+            );
+        }
+        assert_eq!(bridge.probes.lock().unwrap().len(), 1);
+        let changed = serde_json::json!({"clientId":"repeat-job", "source":{"pageUrl":"https://never.example.org/clip", "userAgent":"different profile"}});
+        assert_eq!(
+            job_request(&bridge, "/api/media/probe/start", owner, origin, changed)
+                .await
+                .0,
+            StatusCode::CONFLICT
+        );
     }
 }

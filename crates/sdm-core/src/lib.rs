@@ -29,6 +29,7 @@
 #![forbid(unsafe_code)]
 
 mod checksum;
+mod completion;
 mod engine;
 mod error;
 mod filename;
@@ -38,13 +39,16 @@ mod segment;
 mod state;
 
 pub use checksum::sha256_file;
+pub use completion::{CompletionReceipt, acknowledge_completion, reconcile_completion};
 pub use engine::{
     ClientConfig, Destination, DownloadControl, DownloadHandle, DownloadOptions, DownloadRequest,
-    Downloader, Fetched, Outcome, Phase, Progress, ProxyConfig, SegmentProgress,
+    Downloader, Fetched, Outcome, Phase, Progress, ProxyConfig, SegmentProgress, cleanup_partial,
+    migrate_partial,
 };
 pub use error::{Error, Result};
 pub use filename::{candidates as path_candidates, sanitize as sanitize_file_name};
 pub use probe::RemoteInfo;
 pub use state::{
-    part_path as partial_data_path, retarget_partial, state_path as partial_state_path,
+    PartialFiles, part_path as partial_data_path, retarget_partial, retarget_partial_in,
+    state_path as partial_state_path,
 };

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use sdm_core::RemoteInfo;
 use serde::Serialize;
 use tauri::path::BaseDirectory;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -18,7 +18,7 @@ use crate::settings::Settings;
 use crate::torrent::{AddTorrentRequest, TorrentFile, TorrentInfo, TorrentSource};
 use crate::tray;
 use crate::windows::WhenDone;
-use crate::{AppState, PowerCountdown};
+use crate::{AddPrompt, AppState, PowerCountdown};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -36,6 +36,20 @@ pub async fn list_downloads(state: State<'_, AppState>) -> Result<Vec<DownloadVi
 #[tauri::command]
 pub async fn get_download(state: State<'_, AppState>, id: u64) -> Result<Option<DownloadView>> {
     Ok(state.manager.get(id))
+}
+
+/// Returns only the prompt owned by the calling confirmation window.
+#[tauri::command]
+pub async fn get_add_prompt(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<AddPrompt> {
+    let id = crate::windows::add_window_id(window.label())
+        .ok_or_else(|| "This window has no browser download to confirm".to_owned())?;
+    state
+        .pending_add
+        .get(id)
+        .ok_or_else(|| "This browser download is no longer pending".to_owned())
 }
 
 /// Opens the progress window of a download.
@@ -107,7 +121,7 @@ pub async fn media_probe_stage(
     Ok(state.prober.stage(&page_url))
 }
 
-/// Stops discovery for this page, including any browser prefetch sharing it.
+/// Releases native dialog interests; browser jobs release their own interests.
 #[tauri::command]
 pub async fn cancel_media_probe(state: State<'_, AppState>, page_url: String) -> Result<()> {
     state.prober.cancel(&page_url);
@@ -314,8 +328,8 @@ pub fn show_in_folder(app: AppHandle, state: State<'_, AppState>, id: u64) -> Re
 }
 
 #[tauri::command]
-pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings> {
-    Ok(state.manager.settings())
+pub async fn get_settings(app: AppHandle, state: State<'_, AppState>) -> Result<Settings> {
+    state.startup.read(&app, &state.manager)
 }
 
 #[tauri::command]
@@ -324,14 +338,39 @@ pub async fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<Settings> {
-    let settings = settings.sanitized();
-    settings
-        .save(&state.data_dir.join("settings.json"))
+    let mut settings = settings.sanitized();
+    if settings.temp_dir.as_os_str().is_empty() {
+        settings.temp_dir = app
+            .path()
+            .app_local_data_dir()
+            .map_err(text_error)?
+            .join("temp");
+    }
+    if !settings.temp_dir.is_absolute() {
+        return Err("Choose an absolute path for the temporary folder".into());
+    }
+    std::fs::create_dir_all(&settings.temp_dir).map_err(text_error)?;
+    let probe = settings.temp_dir.join(format!(
+        ".sdm-write-check-{}-{}.tmp",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
         .map_err(text_error)?;
-    state
-        .manager
-        .update_settings(settings.clone())
-        .map_err(text_error)?;
+    drop(file);
+    std::fs::remove_file(probe).map_err(text_error)?;
+    state.startup.save(
+        &app,
+        &state.manager,
+        &state.data_dir.join("settings.json"),
+        &settings,
+    )?;
     tray::set_language(&app, settings.resolved_language());
     Ok(settings)
 }
@@ -352,7 +391,7 @@ pub async fn pick_torrent_file(app: AppHandle) -> Option<String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
-        .add_filter("BitTorrent", &["torrent"])
+        .add_filter("Torrent", &["torrent"])
         .pick_file(move |file| {
             let _ = sender.send(file);
         });

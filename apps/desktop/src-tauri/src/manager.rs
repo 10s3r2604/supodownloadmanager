@@ -1,6 +1,6 @@
 //! The download list: a queue of downloads that survives restarts.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -45,6 +45,10 @@ pub struct Record {
     pub headers: Vec<(String, String)>,
     pub file_name: String,
     pub path: PathBuf,
+    /// Root used for this download's temporary files. Missing in old lists;
+    /// legacy HTTP sidecars migrate at startup, legacy media keeps its workdir.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temp_dir: Option<PathBuf>,
     pub size: Option<u64>,
     pub downloaded: u64,
     pub resumable: bool,
@@ -60,7 +64,7 @@ pub struct Record {
     /// page then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaSpec>,
-    /// Set for BitTorrent downloads; `url` is the magnet link or `.torrent`
+    /// Set for Torrent downloads; `url` is the magnet link or `.torrent`
     /// address then, and `path` the file or folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub torrent: Option<TorrentSpec>,
@@ -103,7 +107,7 @@ pub struct DownloadView {
     pub media: bool,
     /// The data is there and is being put together (video and audio merged).
     pub processing: bool,
-    /// A BitTorrent download; `connections` counts peers then.
+    /// A Torrent download; `connections` counts peers then.
     pub torrent: bool,
     /// Sharing a finished torrent with others.
     pub seeding: bool,
@@ -195,6 +199,12 @@ pub enum Notice {
 
 pub type Notify = Box<dyn Fn(Notice) + Send + Sync>;
 
+#[derive(Debug)]
+pub enum UpdatePreparationError {
+    Busy,
+    Persistence(std::io::Error),
+}
+
 pub struct Manager {
     inner: Mutex<Inner>,
     store: PathBuf,
@@ -203,16 +213,24 @@ pub struct Manager {
     torrents: Arc<TorrentEngine>,
     runtime: Handle,
     notify: Notify,
+    recovery_notice: Option<String>,
 }
 
 struct Inner {
     records: Vec<Record>,
     active: HashMap<u64, Active>,
+    /// Legacy file moves in progress; removal waits for the move to finish.
+    migrating: HashMap<u64, Option<bool>>,
+    cleanup_pending: HashSet<u64>,
+    cleanup_running: HashSet<u64>,
+    cleanup_remove: HashMap<u64, bool>,
     downloader: Downloader,
     settings: Settings,
     next_id: u64,
     dirty: bool,
     closing: bool,
+    /// An updater holds scheduling stopped after a successful durable save.
+    update_prepared: bool,
     queues: Vec<Queue>,
     /// What to do once every download is done; not remembered.
     after_all: PowerAction,
@@ -250,14 +268,6 @@ impl Job {
             Job::Torrent(control) => control.pause(),
         }
     }
-
-    fn cancel(&self) {
-        match self {
-            Job::File(control) => control.cancel(),
-            Job::Media(control) => control.cancel(),
-            Job::Torrent(control) => control.cancel(),
-        }
-    }
 }
 
 struct Active {
@@ -273,36 +283,96 @@ impl Manager {
     /// when the app closed come back paused.
     pub fn new(
         store: PathBuf,
-        settings: Settings,
+        mut settings: Settings,
         tools: Arc<Tools>,
         torrents: Arc<TorrentEngine>,
         runtime: Handle,
         notify: Notify,
     ) -> anyhow::Result<Arc<Self>> {
+        if settings.temp_dir.as_os_str().is_empty() {
+            settings.temp_dir = store
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("temp");
+        }
         let downloader = Downloader::new(settings.client_config())?;
-        let mut records: Vec<Record> = store::load_json(&store).unwrap_or_default();
+        let loaded =
+            store::load_json_validated::<Vec<Record>>(&store, |records| validate_records(records))?;
+        let mut recovery_notice = loaded.recovery_notice("the download list");
+        let mut records = loaded.value.unwrap_or_default();
         for record in &mut records {
             if matches!(record.state, State::Queued | State::Downloading) {
                 record.state = State::Paused;
             }
         }
-        let next_id = records.iter().map(|r| r.id).max().unwrap_or(0) + 1;
+        let next_id = records
+            .iter()
+            .map(|r| r.id)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("The download list has exhausted its record IDs"))?;
         let queue_store = store.with_file_name("queues.json");
-        let queues = queue::sanitize_all(store::load_json(&queue_store).unwrap_or_default());
+        let loaded = store::load_json_validated(&queue_store, |_| Ok(()))?;
+        if let Some(message) = loaded.recovery_notice("queues") {
+            match &mut recovery_notice {
+                Some(notice) => {
+                    notice.push('\n');
+                    notice.push_str(&message);
+                }
+                None => recovery_notice = Some(message),
+            }
+        }
+        let queues = queue::sanitize_all(loaded.value.unwrap_or_default());
         for record in &mut records {
             if !queues.iter().any(|q| q.id == record.queue) {
                 record.queue = main_queue();
             }
         }
-        Ok(Arc::new(Self {
+        let mut migrations = Vec::new();
+        for record in &mut records {
+            if record.state != State::Completed
+                && record.media.is_none()
+                && record.torrent.is_none()
+                && (sdm_core::partial_data_path(&record.path).exists()
+                    || sdm_core::partial_state_path(&record.path).exists()
+                    || with_suffix(&sdm_core::partial_state_path(&record.path), ".tmp").exists())
+            {
+                record
+                    .temp_dir
+                    .get_or_insert_with(|| settings.temp_dir.clone());
+                migrations.push(record.clone());
+            }
+        }
+        // Remember the destination before moving any bytes. A restart or a
+        // settings change must never strand an interrupted migration.
+        if !migrations.is_empty() {
+            store::save_json(&store, &records)?;
+        }
+        let completed: HashSet<u64> = records
+            .iter()
+            .filter(|r| r.state == State::Completed && r.torrent.is_none())
+            .map(|r| r.id)
+            .collect();
+        let recovering: Vec<Record> = records
+            .iter()
+            .filter(|r| r.state != State::Completed && r.media.is_none() && r.torrent.is_none())
+            .cloned()
+            .collect();
+        let manager = Arc::new(Self {
             inner: Mutex::new(Inner {
                 records,
                 active: HashMap::new(),
+                migrating: recovering.iter().map(|r| (r.id, None)).collect(),
+                cleanup_pending: completed,
+                cleanup_running: HashSet::new(),
+                cleanup_remove: HashMap::new(),
                 downloader,
                 settings,
                 next_id,
                 dirty: false,
                 closing: false,
+                update_prepared: false,
                 queues,
                 after_all: PowerAction::Nothing,
                 checked_at: None,
@@ -313,7 +383,52 @@ impl Manager {
             torrents,
             runtime,
             notify,
-        }))
+            recovery_notice,
+        });
+        // Retry cleanup left behind by a crash after the final file commit.
+        // Never sweep untracked files or paused/failed downloads.
+        manager.retry_cleanup();
+        let this = manager.clone();
+        manager.runtime.spawn(async move {
+            for record in recovering {
+                match sdm_core::reconcile_completion(
+                    &record.path,
+                    record.temp_dir.as_deref(),
+                    &record.id.to_string(),
+                )
+                .await
+                {
+                    Ok(Some(receipt)) => {
+                        this.recovered_completion(record.id, receipt).await;
+                        continue;
+                    }
+                    Err(error) => {
+                        {
+                            let mut inner = this.lock();
+                            if let Some(record) =
+                                inner.records.iter_mut().find(|r| r.id == record.id)
+                            {
+                                record.state = State::Paused;
+                                record.error =
+                                    Some(format!("Could not verify completion: {error}"));
+                                inner.dirty = true;
+                            }
+                        }
+                        this.migration_finished(record.id, Ok(()));
+                        continue;
+                    }
+                    Ok(None) => {}
+                }
+                let result = if migrations.iter().any(|r| r.id == record.id) {
+                    sdm_core::migrate_partial(&record.path, record.temp_dir.as_deref().unwrap())
+                        .await
+                } else {
+                    Ok(())
+                };
+                this.migration_finished(record.id, result);
+            }
+        });
+        Ok(manager)
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -324,16 +439,49 @@ impl Manager {
         self.lock().settings.clone()
     }
 
+    pub fn recovery_notice(&self) -> Option<&str> {
+        self.recovery_notice.as_deref()
+    }
+
     pub fn downloader(&self) -> Downloader {
         self.lock().downloader.clone()
     }
 
     /// Applies new settings to running and future downloads.
-    pub fn update_settings(self: &Arc<Self>, settings: Settings) -> anyhow::Result<()> {
+    #[cfg(test)]
+    pub fn update_settings(self: &Arc<Self>, mut settings: Settings) -> anyhow::Result<()> {
         {
             let mut inner = self.lock();
+            if settings.temp_dir.as_os_str().is_empty() {
+                settings.temp_dir.clone_from(&inner.settings.temp_dir);
+            }
             if settings.proxy != inner.settings.proxy {
                 inner.downloader = Downloader::new(settings.client_config())?;
+            }
+            inner.downloader.set_speed_limit(settings.speed_limit());
+            self.torrents.set_config(settings.torrent_config());
+            inner.settings = settings;
+        }
+        self.schedule();
+        Ok(())
+    }
+
+    /// Validate and persist before changing any running configuration. Keeping
+    /// the lock across the transaction also serializes concurrent UI saves.
+    pub fn save_settings(
+        self: &Arc<Self>,
+        path: &Path,
+        mut settings: Settings,
+    ) -> anyhow::Result<()> {
+        {
+            let mut inner = self.lock();
+            if settings.temp_dir.as_os_str().is_empty() {
+                settings.temp_dir.clone_from(&inner.settings.temp_dir);
+            }
+            let downloader = Downloader::new(settings.client_config())?;
+            settings.save(path)?;
+            if settings.proxy != inner.settings.proxy {
+                inner.downloader = downloader;
             }
             inner.downloader.set_speed_limit(settings.speed_limit());
             self.torrents.set_config(settings.torrent_config());
@@ -361,7 +509,9 @@ impl Manager {
                 };
                 let live = Live {
                     progress: progress.get(&record.id),
-                    stopping: active.is_some_and(|a| a.stopping),
+                    stopping: active.is_some_and(|a| a.stopping)
+                        || inner.migrating.get(&record.id).is_some_and(Option::is_some)
+                        || inner.cleanup_remove.contains_key(&record.id),
                     running_for: active.map_or(Duration::ZERO, |a| a.since.elapsed()),
                     torrent,
                 };
@@ -414,15 +564,17 @@ impl Manager {
 
         let id = {
             let mut inner = self.lock();
+            let rollback = (inner.records.len(), inner.next_id, inner.dirty);
             let queue = inner.queue_id(request.queue.as_deref());
             let path = inner.free_path(&directory, &file_name);
-            let id = inner.next_id;
-            inner.next_id += 1;
+            let id = inner.allocate_id()?;
+            let temp_dir = Some(inner.settings.temp_dir.clone());
             inner.records.push(Record {
                 id,
                 url,
                 headers: request.headers,
                 file_name: file_name_of(&path),
+                temp_dir,
                 path,
                 size: None,
                 downloaded: 0,
@@ -442,7 +594,7 @@ impl Manager {
                 queue,
             });
             inner.dirty = true;
-            self.save(&mut inner);
+            self.save_added(&mut inner, rollback)?;
             id
         };
         self.schedule();
@@ -455,6 +607,7 @@ impl Manager {
         let mut ids = Vec::new();
         {
             let mut inner = self.lock();
+            let rollback = (inner.records.len(), inner.next_id, inner.dirty);
             let queue = inner.queue_id(request.queue.as_deref());
             for link in request.links {
                 let url = link.url.trim().to_owned();
@@ -478,18 +631,27 @@ impl Manager {
                     .filter(|d| !d.as_os_str().is_empty())
                     .unwrap_or_else(|| inner.settings.directory_for(category));
                 let path = inner.free_path(&directory, &file_name);
-                let id = inner.next_id;
-                inner.next_id += 1;
+                let id = match inner.allocate_id() {
+                    Ok(id) => id,
+                    Err(error) => {
+                        inner.records.truncate(rollback.0);
+                        inner.next_id = rollback.1;
+                        inner.dirty = rollback.2;
+                        return Err(error);
+                    }
+                };
                 let mut headers = request.headers.clone();
                 for (name, value) in link.headers {
                     headers.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
                     headers.push((name, value));
                 }
+                let temp_dir = Some(inner.settings.temp_dir.clone());
                 inner.records.push(Record {
                     id,
                     url,
                     headers,
                     file_name: file_name_of(&path),
+                    temp_dir,
                     path,
                     size: None,
                     downloaded: 0,
@@ -514,7 +676,7 @@ impl Manager {
                 return Err("none of these are http or https links".into());
             }
             inner.dirty = true;
-            self.save(&mut inner);
+            self.save_added(&mut inner, rollback)?;
         }
         self.schedule();
         Ok(ids)
@@ -534,8 +696,11 @@ impl Manager {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err(format!("only http and https links are supported: {url}"));
         }
-        let (path, size, old_headers, downloader) = {
+        let (path, temp_dir, size, old_headers, downloader) = {
             let inner = self.lock();
+            if inner.migrating.contains_key(&id) {
+                return Err("temporary files are still being moved; try again shortly".into());
+            }
             let record = inner
                 .records
                 .iter()
@@ -549,6 +714,7 @@ impl Manager {
             }
             (
                 record.path.clone(),
+                record.temp_dir.clone(),
                 record.size,
                 record.headers.clone(),
                 inner.downloader.clone(),
@@ -578,7 +744,7 @@ impl Manager {
                 "the new link is for a different file ({new} bytes instead of {size})"
             ));
         }
-        sdm_core::retarget_partial(&path, &info)
+        sdm_core::retarget_partial_in(&path, temp_dir.as_deref(), &info)
             .await
             .map_err(|error| error.to_string())?;
         {
@@ -625,14 +791,16 @@ impl Manager {
 
         let id = {
             let mut inner = self.lock();
+            let rollback = (inner.records.len(), inner.next_id, inner.dirty);
             let path = inner.free_path(&directory, &file_name);
-            let id = inner.next_id;
-            inner.next_id += 1;
+            let id = inner.allocate_id()?;
+            let temp_dir = Some(inner.settings.temp_dir.clone());
             inner.records.push(Record {
                 id,
                 url: page.to_string(),
                 headers: Vec::new(),
                 file_name: file_name_of(&path),
+                temp_dir,
                 path,
                 size: request.option.size,
                 downloaded: 0,
@@ -652,7 +820,7 @@ impl Manager {
                 queue: main_queue(),
             });
             inner.dirty = true;
-            self.save(&mut inner);
+            self.save_added(&mut inner, rollback)?;
             id
         };
         self.schedule();
@@ -710,6 +878,7 @@ impl Manager {
 
         let id = {
             let mut inner = self.lock();
+            let rollback = (inner.records.len(), inner.next_id, inner.dirty);
             if inner.torrent_download(&info.info_hash).is_some() {
                 return Err("this torrent is already in the download list".into());
             }
@@ -735,13 +904,13 @@ impl Manager {
                 let folder = inner.free_path(&directory, &name);
                 (folder.clone(), folder)
             };
-            let id = inner.next_id;
-            inner.next_id += 1;
+            let id = inner.allocate_id()?;
             inner.records.push(Record {
                 id,
                 url: link,
                 headers: Vec::new(),
                 file_name: file_name_of(&path),
+                temp_dir: None,
                 path,
                 size: Some(size),
                 downloaded: 0,
@@ -765,7 +934,7 @@ impl Manager {
                 queue: main_queue(),
             });
             inner.dirty = true;
-            self.save(&mut inner);
+            self.save_added(&mut inner, rollback)?;
             id
         };
         self.schedule();
@@ -974,16 +1143,24 @@ impl Manager {
     pub fn remove(&self, ids: &[u64], delete_file: bool) {
         let mut inner = self.lock();
         for &id in ids {
+            if inner.cleanup_running.contains(&id) {
+                inner.cleanup_remove.insert(id, delete_file);
+                continue;
+            }
+            if let Some(remove) = inner.migrating.get_mut(&id) {
+                *remove = Some(delete_file);
+                continue;
+            }
             if let Some(active) = inner.active.get_mut(&id) {
                 active.remove = Some(delete_file);
                 active.stopping = true;
-                active.control.cancel();
+                // Preserve partials until the row removal is durably saved.
+                // Cancelling a core job would delete them before that write.
+                active.control.pause();
                 continue;
             }
             if let Some(index) = inner.records.iter().position(|r| r.id == id) {
-                let record = inner.records.remove(index);
-                self.discard(&record, delete_file);
-                inner.dirty = true;
+                self.remove_record(&mut inner, index, delete_file);
             }
         }
         self.save(&mut inner);
@@ -991,11 +1168,17 @@ impl Manager {
 
     /// Copies live progress into the stored records and saves them now and
     /// then. Call this regularly.
-    pub fn tick(&self, save: bool) {
-        let mut inner = self.lock();
-        inner.sync_progress();
+    pub fn tick(self: &Arc<Self>, save: bool) {
+        {
+            let mut inner = self.lock();
+            inner.sync_progress();
+            if save {
+                self.save(&mut inner);
+            }
+        }
         if save {
-            self.save(&mut inner);
+            self.retry_cleanup();
+            self.schedule();
         }
     }
 
@@ -1005,13 +1188,27 @@ impl Manager {
         {
             let mut inner = self.lock();
             inner.closing = true;
+            inner.update_prepared = false;
             for active in inner.active.values_mut() {
                 active.stopping = true;
                 active.control.pause();
             }
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !self.lock().active.is_empty() && Instant::now() < deadline {
+        // Downloads that are putting their finished file in place get longer:
+        // stopping one without range support would lose all of its data.
+        let started = Instant::now();
+        while {
+            let inner = self.lock();
+            let finishing = inner
+                .active
+                .values()
+                .any(|a| a.control.progress().phase == Phase::Finishing);
+            let limit = Duration::from_secs(if finishing { 120 } else { 5 });
+            (!inner.active.is_empty()
+                || !inner.migrating.is_empty()
+                || !inner.cleanup_running.is_empty())
+                && started.elapsed() < limit
+        } {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         {
@@ -1021,6 +1218,57 @@ impl Manager {
             self.save(&mut inner);
         }
         let _ = tokio::time::timeout(Duration::from_secs(5), self.torrents.shutdown()).await;
+    }
+
+    /// Reserve an idle manager for installing an update. Unlike normal quit,
+    /// this never pauses transfers or sharing, and a failed durable save must
+    /// keep the current app running. The scheduling gate and readiness check
+    /// share one lock so an incoming link cannot start between them.
+    pub fn prepare_update(&self) -> Result<(), UpdatePreparationError> {
+        let mut inner = self.lock();
+        if inner.closing
+            || !inner.active.is_empty()
+            || !inner.migrating.is_empty()
+            || !inner.cleanup_pending.is_empty()
+            || !inner.cleanup_running.is_empty()
+            || !inner.cleanup_remove.is_empty()
+            || inner.busy(None)
+            || inner.records.iter().any(|record| {
+                record
+                    .torrent
+                    .as_ref()
+                    .is_some_and(|spec| self.torrents.seeding(&spec.info_hash).is_some())
+            })
+        {
+            return Err(UpdatePreparationError::Busy);
+        }
+        inner.closing = true;
+        inner.sync_progress();
+        let save = store::save_json(&self.store, &inner.records)
+            .and_then(|()| store::save_json(&self.queue_store, &inner.queues));
+        if let Err(error) = save {
+            inner.closing = false;
+            inner.dirty = true;
+            return Err(UpdatePreparationError::Persistence(error));
+        }
+        inner.dirty = false;
+        inner.update_prepared = true;
+        Ok(())
+    }
+
+    /// An installer could not start: release its reservation so downloads can
+    /// be added and scheduled normally. A simultaneous ordinary quit keeps
+    /// its own closing gate intact.
+    pub fn cancel_update(self: &Arc<Self>) {
+        {
+            let mut inner = self.lock();
+            if !inner.update_prepared {
+                return;
+            }
+            inner.update_prepared = false;
+            inner.closing = false;
+        }
+        self.schedule();
     }
 
     /// Starts queued downloads while there are free slots.
@@ -1050,7 +1298,10 @@ impl Manager {
                 .collect();
             let mut next = Vec::new();
             for record in &inner.records {
-                if record.state != State::Queued || inner.active.contains_key(&record.id) {
+                if record.state != State::Queued
+                    || inner.active.contains_key(&record.id)
+                    || inner.migrating.contains_key(&record.id)
+                {
                     continue;
                 }
                 if let Some(places) = free.get_mut(record.queue.as_str())
@@ -1059,6 +1310,30 @@ impl Manager {
                     *places -= 1;
                     next.push(record.id);
                 }
+            }
+            if !next.is_empty() {
+                let previous = inner.records.clone();
+                let was_dirty = inner.dirty;
+                let temp_dir = inner.settings.temp_dir.clone();
+                for record in &mut inner.records {
+                    if next.contains(&record.id) {
+                        record.state = State::Downloading;
+                        record.error = None;
+                        if record.temp_dir.is_none()
+                            && record.media.is_none()
+                            && record.torrent.is_none()
+                        {
+                            record.temp_dir = Some(temp_dir.clone());
+                        }
+                    }
+                }
+                if let Err(error) = store::save_json(&self.store, &inner.records) {
+                    inner.records = previous;
+                    inner.dirty = was_dirty;
+                    tracing::warn!(%error, "could not save scheduled downloads; no new transfers started");
+                    return;
+                }
+                inner.dirty = false;
             }
             for &id in &next {
                 self.start(&mut inner, id);
@@ -1078,12 +1353,16 @@ impl Manager {
         };
         record.state = State::Downloading;
         record.error = None;
-        let (url, path, headers, media, torrent) = (
+        if record.temp_dir.is_none() && record.media.is_none() && record.torrent.is_none() {
+            record.temp_dir = Some(inner.settings.temp_dir.clone());
+        }
+        let (url, path, headers, media, torrent, temp_dir) = (
             record.url.clone(),
             record.path.clone(),
             record.headers.clone(),
             record.media.clone(),
             record.torrent.clone(),
+            record.temp_dir.clone(),
         );
         inner.dirty = true;
         let this = Arc::clone(self);
@@ -1113,7 +1392,7 @@ impl Manager {
             let control = job.control();
             self.runtime.spawn(async move {
                 let result = job.wait().await;
-                this.finished(id, result);
+                this.finished(id, result).await;
             });
             Job::Torrent(control)
         } else if let Some(spec) = media {
@@ -1132,7 +1411,15 @@ impl Manager {
                 stem: path
                     .file_stem()
                     .map_or_else(|| "video".into(), |s| s.to_string_lossy().into_owned()),
-                work_dir: self.tools.work_dir(id),
+                work_dir: temp_dir.as_deref().map_or_else(
+                    || self.tools.work_dir(id),
+                    |root| {
+                        sdm_core::PartialFiles::new(&path, Some(root))
+                            .directory()
+                            .unwrap()
+                            .to_owned()
+                    },
+                ),
                 speed_limit: inner.downloader.speed_limit(),
                 proxy: inner.settings.proxy.clone(),
             };
@@ -1140,7 +1427,7 @@ impl Manager {
             let control = job.control();
             self.runtime.spawn(async move {
                 let result = job.wait().await;
-                this.finished(id, result);
+                this.finished(id, result).await;
             });
             Job::Media(control)
         } else {
@@ -1150,6 +1437,8 @@ impl Manager {
                 headers,
                 options: DownloadOptions {
                     connections: inner.settings.connections.into(),
+                    temp_dir,
+                    completion_id: Some(id.to_string()),
                     ..DownloadOptions::default()
                 },
             };
@@ -1157,7 +1446,7 @@ impl Manager {
             let control = handle.control();
             self.runtime.spawn(async move {
                 let result = handle.wait().await.map_err(|e| e.to_string());
-                this.finished(id, result);
+                this.finished(id, result).await;
             });
             Job::File(control)
         };
@@ -1172,7 +1461,7 @@ impl Manager {
         );
     }
 
-    fn finished(self: &Arc<Self>, id: u64, result: Result<Outcome, String>) {
+    async fn finished(self: &Arc<Self>, id: u64, result: Result<Outcome, String>) {
         // Only downloads that end by themselves, not paused ones, can make
         // a queue done.
         let ended = matches!(result, Ok(Outcome::Completed { .. }) | Err(_));
@@ -1185,8 +1474,11 @@ impl Manager {
             let index = inner.records.iter().position(|r| r.id == id);
             let notice = match (index, active.remove) {
                 (Some(index), Some(delete_file)) => {
-                    let record = inner.records.remove(index);
-                    self.discard(&record, delete_file);
+                    let record = &mut inner.records[index];
+                    record.elapsed_ms += millis(active.since.elapsed());
+                    record.apply(&progress);
+                    record.finish(result);
+                    self.remove_record(&mut inner, index, delete_file);
                     None
                 }
                 (Some(index), None) => {
@@ -1197,6 +1489,13 @@ impl Manager {
                 }
                 (None, _) => None,
             };
+            if inner
+                .records
+                .iter()
+                .any(|r| r.id == id && r.state == State::Completed && r.torrent.is_none())
+            {
+                inner.cleanup_pending.insert(id);
+            }
             inner.dirty = true;
             self.save(&mut inner);
             let done = if ended && notice.is_some() {
@@ -1209,13 +1508,130 @@ impl Manager {
         if let Some(notice) = notice {
             (self.notify)(notice);
         }
+        self.retry_cleanup();
         self.schedule();
         if let Some(done) = done {
             (self.notify)(done);
         }
     }
 
+    fn migration_finished(self: &Arc<Self>, id: u64, result: sdm_core::Result<()>) {
+        {
+            let mut inner = self.lock();
+            let remove = inner.migrating.remove(&id).flatten();
+            if let Some(index) = inner.records.iter().position(|r| r.id == id) {
+                if let Some(delete_file) = remove {
+                    self.remove_record(&mut inner, index, delete_file);
+                } else if let Err(error) = result {
+                    tracing::warn!(%error, id, "could not move legacy download temporary files");
+                    inner.records[index].state = State::Failed;
+                    inner.records[index].error = Some(error.to_string());
+                }
+                inner.dirty = true;
+                self.save(&mut inner);
+            }
+        }
+        self.schedule();
+    }
+
+    async fn recovered_completion(self: &Arc<Self>, id: u64, receipt: sdm_core::CompletionReceipt) {
+        {
+            let mut inner = self.lock();
+            let remove = inner.migrating.remove(&id).flatten();
+            if let Some(index) = inner.records.iter().position(|r| r.id == id) {
+                if let Some(delete_file) = remove {
+                    let record = &mut inner.records[index];
+                    record.finish(Ok(Outcome::Completed {
+                        path: receipt.path,
+                        size: receipt.size,
+                    }));
+                    self.remove_record(&mut inner, index, delete_file);
+                } else {
+                    inner.records[index].finish(Ok(Outcome::Completed {
+                        path: receipt.path,
+                        size: receipt.size,
+                    }));
+                    inner.records[index].error = None;
+                }
+                if inner
+                    .records
+                    .iter()
+                    .any(|r| r.id == id && r.state == State::Completed)
+                {
+                    inner.cleanup_pending.insert(id);
+                }
+                inner.dirty = true;
+                self.save(&mut inner);
+            }
+        }
+        self.retry_cleanup();
+        self.schedule();
+    }
+
+    /// Receipt acknowledgement and cleanup happen only after the corresponding
+    /// Completed record has been saved. Failed saves and cleanup retry on ticks.
+    fn retry_cleanup(self: &Arc<Self>) {
+        let records = {
+            let mut inner = self.lock();
+            if inner.dirty {
+                return;
+            }
+            let records: Vec<Record> = inner
+                .records
+                .iter()
+                .filter(|r| {
+                    r.state == State::Completed
+                        && inner.cleanup_pending.contains(&r.id)
+                        && !inner.cleanup_running.contains(&r.id)
+                })
+                .cloned()
+                .collect();
+            for record in &records {
+                inner.cleanup_running.insert(record.id);
+            }
+            records
+        };
+        for record in records {
+            let this = self.clone();
+            self.runtime.spawn(async move {
+                let cleaned = cleanup_completed(&record, &this.tools).await;
+                let mut inner = this.lock();
+                inner.cleanup_running.remove(&record.id);
+                if cleaned {
+                    inner.cleanup_pending.remove(&record.id);
+                }
+                if let Some(delete_file) = inner.cleanup_remove.remove(&record.id)
+                    && let Some(index) = inner.records.iter().position(|r| r.id == record.id)
+                {
+                    this.remove_record(&mut inner, index, delete_file);
+                }
+            });
+        }
+    }
+
     /// Deletes what is left of a download that leaves the list.
+    fn remove_record(&self, inner: &mut Inner, index: usize, delete_file: bool) -> bool {
+        let record = inner.records.remove(index);
+        match store::save_json(&self.store, &inner.records) {
+            Ok(()) => {
+                inner.dirty = false;
+                inner.cleanup_pending.remove(&record.id);
+                self.discard(&record, delete_file);
+                true
+            }
+            Err(error) => {
+                tracing::warn!(%error, id = record.id, "could not save removal; retaining the download and its files");
+                let mut record = record;
+                record.error = Some(format!(
+                    "Could not remove the download; its files were kept: {error}"
+                ));
+                inner.records.insert(index, record);
+                inner.dirty = true;
+                false
+            }
+        }
+    }
+
     fn discard(&self, record: &Record, delete_file: bool) {
         let Some(spec) = &record.torrent else {
             discard_files(record, delete_file, &self.tools);
@@ -1238,6 +1654,23 @@ impl Manager {
         });
     }
 
+    fn save_added(&self, inner: &mut Inner, rollback: (usize, u64, bool)) -> Result<(), String> {
+        match store::save_json(&self.store, &inner.records) {
+            Ok(()) => {
+                inner.dirty = false;
+                Ok(())
+            }
+            Err(error) => {
+                inner.records.truncate(rollback.0);
+                inner.next_id = rollback.1;
+                inner.dirty = rollback.2;
+                Err(format!(
+                    "Could not save the new downloads; nothing was started: {error}"
+                ))
+            }
+        }
+    }
+
     fn save(&self, inner: &mut Inner) {
         if !inner.dirty {
             return;
@@ -1250,6 +1683,19 @@ impl Manager {
 }
 
 impl Inner {
+    fn allocate_id(&mut self) -> Result<u64, String> {
+        if self.update_prepared {
+            return Err("An update is being installed; please try again after SDM restarts".into());
+        }
+        let next = self
+            .next_id
+            .checked_add(1)
+            .ok_or("The download list has exhausted its record IDs; no downloads were added")?;
+        let id = self.next_id;
+        self.next_id = next;
+        Ok(id)
+    }
+
     /// An existing queue id, or the main queue.
     fn queue_id(&self, wanted: Option<&str>) -> String {
         wanted
@@ -1330,6 +1776,9 @@ impl Inner {
             .find(|path| {
                 !path.exists()
                     && !sdm_core::partial_data_path(path).exists()
+                    && !sdm_core::PartialFiles::new(path, Some(&self.settings.temp_dir))
+                        .data
+                        .exists()
                     && !self.records.iter().any(|r| r.path == *path)
             })
             .unwrap_or_else(|| directory.join(file_name))
@@ -1386,6 +1835,22 @@ impl Record {
     }
 }
 
+fn validate_records(records: &[Record]) -> std::io::Result<()> {
+    let mut ids = HashSet::new();
+    for record in records {
+        if record.id == 0 || record.id == u64::MAX || !ids.insert(record.id) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "The download list contains an invalid or duplicate record ID: {}",
+                    record.id
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// What is going on with a running download right now.
 struct Live<'a> {
     progress: Option<&'a Progress>,
@@ -1428,15 +1893,39 @@ fn view(record: &Record, live: &Live) -> DownloadView {
 
 /// Deletes what is left of a download that leaves the list.
 fn discard_files(record: &Record, delete_file: bool, tools: &Tools) {
+    let files = sdm_core::PartialFiles::new(&record.path, record.temp_dir.as_deref());
     if record.media.is_some() {
-        let _ = std::fs::remove_dir_all(tools.work_dir(record.id));
+        let directory = files
+            .directory()
+            .map_or_else(|| tools.work_dir(record.id), Path::to_path_buf);
+        let _ = std::fs::remove_dir_all(directory);
     }
     for path in [
         sdm_core::partial_data_path(&record.path),
         sdm_core::partial_state_path(&record.path),
+        files.data.clone(),
+        files.state.clone(),
+        files.completion.clone(),
+        with_suffix(&files.state, ".tmp"),
+        with_suffix(&files.data, ".migrating"),
+        with_suffix(&files.state, ".migrating"),
     ] {
         let _ = std::fs::remove_file(path);
     }
+    if let Some(directory) = files.directory() {
+        let _ = std::fs::remove_dir(directory);
+    }
+    let root = record
+        .path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".sdm-finalizing");
+    let staging = sdm_core::PartialFiles::new(&record.path, Some(&root));
+    let _ = std::fs::remove_file(&staging.data);
+    if let Some(directory) = staging.directory() {
+        let _ = std::fs::remove_dir(directory);
+    }
+    let _ = std::fs::remove_dir(root);
     if delete_file
         && record.state == State::Completed
         && record.path.exists()
@@ -1444,6 +1933,49 @@ fn discard_files(record: &Record, delete_file: bool, tools: &Tools) {
     {
         tracing::warn!(%error, path = %record.path.display(), "could not move the file to the trash");
     }
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    name.into()
+}
+
+async fn cleanup_completed(record: &Record, tools: &Tools) -> bool {
+    if record.torrent.is_some() {
+        return true;
+    }
+    let mut cleaned = true;
+    let files = sdm_core::PartialFiles::new(&record.path, record.temp_dir.as_deref());
+    if record.media.is_some() {
+        let directory = files
+            .directory()
+            .map_or_else(|| tools.work_dir(record.id), Path::to_path_buf);
+        if let Err(error) = tokio::fs::remove_dir_all(&directory).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, "could not clean completed media temporary files");
+            cleaned = false;
+        }
+    } else {
+        if let Err(error) = sdm_core::acknowledge_completion(
+            &record.path,
+            record.temp_dir.as_deref(),
+            &record.id.to_string(),
+        )
+        .await
+        {
+            tracing::warn!(%error, id = record.id, "could not acknowledge the saved completion");
+            return false;
+        }
+        for root in [record.temp_dir.as_deref(), None] {
+            if let Err(error) = sdm_core::cleanup_partial(&record.path, root).await {
+                tracing::warn!(%error, "could not clean completed download temporary files");
+                cleaned = false;
+            }
+        }
+    }
+    cleaned
 }
 
 fn millis(duration: Duration) -> u64 {
@@ -1513,6 +2045,10 @@ mod tests {
         }
 
         fn manager_with(&self, tools: Tools) -> Arc<Manager> {
+            self.try_manager_with(tools).unwrap()
+        }
+
+        fn try_manager_with(&self, tools: Tools) -> anyhow::Result<Arc<Manager>> {
             let settings = Settings {
                 download_dir: self.downloads(),
                 proxy: "none".into(),
@@ -1534,7 +2070,6 @@ mod tests {
                 Handle::current(),
                 Box::new(move |notice| notices.lock().unwrap().push(notice)),
             )
-            .unwrap()
         }
 
         /// A stand-in for yt-dlp: a shell script that reports progress and
@@ -1718,6 +2253,11 @@ echo "SDMF $home/$name"
         assert!(matches!(shares.wait().await, Ok(Outcome::Completed { .. })));
 
         let manager = fixture.manager();
+        manager.torrents.set_config(torrent::EngineConfig {
+            local_only: true,
+            seed_ratio: torrent::SEED_FOREVER,
+            ..torrent::EngineConfig::default()
+        });
         let info = manager.inspect_torrent(source.clone()).await.unwrap();
         assert_eq!(info.directory, fixture.downloads().join("Video"));
         assert_eq!(info.existing, None);
@@ -1746,6 +2286,15 @@ echo "SDMF $home/$name"
         assert_eq!(done.path, folder);
         assert_eq!(done.file_name, "Holiday");
         assert!(done.torrent);
+        assert!(done.seeding);
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Busy)
+        ));
+        assert!(
+            manager.get(id).unwrap().seeding,
+            "updates never stop sharing"
+        );
         assert_eq!(done.size, Some(900_000));
         assert!(done.url.starts_with("magnet:?xt=urn:btih:"));
         assert_eq!(std::fs::read(folder.join("beach.mp4")).unwrap(), video);
@@ -1795,6 +2344,19 @@ echo "SDMF $home/$name"
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("download {id} never reached {state:?}");
+    }
+
+    async fn wait_for_cleanup(manager: &Manager, id: u64) {
+        for _ in 0..500 {
+            {
+                let inner = manager.lock();
+                if !inner.cleanup_pending.contains(&id) && !inner.cleanup_running.contains(&id) {
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("download {id} did not finish cleaning its temporary files");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1931,7 +2493,7 @@ echo "SDMF $home/$name"
 
         // Pretend the app was closed while the download was running.
         let store = fixture.dir.path().join("downloads.json");
-        let mut records: Vec<Record> = store::load_json(&store).unwrap();
+        let mut records: Vec<Record> = store::load_json(&store).unwrap().unwrap();
         records[0].state = State::Downloading;
         records[0].headers = vec![("Cookie".into(), "s=1".into())];
         store::save_json(&store, &records).unwrap();
@@ -1972,10 +2534,30 @@ echo "SDMF $home/$name"
         let done = wait_for(&manager, finished, State::Completed).await;
 
         manager.remove(&[paused, finished], false);
+        // Completion is saved before cleanup. Removal retains the row and
+        // its path reservation until an in-flight cleanup finishes.
+        for _ in 0..500 {
+            if manager.get(paused).is_none() && manager.get(finished).is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         assert!(manager.list().is_empty());
         assert!(!sdm_core::partial_data_path(&path).exists());
         assert!(!sdm_core::partial_state_path(&path).exists());
-        assert!(done.path.exists(), "finished files stay unless asked");
+        let files = sdm_core::PartialFiles::new(&done.path, Some(&manager.settings().temp_dir));
+        assert!(!files.directory().unwrap().exists());
+        assert!(!files.completion.exists());
+        assert_eq!(
+            std::fs::read(done.path).unwrap(),
+            DATA,
+            "finished files stay unless asked"
+        );
+        let saved: Vec<Record> = store::load_json(&fixture.dir.path().join("downloads.json"))
+            .unwrap()
+            .unwrap();
+        assert!(saved.is_empty(), "both removals must be durably recorded");
+        manager.shutdown().await;
     }
 
     /// Serves 2 MiB with byte range support, so downloads can be resumed.
@@ -2290,7 +2872,10 @@ echo "SDMF $home/$name"
         let view = manager.get(id).unwrap();
         assert_eq!(view.url, fresh);
         assert_eq!(view.downloaded, kept.downloaded);
-        let state = std::fs::read_to_string(sdm_core::partial_state_path(&view.path)).unwrap();
+        let state = std::fs::read_to_string(
+            sdm_core::PartialFiles::new(&view.path, Some(&manager.settings().temp_dir)).state,
+        )
+        .unwrap();
         assert!(state.contains("fresh-link.bin"), "{state}");
 
         let mut fast = manager.settings();
@@ -2324,8 +2909,10 @@ echo "SDMF $home/$name"
 
         let path = manager.path_of(id).unwrap().0;
         assert!(
-            sdm_core::partial_state_path(&path).exists(),
-            "progress was saved"
+            sdm_core::PartialFiles::new(&path, Some(&manager.settings().temp_dir))
+                .state
+                .exists(),
+            "progress was saved in the configured temp folder"
         );
         let saved = manager.list()[0].downloaded;
         assert!(saved > 0);
@@ -2339,6 +2926,838 @@ echo "SDMF $home/$name"
         manager.resume(&[id]);
         let done = wait_for(&manager, id, State::Completed).await;
         assert_eq!(std::fs::read(done.path).unwrap(), data);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn temp_folder_change_preserves_paused_downloads_across_restart() {
+        let fixture = Fixture::new();
+        let (base, data) = big_file_server().await;
+        let manager = fixture.manager();
+        let old_root = manager.settings().temp_dir;
+        let mut slow = manager.settings();
+        slow.speed_limit = 256 * 1024;
+        manager.update_settings(slow).unwrap();
+        let id = manager
+            .add(request(format!("{base}/old.bin"), true))
+            .await
+            .unwrap();
+        for _ in 0..500 {
+            if manager.get(id).unwrap().downloaded > 100 * 1024 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        manager.pause(&[id]);
+        let paused = wait_for(&manager, id, State::Paused).await;
+        assert!(paused.downloaded > 0);
+        let old_files = sdm_core::PartialFiles::new(&paused.path, Some(&old_root));
+        assert!(old_files.state.exists());
+        assert!(!sdm_core::partial_data_path(&paused.path).exists());
+        let new_root = fixture.dir.path().join("custom-temp");
+        let mut changed = manager.settings();
+        changed.temp_dir = new_root.clone();
+        changed.speed_limit = 0;
+        manager.update_settings(changed).unwrap();
+        let next = manager
+            .add(request(format!("{base}/new.bin"), false))
+            .await
+            .unwrap();
+        assert_eq!(
+            manager
+                .lock()
+                .records
+                .iter()
+                .find(|r| r.id == next)
+                .unwrap()
+                .temp_dir
+                .as_ref(),
+            Some(&new_root)
+        );
+        manager.resume(&[next]);
+        let done = wait_for(&manager, next, State::Completed).await;
+        wait_for_cleanup(&manager, next).await;
+        assert_eq!(std::fs::read(&done.path).unwrap(), data);
+        assert_eq!(std::fs::read_dir(&new_root).unwrap().count(), 0);
+        manager.shutdown().await;
+        drop(manager);
+        // Even when global settings change, the stored per-download root wins.
+        let manager = fixture.manager();
+        assert!(old_files.state.exists());
+        manager.resume(&[id]);
+        let done = wait_for(&manager, id, State::Completed).await;
+        wait_for_cleanup(&manager, id).await;
+        assert_eq!(std::fs::read(done.path).unwrap(), data);
+        assert!(!old_files.directory().unwrap().exists());
+        manager.shutdown().await;
+    }
+
+    async fn legacy_fixture(fixture: &Fixture) -> (u64, PathBuf) {
+        let manager = fixture.manager();
+        let id = manager
+            .add(AddRequest {
+                url: "http://127.0.0.1:1/offline.zip".into(),
+                file_name: Some("offline.zip".into()),
+                ..AddRequest::default()
+            })
+            .await
+            .unwrap();
+        let path = manager.path_of(id).unwrap().0;
+        {
+            let mut inner = manager.lock();
+            inner.records[0].temp_dir = None;
+            inner.records[0].downloaded = 7;
+            inner.dirty = true;
+            manager.save(&mut inner);
+        }
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(sdm_core::partial_data_path(&path), b"partial").unwrap();
+        std::fs::write(sdm_core::partial_state_path(&path), b"legacy progress").unwrap();
+        std::fs::write(
+            with_suffix(&sdm_core::partial_state_path(&path), ".tmp"),
+            b"scratch",
+        )
+        .unwrap();
+        manager.shutdown().await;
+        (id, path)
+    }
+
+    async fn wait_for_migrations(manager: &Manager) {
+        for _ in 0..500 {
+            if manager.lock().migrating.is_empty() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("legacy migration did not finish");
+    }
+
+    #[tokio::test]
+    async fn startup_moves_known_legacy_sidecars_while_offline() {
+        let fixture = Fixture::new();
+        let (id, path) = legacy_fixture(&fixture).await;
+        let unknown = path.with_file_name("untracked.exe.sdm-part");
+        std::fs::write(&unknown, b"keep").unwrap();
+        let manager = fixture.manager();
+        wait_for_migrations(&manager).await;
+        assert_eq!(manager.get(id).unwrap().state, State::Paused);
+        assert_eq!(manager.get(id).unwrap().downloaded, 7);
+        let files = sdm_core::PartialFiles::new(&path, Some(&manager.settings().temp_dir));
+        assert_eq!(std::fs::read(&files.data).unwrap(), b"partial");
+        assert_eq!(std::fs::read(&files.state).unwrap(), b"legacy progress");
+        assert_eq!(
+            std::fs::read(with_suffix(&files.state, ".tmp")).unwrap(),
+            b"scratch"
+        );
+        assert!(!with_suffix(&sdm_core::partial_state_path(&path), ".tmp").exists());
+        assert!(!sdm_core::partial_data_path(&path).exists());
+        assert!(!sdm_core::partial_state_path(&path).exists());
+        assert_eq!(std::fs::read(unknown).unwrap(), b"keep");
+        let persisted: Vec<Record> = store::load_json(&fixture.dir.path().join("downloads.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(persisted[0].temp_dir, Some(manager.settings().temp_dir));
+        manager.remove(&[id], false);
+        assert!(!files.directory().unwrap().exists());
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn removing_during_legacy_move_cleans_both_locations() {
+        let fixture = Fixture::new();
+        let (id, path) = legacy_fixture(&fixture).await;
+        let manager = fixture.manager();
+        // Current-thread runtime: the background task has not run yet.
+        assert!(manager.lock().migrating.contains_key(&id));
+        manager.remove(&[id], false);
+        assert!(manager.get(id).unwrap().stopping);
+        wait_for_migrations(&manager).await;
+        assert!(manager.get(id).is_none());
+        assert!(!sdm_core::partial_data_path(&path).exists());
+        assert!(!sdm_core::partial_state_path(&path).exists());
+        assert!(
+            !sdm_core::PartialFiles::new(&path, Some(&manager.settings().temp_dir))
+                .directory()
+                .unwrap()
+                .exists()
+        );
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn startup_cleans_completed_leftovers_without_deleting_final_file() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let manager = fixture.manager();
+        let id = manager
+            .add(request(format!("{base}/done.zip"), true))
+            .await
+            .unwrap();
+        let done = wait_for(&manager, id, State::Completed).await;
+        let root = manager.settings().temp_dir;
+        let files = sdm_core::PartialFiles::new(&done.path, Some(&root));
+        manager.shutdown().await;
+        drop(manager);
+        std::fs::create_dir_all(files.directory().unwrap()).unwrap();
+        std::fs::write(&files.data, b"leftover").unwrap();
+        std::fs::write(with_suffix(&files.state, ".tmp"), b"leftover").unwrap();
+        std::fs::write(sdm_core::partial_state_path(&done.path), b"legacy leftover").unwrap();
+        let staging_root = done.path.parent().unwrap().join(".sdm-finalizing");
+        let staging = sdm_core::PartialFiles::new(&done.path, Some(&staging_root));
+        std::fs::create_dir_all(staging.directory().unwrap()).unwrap();
+        std::fs::write(staging.data, b"interrupted copy").unwrap();
+        let unrelated = root.join("keep.txt");
+        std::fs::write(&unrelated, b"keep").unwrap();
+        let manager = fixture.manager();
+        for _ in 0..500 {
+            if !files.directory().unwrap().exists()
+                && !staging_root.exists()
+                && !sdm_core::partial_state_path(&done.path).exists()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!files.directory().unwrap().exists());
+        assert!(!staging_root.exists());
+        assert!(!sdm_core::partial_state_path(&done.path).exists());
+        assert_eq!(std::fs::read(done.path).unwrap(), DATA);
+        assert_eq!(std::fs::read(unrelated).unwrap(), b"keep");
+        assert_eq!(manager.get(id).unwrap().state, State::Completed);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn rejected_settings_leave_disk_and_runtime_unchanged() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let path = fixture.dir.path().join("settings.json");
+        let previous = manager.settings();
+        previous.save(&path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let mut invalid = previous.clone();
+        invalid.proxy = "http://[".into();
+        invalid.speed_limit = 12345;
+        assert!(manager.save_settings(&path, invalid).is_err());
+        assert_eq!(manager.settings(), previous);
+        assert_eq!(manager.downloader().speed_limit(), previous.speed_limit());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+
+        let backup = with_suffix(&path, ".bak");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        let mut candidate = previous.clone();
+        candidate.language = "vi".into();
+        candidate.speed_limit = 54321;
+        assert!(manager.save_settings(&path, candidate).is_err());
+        assert_eq!(manager.settings(), previous);
+        assert_eq!(manager.downloader().speed_limit(), previous.speed_limit());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_reservation_saves_history_and_releases_downloads_after_installer_failure() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let base = server().await;
+        let id = manager
+            .add(request(format!("{base}/kept.zip"), false))
+            .await
+            .unwrap();
+        assert!(manager.prepare_update().is_ok());
+        let saved: Vec<Record> = store::load_json(&fixture.dir.path().join("downloads.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved[0].id, id);
+        assert_eq!(saved[0].state, State::Paused);
+        let rejected = AddRequest {
+            file_name: Some("blocked.zip".into()),
+            ..request(format!("{base}/blocked.zip"), true)
+        };
+        assert!(manager.add(rejected).await.is_err());
+        assert_eq!(
+            manager.list().len(),
+            1,
+            "no incoming transfer races installer launch"
+        );
+        manager.resume(&[id]);
+        assert!(
+            manager.lock().active.is_empty(),
+            "scheduling is reserved for the installer"
+        );
+        manager.cancel_update();
+        let done = wait_for(&manager, id, State::Completed).await;
+        assert_eq!(std::fs::read(done.path).unwrap(), DATA);
+        wait_for_cleanup(&manager, id).await;
+        assert!(
+            manager.prepare_update().is_ok(),
+            "a failed installer can be retried after cleanup"
+        );
+        manager.cancel_update();
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn update_reservation_rejects_history_failure_without_closing_or_losing_data() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let added = AddRequest {
+            file_name: Some("kept.zip".into()),
+            ..request("http://127.0.0.1:1/kept.zip".into(), false)
+        };
+        let id = manager.add(added).await.unwrap();
+        let path = fixture.dir.path().join("downloads.json");
+        let bytes = std::fs::read(&path).unwrap();
+        let backup = with_suffix(&path, ".bak");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Persistence(_))
+        ));
+        assert!(
+            !manager.lock().closing,
+            "failed persistence leaves the running app usable"
+        );
+        assert!(!manager.lock().update_prepared);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(manager.get(id).unwrap().state, State::Paused);
+        std::fs::remove_dir(&backup).unwrap();
+        assert!(
+            manager.prepare_update().is_ok(),
+            "retry succeeds after fixing storage"
+        );
+        manager.cancel_update();
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn update_reservation_rejects_queue_failure_and_pending_recovery_cleanup() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        std::fs::create_dir(&manager.queue_store).unwrap();
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Persistence(_))
+        ));
+        assert!(!manager.lock().closing);
+        std::fs::remove_dir(&manager.queue_store).unwrap();
+        {
+            let mut inner = manager.lock();
+            inner.migrating.insert(1, None);
+        }
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Busy)
+        ));
+        {
+            let mut inner = manager.lock();
+            inner.migrating.clear();
+            inner.cleanup_pending.insert(1);
+        }
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Busy)
+        ));
+        {
+            let mut inner = manager.lock();
+            inner.cleanup_pending.clear();
+            inner.cleanup_running.insert(1);
+        }
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Busy)
+        ));
+        manager.lock().cleanup_running.clear();
+        assert!(manager.prepare_update().is_ok());
+        manager.cancel_update();
+        manager.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_reservation_never_pauses_an_active_transfer() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let mut settings = manager.settings();
+        settings.speed_limit = 16 * 1024;
+        manager.update_settings(settings).unwrap();
+        let (base, _) = big_file_server().await;
+        let id = manager
+            .add(request(format!("{base}/large.zip"), true))
+            .await
+            .unwrap();
+        wait_for(&manager, id, State::Downloading).await;
+        assert!(matches!(
+            manager.prepare_update(),
+            Err(UpdatePreparationError::Busy)
+        ));
+        let live = manager.get(id).unwrap();
+        assert_eq!(live.state, State::Downloading);
+        assert!(!live.stopping, "an updater must not pause a live transfer");
+        assert!(!manager.lock().closing);
+        manager.pause(&[id]);
+        wait_for(&manager, id, State::Paused).await;
+        assert!(manager.prepare_update().is_ok());
+        manager.cancel_update();
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn failed_adds_rollback_records_and_never_start_transfers() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let request = |name: &str, start| AddRequest {
+            url: format!("http://127.0.0.1:1/{name}"),
+            file_name: Some(name.into()),
+            start,
+            ..AddRequest::default()
+        };
+        let kept = manager.add(request("kept.zip", false)).await.unwrap();
+        let (previous, next_id) = {
+            let inner = manager.lock();
+            (inner.records.clone(), inner.next_id)
+        };
+        let path = fixture.dir.path().join("downloads.json");
+        let bytes = std::fs::read(&path).unwrap();
+        let backup = with_suffix(&path, ".bak");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        assert!(
+            manager
+                .add(request("unsaved.zip", true))
+                .await
+                .unwrap_err()
+                .contains("nothing was started")
+        );
+        assert!(
+            manager
+                .add_batch(BatchRequest {
+                    links: vec![BatchLink {
+                        url: "http://127.0.0.1:1/batch.zip".into(),
+                        ..BatchLink::default()
+                    }],
+                    start: true,
+                    ..BatchRequest::default()
+                })
+                .is_err()
+        );
+        #[cfg(unix)]
+        assert!(
+            manager
+                .add_media(media_request("http://example.com/video", "unsaved-media"))
+                .is_err()
+        );
+        {
+            let inner = manager.lock();
+            assert_eq!(inner.records, previous);
+            assert_eq!(inner.next_id, next_id);
+            assert!(inner.active.is_empty());
+        }
+        assert_eq!(manager.get(kept).unwrap().state, State::Paused);
+        assert!(fixture.notices.lock().unwrap().is_empty());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert!(!fixture.downloads().exists());
+        manager.resume(&[kept]);
+        assert_eq!(manager.get(kept).unwrap().state, State::Queued);
+        assert!(manager.lock().active.is_empty());
+        assert!(fixture.notices.lock().unwrap().is_empty());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn damaged_history_without_backup_is_reported_and_preserved() {
+        let fixture = Fixture::new();
+        let path = fixture.dir.path().join("downloads.json");
+        std::fs::write(&path, b"[{broken history").unwrap();
+        let error = fixture
+            .try_manager_with(Tools::new(fixture.dir.path(), None))
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("downloads.json"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"[{broken history");
+        assert!(!fixture.downloads().exists());
+    }
+
+    #[tokio::test]
+    async fn damaged_history_recovers_nonempty_backup_and_preserves_original() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let id = manager
+            .add(AddRequest {
+                url: "http://127.0.0.1:1/kept.zip".into(),
+                file_name: Some("kept.zip".into()),
+                ..AddRequest::default()
+            })
+            .await
+            .unwrap();
+        manager.shutdown().await;
+        drop(manager);
+        let path = fixture.dir.path().join("downloads.json");
+        std::fs::write(&path, b"[{broken history").unwrap();
+        let manager = fixture.manager();
+        wait_for_migrations(&manager).await;
+        assert_eq!(manager.list().len(), 1);
+        assert_eq!(manager.get(id).unwrap().file_name, "kept.zip");
+        assert!(manager.recovery_notice().unwrap().contains("preserved"));
+        let damaged = std::fs::read_dir(fixture.dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.to_string_lossy().contains("downloads.json.damaged-"))
+            .unwrap();
+        assert_eq!(std::fs::read(damaged).unwrap(), b"[{broken history");
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn startup_reconciles_committed_http_and_retries_save_before_acknowledging() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let manager = fixture.manager();
+        let url = format!("{base}/committed.zip");
+        let id = manager
+            .add(AddRequest {
+                url: url.clone(),
+                file_name: Some("committed.zip".into()),
+                headers: vec![("Cookie".into(), "session=fixture".into())],
+                ..AddRequest::default()
+            })
+            .await
+            .unwrap();
+        let (path, _) = manager.path_of(id).unwrap();
+        let root = manager.settings().temp_dir;
+        manager.shutdown().await;
+        drop(manager);
+        // Simulate a core commit followed by process death before the desktop
+        // receives completion: the durable history is still Paused.
+        let downloader = Downloader::new(sdm_core::ClientConfig {
+            proxy: sdm_core::ProxyConfig::Disabled,
+            ..sdm_core::ClientConfig::default()
+        })
+        .unwrap();
+        let outcome = downloader
+            .start(
+                DownloadRequest::new(url, Destination::File(path.clone())).options(
+                    DownloadOptions {
+                        temp_dir: Some(root.clone()),
+                        completion_id: Some(id.to_string()),
+                        ..DownloadOptions::default()
+                    },
+                ),
+            )
+            .wait()
+            .await
+            .unwrap();
+        assert!(matches!(outcome, Outcome::Completed { .. }));
+        let files = sdm_core::PartialFiles::new(&path, Some(&root));
+        assert!(files.completion.exists());
+        let history = fixture.dir.path().join("downloads.json");
+        let backup = with_suffix(&history, ".bak");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        let manager = fixture.manager();
+        manager.remove(&[id], false);
+        wait_for_migrations(&manager).await;
+        assert_eq!(manager.get(id).unwrap().state, State::Completed);
+        assert!(
+            files.completion.exists(),
+            "receipt must survive a failed history save"
+        );
+        let saved: Vec<Record> = store::load_json(&history).unwrap().unwrap();
+        assert_eq!(saved[0].state, State::Paused);
+        assert_eq!(std::fs::read(&path).unwrap(), DATA);
+        assert!(manager.lock().active.is_empty());
+
+        manager.remove(&[id], false);
+        assert_eq!(manager.get(id).unwrap().state, State::Completed);
+        assert!(
+            files.completion.exists(),
+            "failed removal must retain the recovery receipt"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), DATA);
+
+        std::fs::remove_dir(&backup).unwrap();
+        manager.tick(true);
+        for _ in 0..500 {
+            if !files.completion.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!files.completion.exists());
+        let saved: Vec<Record> = store::load_json(&history).unwrap().unwrap();
+        assert_eq!(saved[0].state, State::Completed);
+        assert_eq!(saved[0].size, Some(DATA.len() as u64));
+        assert!(saved[0].headers.is_empty());
+        assert_eq!(std::fs::read(path).unwrap(), DATA);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn failed_removal_retains_paused_data_and_durable_record() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let id = manager
+            .add(AddRequest {
+                url: "http://127.0.0.1:1/paused.zip".into(),
+                file_name: Some("paused.zip".into()),
+                ..AddRequest::default()
+            })
+            .await
+            .unwrap();
+        let path = manager.path_of(id).unwrap().0;
+        let files = sdm_core::PartialFiles::new(&path, Some(&manager.settings().temp_dir));
+        std::fs::create_dir_all(files.directory().unwrap()).unwrap();
+        std::fs::write(&files.data, b"keep partial data").unwrap();
+        let history = fixture.dir.path().join("downloads.json");
+        let previous = std::fs::read(&history).unwrap();
+        let backup = with_suffix(&history, ".bak");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        manager.remove(&[id], false);
+        assert_eq!(manager.get(id).unwrap().state, State::Paused);
+        assert!(
+            manager
+                .get(id)
+                .unwrap()
+                .error
+                .unwrap()
+                .contains("files were kept")
+        );
+        assert_eq!(std::fs::read(&files.data).unwrap(), b"keep partial data");
+        assert_eq!(std::fs::read(history).unwrap(), previous);
+        manager.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn removal_waits_for_media_cleanup_and_reserves_the_old_path() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let mut request = media_request("http://example.com/video", "same-title");
+        request.start = false;
+        let old = manager.add_media(request.clone()).unwrap();
+        let old_path = manager.path_of(old).unwrap().0;
+        let old_files = sdm_core::PartialFiles::new(&old_path, Some(&manager.settings().temp_dir));
+        std::fs::create_dir_all(old_files.directory().unwrap()).unwrap();
+        std::fs::write(old_files.directory().unwrap().join("leftover"), b"old").unwrap();
+        // A user may already have moved the final media file. The retained row
+        // must reserve its name until the scheduled cleanup has finished.
+        {
+            let mut inner = manager.lock();
+            inner.records[0].finish(Ok(Outcome::Completed {
+                path: old_path.clone(),
+                size: 3,
+            }));
+            inner.cleanup_pending.insert(old);
+            inner.dirty = true;
+            manager.save(&mut inner);
+        }
+        manager.retry_cleanup();
+        assert!(manager.lock().cleanup_running.contains(&old));
+        manager.remove(&[old], false);
+        assert!(manager.get(old).unwrap().stopping);
+        let new = manager.add_media(request).unwrap();
+        let new_path = manager.path_of(new).unwrap().0;
+        assert_ne!(
+            new_path, old_path,
+            "cleanup must retain the old path reservation"
+        );
+        let new_files = sdm_core::PartialFiles::new(&new_path, Some(&manager.settings().temp_dir));
+        std::fs::create_dir_all(new_files.directory().unwrap()).unwrap();
+        let marker = new_files.directory().unwrap().join("new-partial");
+        std::fs::write(&marker, b"new").unwrap();
+        for _ in 0..500 {
+            if manager.get(old).is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(manager.get(old).is_none());
+        assert_eq!(manager.get(new).unwrap().state, State::Paused);
+        assert_eq!(std::fs::read(marker).unwrap(), b"new");
+        assert!(!old_files.directory().unwrap().exists());
+        let saved: Vec<Record> = store::load_json(&fixture.dir.path().join("downloads.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.iter().map(|r| r.id).collect::<Vec<_>>(), vec![new]);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failed_active_removal_pauses_and_keeps_partial_data_until_saved() {
+        let fixture = Fixture::new();
+        let (base, _) = big_file_server().await;
+        let manager = fixture.manager();
+        let mut slow = manager.settings();
+        slow.speed_limit = 256 * 1024;
+        manager.update_settings(slow).unwrap();
+        let id = manager
+            .add(request(format!("{base}/active.bin"), true))
+            .await
+            .unwrap();
+        for _ in 0..500 {
+            if manager.get(id).unwrap().downloaded > 100 * 1024 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(manager.get(id).unwrap().downloaded > 100 * 1024);
+        let path = manager.path_of(id).unwrap().0;
+        let files = sdm_core::PartialFiles::new(&path, Some(&manager.settings().temp_dir));
+        let history = fixture.dir.path().join("downloads.json");
+        let previous = std::fs::read(&history).unwrap();
+        let backup = with_suffix(&history, ".bak");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        manager.remove(&[id], false);
+        let paused = wait_for(&manager, id, State::Paused).await;
+        assert!(paused.error.unwrap().contains("files were kept"));
+        assert!(paused.downloaded > 100 * 1024);
+        assert!(
+            files.data.exists(),
+            "pause must retain partial bytes before failed row removal"
+        );
+        assert!(files.state.exists(), "pause must retain resumable progress");
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(&history).unwrap(), previous);
+        std::fs::remove_dir(&backup).unwrap();
+        manager.remove(&[id], false);
+        assert!(manager.get(id).is_none());
+        assert!(!files.directory().unwrap().exists());
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn malformed_completion_receipt_keeps_row_paused_and_preserves_files() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let id = manager
+            .add(AddRequest {
+                url: "http://127.0.0.1:1/paused.zip".into(),
+                file_name: Some("paused.zip".into()),
+                ..AddRequest::default()
+            })
+            .await
+            .unwrap();
+        let path = manager.path_of(id).unwrap().0;
+        let files = sdm_core::PartialFiles::new(&path, Some(&manager.settings().temp_dir));
+        manager.shutdown().await;
+        drop(manager);
+        std::fs::create_dir_all(files.directory().unwrap()).unwrap();
+        std::fs::write(&files.completion, b"{broken receipt").unwrap();
+        std::fs::write(&files.data, b"keep partial data").unwrap();
+        let manager = fixture.manager();
+        wait_for_migrations(&manager).await;
+        assert_eq!(manager.get(id).unwrap().state, State::Paused);
+        assert!(
+            manager
+                .get(id)
+                .unwrap()
+                .error
+                .unwrap()
+                .contains("verify completion")
+        );
+        assert_eq!(
+            std::fs::read(&files.completion).unwrap(),
+            b"{broken receipt"
+        );
+        assert_eq!(std::fs::read(&files.data).unwrap(), b"keep partial data");
+        assert!(manager.lock().active.is_empty());
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn invalid_record_ids_recover_backup_or_report_preserved_data() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let id = manager
+            .add(AddRequest {
+                url: "http://127.0.0.1:1/kept.zip".into(),
+                file_name: Some("kept.zip".into()),
+                ..AddRequest::default()
+            })
+            .await
+            .unwrap();
+        manager.shutdown().await;
+        drop(manager);
+        let path = fixture.dir.path().join("downloads.json");
+        let records: Vec<Record> = store::load_json(&path).unwrap().unwrap();
+        let bytes = serde_json::to_vec(&vec![records[0].clone(), records[0].clone()]).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let manager = fixture.manager();
+        wait_for_migrations(&manager).await;
+        assert_eq!(manager.list().len(), 1);
+        assert_eq!(manager.get(id).unwrap().file_name, "kept.zip");
+        manager.shutdown().await;
+        drop(manager);
+        std::fs::remove_file(with_suffix(&path, ".bak")).unwrap();
+        let mut exhausted = records[0].clone();
+        exhausted.id = u64::MAX;
+        let bytes = serde_json::to_vec(&vec![exhausted]).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let error = fixture
+            .try_manager_with(Tools::new(fixture.dir.path(), None))
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("invalid or duplicate record ID"));
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+
+    #[tokio::test]
+    async fn exhausted_record_ids_fail_without_overflow_or_partial_batch_adds() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let id = manager
+            .add(AddRequest {
+                url: "http://127.0.0.1:1/kept.zip".into(),
+                file_name: Some("kept.zip".into()),
+                ..AddRequest::default()
+            })
+            .await
+            .unwrap();
+        let history = fixture.dir.path().join("downloads.json");
+        let previous = std::fs::read(&history).unwrap();
+        manager.lock().next_id = u64::MAX - 1;
+        let error = manager
+            .add_batch(BatchRequest {
+                links: ["one", "two"]
+                    .into_iter()
+                    .map(|name| BatchLink {
+                        url: format!("http://127.0.0.1:1/{name}.zip"),
+                        ..BatchLink::default()
+                    })
+                    .collect(),
+                ..BatchRequest::default()
+            })
+            .unwrap_err();
+        assert!(error.contains("exhausted"));
+        assert_eq!(manager.list().len(), 1);
+        assert_eq!(manager.get(id).unwrap().file_name, "kept.zip");
+        assert_eq!(manager.lock().next_id, u64::MAX - 1);
+        assert_eq!(std::fs::read(&history).unwrap(), previous);
+
+        manager.shutdown().await;
+        drop(manager);
+        let mut records: Vec<Record> = store::load_json(&history).unwrap().unwrap();
+        records[0].id = u64::MAX - 1;
+        store::save_json(&history, &records).unwrap();
+        let previous = std::fs::read(&history).unwrap();
+        let manager = fixture.manager();
+        wait_for_migrations(&manager).await;
+        let error = manager
+            .add(AddRequest {
+                url: "http://127.0.0.1:1/overflow.zip".into(),
+                file_name: Some("overflow.zip".into()),
+                ..AddRequest::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(error.contains("exhausted"));
+        assert_eq!(manager.list().len(), 1);
+        assert_eq!(manager.lock().next_id, u64::MAX);
+        assert_eq!(std::fs::read(history).unwrap(), previous);
+        manager.shutdown().await;
     }
 
     #[test]

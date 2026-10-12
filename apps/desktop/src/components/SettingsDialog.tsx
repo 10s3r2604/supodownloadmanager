@@ -5,6 +5,7 @@ import { errorText, useI18n } from "../context";
 import type { TextKey } from "../i18n";
 import { Icon } from "../icons";
 import { Dialog } from "./Dialog";
+import { UpdateNotice } from "./UpdateNotice";
 
 interface Props {
   settings: Settings;
@@ -15,7 +16,7 @@ interface Props {
   onError: (message: string) => void;
 }
 
-type Tab = "appearance" | "general" | "connection" | "browser" | "torrent";
+type Tab = "appearance" | "general" | "connection" | "browser" | "torrent" | "updates";
 type ProxyMode = "system" | "none" | "custom";
 
 const PROGRESS_STYLES: { style: ProgressStyle; label: TextKey; hint: TextKey }[] = [
@@ -30,6 +31,7 @@ const TABS: { name: Tab; label: TextKey }[] = [
   { name: "connection", label: "tabConnection" },
   { name: "torrent", label: "sectionTorrent" },
   { name: "browser", label: "tabBrowser" },
+  { name: "updates", label: "tabUpdates" },
 ];
 
 const SEED_CHOICES: { value: number; label: TextKey }[] = [
@@ -49,6 +51,8 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
   const [customProxy, setCustomProxy] = useState(proxyMode === "custom" ? settings.proxy : "");
   const [types, setTypes] = useState(settings.captureExtensions.join(", "));
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [updatesSupported, setUpdatesSupported] = useState<boolean | null>(null);
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
@@ -60,25 +64,33 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
     onPreview(next);
   };
 
+  const proxy = proxyMode === "system" ? "" : proxyMode === "none" ? "none" : customProxy.trim();
+  const captureExtensions = types
+    .split(/[,\s]+/)
+    .map((ext) => ext.trim().replace(/^\./, "").toLowerCase())
+    .filter(Boolean);
+  const effectiveDraft = { ...draft, proxy, captureExtensions };
+  const dirty = JSON.stringify(effectiveDraft) !== JSON.stringify(settings);
+
   async function save() {
     setSaving(true);
-    const proxy = proxyMode === "system" ? "" : proxyMode === "none" ? "none" : customProxy.trim();
-    const captureExtensions = types
-      .split(/[,\s]+/)
-      .map((ext) => ext.trim().replace(/^\./, "").toLowerCase())
-      .filter(Boolean);
+    setSaveError(null);
     try {
-      onSaved(await api.saveSettings({ ...draft, proxy, captureExtensions }));
+      onSaved(await api.saveSettings(effectiveDraft));
       onClose();
     } catch (error) {
-      onError(errorText(error));
+      setSaveError(errorText(error));
       setSaving(false);
     }
   }
 
-  async function browse() {
-    const folder = await api.pickFolder();
-    if (folder) set("downloadDir", folder);
+  async function browse(key: "downloadDir" | "tempDir") {
+    try {
+      const folder = await api.pickFolder();
+      if (folder) set(key, folder);
+    } catch (error) {
+      onError(errorText(error));
+    }
   }
 
   const number = (value: string, min: number, max: number) =>
@@ -114,6 +126,12 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
           </button>
         ))}
       </div>
+
+      {saveError && (
+        <p className="hint warning" role="alert">
+          {t("settingsSaveFailed")} {saveError}
+        </p>
+      )}
 
       {tab === "appearance" && (
         <div className="form">
@@ -199,16 +217,37 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
           <div className="field">
             <span>{t("downloadFolder")}</span>
             <div className="input-row">
-              <input value={draft.downloadDir} onChange={(e) => set("downloadDir", e.target.value)} />
-              <button type="button" className="button" onClick={browse}>
+              <input aria-label={t("downloadFolder")} value={draft.downloadDir} onChange={(e) => set("downloadDir", e.target.value)} />
+              <button type="button" className="button" onClick={() => browse("downloadDir")}>
                 <Icon name="folder" size={16} />
                 {t("browse")}
               </button>
             </div>
           </div>
+          <div className="field">
+            <span>{t("tempFolder")}</span>
+            <div className="input-row">
+              <input aria-label={t("tempFolder")} value={draft.tempDir} onChange={(e) => set("tempDir", e.target.value)} />
+              <button type="button" className="button" onClick={() => browse("tempDir")}>
+                <Icon name="folder" size={16} />
+                {t("browse")}
+              </button>
+            </div>
+            <small className="hint">{t("tempFolderHint")}</small>
+          </div>
           <Check label={t("categoryFolders")} checked={draft.categoryFolders} onChange={(v) => set("categoryFolders", v)} />
+          <Check label={t("startWithWindows")} checked={draft.startWithWindows} onChange={(v) => set("startWithWindows", v)} />
+          <small className="hint">{t("startWithWindowsHint")}</small>
           <Check label={t("closeToTray")} checked={draft.closeToTray} onChange={(v) => set("closeToTray", v)} />
           <Check label={t("notifications")} checked={draft.notifications} onChange={(v) => set("notifications", v)} />
+        </div>
+      )}
+
+      {tab === "updates" && (
+        <div className="form">
+          <Check label={t("autoUpdate")} checked={draft.autoUpdate} disabled={updatesSupported === false} onChange={(v) => set("autoUpdate", v)} />
+          <small className="hint">{t("autoUpdateHint")}</small>
+          <UpdateNotice inSettings installBlocked={dirty || saving} onSupportChange={setUpdatesSupported} />
         </div>
       )}
 
@@ -258,6 +297,7 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
             </div>
             {proxyMode === "custom" && (
               <input
+                aria-label={t("customProxyUrl")}
                 value={customProxy}
                 placeholder="http://127.0.0.1:8080 · socks5://127.0.0.1:1080"
                 spellCheck={false}
@@ -374,16 +414,18 @@ function SkinPreview({ skin, dark }: { skin: Skin; dark: boolean }) {
   }
   return (
     <span className={`skin-preview minimal${dark ? " dark" : ""}`} aria-hidden>
-      <em />
-      <i>
-        <b style={{ width: "64%" }} />
-      </i>
-      <i>
-        <b style={{ width: "30%" }} />
-      </i>
-      <i>
-        <b style={{ width: "100%" }} />
-      </i>
+      <svg viewBox="0 0 160 54" preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
+        <rect width="160" height="10" rx="2" fill={dark ? "#26302c" : "#e3eae5"} />
+        {[8, 24, 40, 56, 72].map((x) => <rect key={x} x={x} y="3" width="7" height="4" rx="1" fill="#19b981" />)}
+        <rect y="14" width="33" height="40" rx="2" fill={dark ? "#1c2621" : "#edf2ee"} />
+        {[21, 30, 39, 48].map((y) => <path key={y} d={`M6 ${y}h20`} stroke={dark ? "#8eaaa0" : "#93a69b"} strokeWidth="2" />)}
+        {[18, 28, 38, 48].map((y, row) => (
+          <g key={y}>
+            <path d={`M41 ${y}h41M91 ${y}h13M114 ${y}h14M139 ${y}h16`} stroke={dark ? "#b1c7bc" : "#768d7e"} strokeWidth="2" />
+            <path d={`M91 ${y + 4}h${[8, 5, 13, 3][row]}`} stroke="#19b981" strokeWidth="2" />
+          </g>
+        ))}
+      </svg>
     </span>
   );
 }

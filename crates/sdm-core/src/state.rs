@@ -9,11 +9,139 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tokio::io::AsyncWriteExt;
 
 use crate::error::{Error, Result};
 use crate::probe::RemoteInfo;
 
 const STATE_VERSION: u32 = 1;
+
+/// Files owned by one unfinished download. A configured temp root isolates
+/// them by destination, so equal filenames in different folders never collide.
+#[derive(Debug, Clone)]
+pub struct PartialFiles {
+    pub data: PathBuf,
+    pub state: PathBuf,
+    /// Publication journal retained until the caller acknowledges completion.
+    pub completion: PathBuf,
+    directory: Option<PathBuf>,
+}
+
+impl PartialFiles {
+    pub fn new(path: &Path, temp_dir: Option<&Path>) -> Self {
+        let directory = temp_dir.map(|root| {
+            let absolute = if path.is_absolute() {
+                path.to_owned()
+            } else {
+                std::env::current_dir().unwrap_or_default().join(path)
+            };
+            let digest = Sha256::digest(absolute.as_os_str().as_encoded_bytes());
+            root.join(format!("download-{digest:x}"))
+        });
+        let base = directory.as_ref().map_or_else(
+            || path.to_owned(),
+            |dir| {
+                dir.join(
+                    path.file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("download")),
+                )
+            },
+        );
+        Self {
+            data: part_path(&base),
+            state: state_path(&base),
+            completion: with_suffix(&base, ".sdm-completed"),
+            directory,
+        }
+    }
+
+    pub fn directory(&self) -> Option<&Path> {
+        self.directory.as_deref()
+    }
+
+    pub(crate) async fn prepare(&self, path: &Path) -> Result<()> {
+        if let Some(directory) = &self.directory {
+            tokio::fs::create_dir_all(directory).await?;
+            // Old app versions wrote next to the final file. Keep both halves
+            // recoverable if an offline migration or resume is interrupted.
+            for (old, new) in [
+                (part_path(path), self.data.clone()),
+                (state_path(path), self.state.clone()),
+                (
+                    with_suffix(&state_path(path), ".tmp"),
+                    with_suffix(&self.state, ".tmp"),
+                ),
+            ] {
+                if tokio::fs::try_exists(&old).await? && !tokio::fs::try_exists(&new).await? {
+                    move_partial(&old, &new).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes only this download's files, never the configured temp root.
+    pub async fn cleanup(&self) -> Result<()> {
+        for path in [&self.completion, &with_suffix(&self.completion, ".tmp")] {
+            match tokio::fs::remove_file(path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        self.cleanup_transfer().await
+    }
+
+    /// Removes transfer data while preserving an unacknowledged publication.
+    pub(crate) async fn cleanup_transfer(&self) -> Result<()> {
+        for path in [
+            &self.data,
+            &self.state,
+            &with_suffix(&self.state, ".tmp"),
+            &with_suffix(&self.data, ".migrating"),
+            &with_suffix(&self.state, ".migrating"),
+        ] {
+            match tokio::fs::remove_file(path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if let Some(directory) = &self.directory {
+            match tokio::fs::remove_dir(directory).await {
+                Ok(()) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::NotFound | ErrorKind::DirectoryNotEmpty
+                    ) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+}
+
+async fn move_partial(source: &Path, destination: &Path) -> Result<()> {
+    match tokio::fs::rename(source, destination).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::CrossesDevices => {
+            let staging = with_suffix(destination, ".migrating");
+            tokio::fs::copy(source, &staging).await?;
+            tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(&staging)
+                .await?
+                .sync_all()
+                .await?;
+            tokio::fs::rename(&staging, destination).await?;
+            tokio::fs::remove_file(source).await?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
 
 /// The file that holds the data of an unfinished download of `path`.
 pub fn part_path(path: &Path) -> PathBuf {
@@ -75,35 +203,47 @@ impl SavedState {
     /// Writes the state atomically, so a crash never leaves half a file.
     pub(crate) async fn save(&self, path: &Path) -> Result<()> {
         let json = serde_json::to_vec_pretty(self).map_err(|e| Error::State(e.to_string()))?;
-        let tmp = with_suffix(path, ".tmp");
-        tokio::fs::write(&tmp, json).await?;
-        tokio::fs::rename(&tmp, path).await?;
-        Ok(())
+        durable_write(path, &json).await
     }
 
     /// Whether the saved segments make sense.
     pub(crate) fn is_valid(&self) -> bool {
-        self.version == STATE_VERSION
-            && !self.segments.is_empty()
-            && self
-                .segments
-                .iter()
-                .all(|s| s.start <= s.pos && s.pos <= s.end && s.end <= self.size)
+        if self.version != STATE_VERSION || self.segments.is_empty() {
+            return false;
+        }
+        let mut segments = self.segments.clone();
+        segments.sort_by_key(|s| s.start);
+        let mut next = 0;
+        for s in segments {
+            if s.start != next || s.start >= s.end || s.pos < s.start || s.pos > s.end {
+                return false;
+            }
+            next = s.end;
+        }
+        next == self.size
+    }
+
+    /// Range transfers preallocate the whole file. A shorter (or longer) file
+    /// cannot substantiate any of its saved positions.
+    pub(crate) async fn has_valid_data(&self, path: &Path) -> Result<bool> {
+        match tokio::fs::metadata(path).await {
+            Ok(metadata) => Ok(metadata.is_file() && metadata.len() == self.size),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// Whether the file on the server still looks like the one we started
     /// downloading.
     pub(crate) fn matches(&self, info: &RemoteInfo) -> bool {
-        fn same(saved: &Option<String>, remote: &Option<String>) -> bool {
-            match (saved, remote) {
-                (Some(a), Some(b)) => a == b,
-                _ => true,
-            }
-        }
-        info.resumable
-            && info.size == Some(self.size)
-            && same(&self.etag, &info.etag)
-            && same(&self.last_modified, &info.last_modified)
+        // The entity tag identifies the version. The date is only used when
+        // there is no tag: many servers send the current time as the date.
+        let same_version = if self.etag.is_some() || info.etag.is_some() {
+            self.etag == info.etag
+        } else {
+            self.last_modified == info.last_modified
+        };
+        info.resumable && self.url == info.url && info.size == Some(self.size) && same_version
     }
 }
 
@@ -112,14 +252,25 @@ impl SavedState {
 /// of starting over. Returns the bytes already downloaded, or `None` when
 /// there is no saved progress.
 ///
-/// Fails when the new address serves a file of another size, or one that
-/// cannot be resumed.
+/// Fails when the new address serves a file of another size, drops or changes
+/// a saved validator, or cannot be resumed. Rejected links leave progress intact.
 pub async fn retarget_partial(path: &Path, info: &RemoteInfo) -> Result<Option<u64>> {
-    let state = state_path(path);
-    let Some(mut saved) = SavedState::load(&state).await? else {
+    retarget_partial_in(path, None, info).await
+}
+
+/// Changes an unfinished download's link in its configured temp directory.
+pub async fn retarget_partial_in(
+    path: &Path,
+    temp_dir: Option<&Path>,
+    info: &RemoteInfo,
+) -> Result<Option<u64>> {
+    let files = PartialFiles::new(path, temp_dir);
+    files.prepare(path).await?;
+    let state = &files.state;
+    let Some(mut saved) = SavedState::load(state).await? else {
         return Ok(None);
     };
-    if !saved.is_valid() {
+    if !saved.is_valid() || !saved.has_valid_data(&files.data).await? {
         return Ok(None);
     }
     if info.size != Some(saved.size) {
@@ -136,13 +287,50 @@ pub async fn retarget_partial(path: &Path, info: &RemoteInfo) -> Result<Option<u
             "the new link cannot continue a download that was started".into(),
         ));
     }
+    for (previous, fresh) in [
+        (&saved.etag, &info.etag),
+        (&saved.last_modified, &info.last_modified),
+    ] {
+        if previous.is_some() && previous != fresh {
+            return Err(Error::NotSameFile(
+                "the new link has a different file version; restart the download to use it".into(),
+            ));
+        }
+    }
     saved.url.clone_from(&info.url);
     saved.etag.clone_from(&info.etag);
     saved.last_modified.clone_from(&info.last_modified);
-    saved.save(&state).await?;
+    saved.save(state).await?;
     Ok(Some(
         saved.segments.iter().map(|s| s.pos - s.start).sum::<u64>(),
     ))
+}
+
+/// Persist bytes before publishing their name. Directory syncing makes the
+/// rename durable on Unix; Windows does not support opening directories this
+/// way, but still receives a synced file and an atomic replacement.
+pub(crate) async fn durable_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = with_suffix(path, ".tmp");
+    let mut file = tokio::fs::File::create(&tmp).await?;
+    file.write_all(bytes).await?;
+    file.sync_all().await?;
+    drop(file);
+    tokio::fs::rename(&tmp, path).await?;
+    sync_parent(path).await
+}
+
+pub(crate) async fn sync_parent(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        tokio::fs::File::open(parent).await?.sync_all().await?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -179,9 +367,25 @@ mod tests {
         let state = SavedState::new(&info(10, Some("\"v1\"")), 10, segments);
         assert!(state.is_valid());
         assert!(state.matches(&info(10, Some("\"v1\""))));
-        assert!(state.matches(&info(10, None)));
+        assert!(!state.matches(&info(10, None)));
         assert!(!state.matches(&info(10, Some("\"v2\""))));
         assert!(!state.matches(&info(11, Some("\"v1\""))));
+
+        // A server that sends the current time as its date: the tag decides.
+        let dated = |etag: Option<&str>, date: &str| RemoteInfo {
+            last_modified: Some(date.into()),
+            ..info(10, etag)
+        };
+        let segments = vec![SavedSegment {
+            start: 0,
+            pos: 5,
+            end: 10,
+        }];
+        let state = SavedState::new(&dated(Some("\"v1\""), "Mon"), 10, segments.clone());
+        assert!(state.matches(&dated(Some("\"v1\""), "Tue")));
+        let state = SavedState::new(&dated(None, "Mon"), 10, segments);
+        assert!(state.matches(&dated(None, "Mon")));
+        assert!(!state.matches(&dated(None, "Tue")));
     }
 
     #[test]
@@ -192,6 +396,41 @@ mod tests {
             end: 10,
         }];
         assert!(!SavedState::new(&info(10, None), 10, segments).is_valid());
+    }
+
+    #[test]
+    fn requires_exact_segment_coverage_without_gaps_overlaps_or_duplicates() {
+        for ranges in [
+            vec![(0, 6), (5, 10)],
+            vec![(0, 4), (5, 10)],
+            vec![(1, 10)],
+            vec![(0, 9)],
+            vec![(0, 10), (0, 10)],
+            vec![(0, 0), (0, 10)],
+        ] {
+            let segments = ranges
+                .into_iter()
+                .map(|(start, end)| SavedSegment {
+                    start,
+                    pos: end,
+                    end,
+                })
+                .collect();
+            assert!(!SavedState::new(&info(10, None), 10, segments).is_valid());
+        }
+        let segments = vec![
+            SavedSegment {
+                start: 5,
+                pos: 7,
+                end: 10,
+            },
+            SavedSegment {
+                start: 0,
+                pos: 3,
+                end: 5,
+            },
+        ];
+        assert!(SavedState::new(&info(10, None), 10, segments).is_valid());
     }
 
     #[tokio::test]
@@ -241,8 +480,9 @@ mod tests {
             .save(&state_path(&path))
             .await
             .unwrap();
+        tokio::fs::write(part_path(&path), [0; 10]).await.unwrap();
 
-        let mut fresh = info(10, Some("\"new\""));
+        let mut fresh = info(10, Some("\"old\""));
         fresh.url = "https://mirror.example.net/a.bin?token=2".into();
         assert!(matches!(
             retarget_partial(&path, &info(11, None)).await,
@@ -254,6 +494,17 @@ mod tests {
             retarget_partial(&path, &whole).await,
             Err(Error::NotSameFile(_))
         ));
+        let before = SavedState::load(&state_path(&path)).await.unwrap().unwrap();
+        for etag in [Some("\"new\""), None] {
+            assert!(matches!(
+                retarget_partial(&path, &info(10, etag)).await,
+                Err(Error::NotSameFile(_))
+            ));
+            assert_eq!(
+                SavedState::load(&state_path(&path)).await.unwrap().unwrap(),
+                before
+            );
+        }
 
         assert_eq!(retarget_partial(&path, &fresh).await.unwrap(), Some(7));
         let saved = SavedState::load(&state_path(&path)).await.unwrap().unwrap();

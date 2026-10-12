@@ -25,31 +25,30 @@
   <a href="#tiếng-việt">Tiếng Việt</a>
 </p>
 
-![Supo Download Manager](docs/images/sdm-main-en.png)
+![Supo Download Manager](docs/images/sdm-idm-en.png)
 
-## Why another download manager?
+## Overview
 
-Why pay a **yearly subscription** for something as simple as a download manager? Or buy a
-**"lifetime" licence that only covers one or two PCs**, and pay again when you get a new
-laptop?
+SDM brings file downloads, video quality selection and Torrent downloads into one
+desktop app. It supports pause and resume, browser capture, queues and scheduling,
+with English and Vietnamese interfaces. It is free software under
+[GPL-3.0-or-later](LICENSE), with no subscription, device limit, accounts or ads.
 
-I didn't want to. So I vibecoded my own: a fully working download manager that splits
-files into many connections, resumes after crashes and restarts, grabs videos from web
-pages, and handles **torrents and magnet links** too. It's free, it runs on every
-computer you own, and the code is right here.
-
-|                                 | Typical paid download manager                 | **Supo Download Manager**             |
-| ------------------------------- | --------------------------------------------- | ------------------------------------- |
-| Price                           | Yearly subscription, or a licence per PC      | **Free, forever**                     |
-| New laptop                      | Buy again or move the licence around          | **Install it and go**                 |
-| How many PCs                    | 1–2 per licence                               | **As many as you like**               |
-| Windows · macOS · Linux         | Usually Windows only                          | **All three**                         |
-| Torrents and magnet links       | Usually a separate program                    | **Built in**                          |
-| Videos from web pages           | Yes                                           | **Yes**, in the quality you pick      |
-| Source code                     | Closed                                        | **Open** ([GPL-3.0](LICENSE))         |
-| Accounts, ads, tracking         | Varies                                        | **None**                              |
+**Release status:** use [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
+for stable installers. The screenshots and features below document 0.7.0. If the
+latest published release is older, use it for stable installations and treat
+0.7.0 CI artifacts as review builds until that version is published.
 
 ## Features
+
+**Compact desktop and updates (0.7.0)**
+- An IDM-style toolbar, categories, queues and download table in an 880 × 560
+  default window. Browser captures use a separate 480 × 320 confirmation window.
+- Optional startup in the Windows tray; off by default in **Settings → General**.
+- Signed stable updates on Windows, with background download, manual checks and
+  installation after work stops. Installed 0.7.0 builds can update to 0.7.1 from
+  **Settings → Updates → Check now**; older Windows builds need the 0.7.1 installer once. Repository signing
+  setup and release behavior are described in [AUTO_UPDATES.md](docs/AUTO_UPDATES.md).
 
 **Faster downloads**
 - Up to 32 connections per file. When a connection finishes its part, it takes over half
@@ -59,7 +58,15 @@ computer you own, and the code is right here.
   over instead of being mixed.
 - Automatic retries, a speed limit, proxies (HTTP, HTTPS, SOCKS5) and safe file names.
   Works with servers that allow only one connection or don't say how big the file is.
-- Link expired halfway? Paste a fresh one and the download continues where it stopped.
+- Link expired halfway? Paste a fresh one to continue when the server's file size and
+  saved validators still match. Changed or missing validators require a fresh download.
+- Download data and resume state stay in SDM's own temporary folder, configurable in
+  **Settings → General → Temporary folder** (Windows default:
+  `%LOCALAPPDATA%\com.supodownloadmanager.app\temp`). Completed or removed downloads
+  clean their temporary files; paused and failed downloads keep them for resuming.
+  Changing the folder applies to new downloads. Existing downloads retain their
+  stored folder across restarts, and known legacy sidecars move there at startup.
+  The temporary folder and the saved file can be on different drives.
 
 **Queues and scheduler**
 - Several queues, each with its own number of files at once. Start and stop them at set
@@ -76,12 +83,12 @@ computer you own, and the code is right here.
   through [yt-dlp](https://github.com/yt-dlp/yt-dlp), which SDM downloads, verifies and
   keeps up to date for you.
 
-**Torrents and magnet links**
+**Torrent and magnet links**
 - Click a magnet link, open a `.torrent` file or drop one on the window. SDM shows what is
   inside so you can pick the files.
 - Downloads continue after a restart without checking everything again. Finished torrents
   are shared back for a while (you choose how long), with separate upload limits.
-- Powered by [librqbit](https://github.com/ikatson/rqbit), a fast BitTorrent engine in Rust.
+- Powered by [librqbit](https://github.com/ikatson/rqbit), a fast Torrent engine in Rust.
 
 **Browser integration**
 - Extension for Chrome, Edge, Firefox, Brave, Opera, Vivaldi and Cốc Cốc. Downloads of the
@@ -91,7 +98,7 @@ computer you own, and the code is right here.
 **Pleasant to use**
 - A small progress window per download, in three styles (speed graph, ring or classic),
   with "open the file when done".
-- Two looks: **Minimal** (the default: dark, light or like the system, with a file's
+- Two looks: **Compact** (the default: dark, light or like the system, with a file's
   speed chart, connections and torrent files one click away) and **Neon** (dark, with a
   live speed chart and every connection on screen). English and Vietnamese.
 - Categories with their own folders, clipboard monitoring, tray icon and notifications.
@@ -105,8 +112,8 @@ computer you own, and the code is right here.
     <td width="50%"><img src="docs/images/sdm-video-en.png" alt="Choosing the quality of a video"><br><sub><b>Videos:</b> pick the quality</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/images/sdm-minimal-en.png" alt="Minimal look"><br><sub><b>Minimal</b> look, light</sub></td>
-    <td><img src="docs/images/sdm-minimal-dark-en.png" alt="Minimal look, dark"><br><sub><b>Minimal</b> look, dark (default)</sub></td>
+    <td><img src="docs/images/sdm-idm-en.png" alt="Compact IDM-style Supo window"><br><sub><b>Compact</b>, dark (default)</sub></td>
+    <td><img src="docs/images/sdm-capture-compact-en.png" alt="Compact download confirmation"><br><sub><b>Browser capture:</b> choose where and when to download</sub></td>
   </tr>
   <tr>
     <td><img src="docs/images/video-button-en.png" alt="Download this video button"><br><sub>The <b>Download this video</b> button</sub></td>
@@ -160,8 +167,11 @@ Press `Ctrl+C` to pause; run the same command again to resume.
 2. **Split:** the file is divided into one segment per connection.
 3. **Download:** each connection fills its segment. A connection that finishes early
    splits the segment with the most bytes left and takes the back half.
-4. **Save progress** to `name.sdm-part` / `name.sdm-state` every two seconds and on pause.
-5. **Finish:** the part file is renamed to the final name.
+4. **Save progress:** sync downloaded bytes before writing `name.sdm-state` in the
+   download's own temporary subfolder. Validate segment coverage and file length on resume.
+5. **Finish:** publish the final file, copying through destination-side staging when
+   the temporary folder is on another drive. The desktop app retains a SHA-256 completion
+   journal until its history is saved, so a restart can recover interrupted bookkeeping.
 
 Videos are downloaded by yt-dlp and torrents by librqbit, inside the same queue, list and
 progress windows. The browser extension talks to the app through a small server on
@@ -178,20 +188,25 @@ progress windows. The browser extension talks to the app through a small server 
 
 ## Building from source
 
-You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 20 or newer. On
+You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 22 or newer. On
 Linux, also the WebKitGTK libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```sh
 cd apps/desktop
-npm install
+npm ci
 npm run tauri dev      # run the app
-npm run tauri build    # build an installer
+npm run tauri build -- --config '{"bundle":{"createUpdaterArtifacts":false}}' # local installer
 ```
+
+Stable release installers generate signed updater artifacts and require the
+matching private signing key. See [AUTO_UPDATES.md](docs/AUTO_UPDATES.md).
 
 ## Contributing
 
 Bug reports, ideas, translations, docs and code are all welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [roadmap](docs/ROADMAP.md).
+Repository listing text and presentation assets are in
+[REPOSITORY.md](docs/REPOSITORY.md).
 
 ## Legal
 
@@ -208,7 +223,7 @@ install ffmpeg with your package manager for merging and converting media. Bundl
 tools come from their official releases and are checksum-verified when packaged.
 SDM keeps its own copy of yt-dlp up to date; source and licenses are available from
 the linked upstream projects. Torrents use [librqbit](https://github.com/ikatson/rqbit)
-(Apache-2.0). The interface uses the [Inter](https://rsms.me/inter/) typeface
+(Apache-2.0). The interface uses the [Hanken Grotesk](https://github.com/marcologous/hanken-grotesk) typeface
 (SIL Open Font License).
 SDM is an independent project, not affiliated with any other download manager.
 
@@ -219,9 +234,13 @@ SDM is an independent project, not affiliated with any other download manager.
 **Supo Download Manager (SDM)** là trình quản lý tải xuống **miễn phí, mã nguồn mở** cho
 Windows, macOS và Linux.
 
-Tại sao phải trả **phí thuê bao hằng năm** cho một trình tải file đơn giản, hay mua bản
-**"trọn đời" chỉ dùng được 1–2 máy** rồi mất khi đổi laptop mới? SDM miễn phí mãi mãi,
-cài trên bao nhiêu máy cũng được, và mã nguồn công khai.
+SDM quản lý tải file, video và Torrent trong cùng một ứng dụng, có tạm dừng/tải tiếp,
+hàng đợi, hẹn giờ và tích hợp trình duyệt. Không phí thuê bao, không giới hạn số máy,
+không tài khoản hay quảng cáo. Mã nguồn được phát hành theo [GPL-3.0-or-later](LICENSE).
+
+Trang Releases cung cấp bản ổn định. Ảnh và tính năng trong tài liệu mô tả 0.7.0.
+Nếu bản phát hành mới nhất còn thấp hơn, hãy dùng bản đó để cài ổn định; bộ cài
+0.7.0 từ CI dùng để review cho đến khi phiên bản này được phát hành.
 
 - **Tải nhanh** bằng tối đa 32 kết nối, tạm dừng và tải tiếp kể cả sau khi tắt máy.
 - **Hàng đợi và hẹn giờ**: nhiều hàng đợi, tự chạy/dừng theo giờ, tắt máy hoặc cho máy ngủ
@@ -232,8 +251,12 @@ cài trên bao nhiêu máy cũng được, và mã nguồn công khai.
   chọn tệp muốn tải.
 - **Extension** cho Chrome, Edge, Firefox, Cốc Cốc, Brave, Opera, Vivaldi; tải được cả
   link cần đăng nhập.
-- Hai giao diện: **Tối giản** (mặc định, nền tối/sáng/theo hệ thống) và **Neon**, có tiếng Việt
-  (vào **Cài đặt → Giao diện**). Bấm tên file để xem biểu đồ tốc độ và chi tiết.
+- Hai giao diện: **Gọn** (mặc định, nền tối/sáng/theo hệ thống) và **Neon**, có tiếng Việt
+  (vào **Cài đặt → Giao diện**). Bấm đúp tên file để xem biểu đồ tốc độ và chi tiết.
+- **Khởi động cùng Windows** là tùy chọn, mặc định tắt; khi bật, SDM mở ở khay hệ thống.
+- **Cập nhật ổn định có chữ ký trên Windows**: kiểm tra và tải nền, cài khi công việc đã
+  dừng và lịch sử đã được lưu. Bản 0.7.0 có thể lên 0.7.1 bằng **Cài đặt → Cập nhật →
+  Kiểm tra ngay**; bản Windows cũ hơn cần cài 0.7.1 thủ công một lần.
 
 **Cài đặt:** tải bộ cài ở trang [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
 (Windows: `…-setup.exe`; macOS: `.dmg`; Linux: `.deb`, `.rpm`, `.AppImage`), mở SDM rồi

@@ -27,6 +27,7 @@ import { SchedulerDialog } from "./components/SchedulerDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TorrentDialog } from "./components/TorrentDialog";
 import { type Toast, Toasts } from "./components/Toasts";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { I18nContext, copyText, errorText } from "./context";
 import { type Filter, type History, type TypeFilter, emptyHistory, matches, matchesType, recordHistory, totals } from "./model";
 import { MinimalView } from "./skins/Minimal";
@@ -285,7 +286,15 @@ export default function App() {
     onAdd: () => setDialog({ kind: "add" }),
     onResumeAll: () => run(api.resumeAll()),
     onPauseAll: () => run(api.pauseAll()),
-    onSettings: () => setDialog({ kind: "settings" }),
+    onSettings: () => {
+      // Windows Task Manager may have changed startup since SDM opened.
+      // Refresh before creating the draft so saving another preference does
+      // not silently re-enable an externally disabled startup entry.
+      void api.getSettings().then((current) => {
+        setSettings(current);
+        setDialog({ kind: "settings" });
+      }).catch((error) => showError(errorText(error)));
+    },
     onBrowsers: () => setDialog({ kind: "browsers" }),
     queues,
     queueFilter,
@@ -303,6 +312,7 @@ export default function App() {
   return (
     <I18nContext.Provider value={i18n}>
       {view && (skin === "neon" ? <NeonView {...view} /> : <MinimalView {...view} dark={dark} />)}
+      {view && <UpdateNotice />}
 
       {dialog?.kind === "details" && view && (
         <DownloadDetails d={downloads.find((d) => d.id === dialog.id)} history={history} actions={actions} onClose={closeDialog} />

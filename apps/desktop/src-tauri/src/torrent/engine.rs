@@ -1,4 +1,4 @@
-//! The BitTorrent session and the torrent downloads running in it.
+//! The Torrent session and the torrent downloads running in it.
 //!
 //! The session starts the first time a torrent is needed. librqbit keeps
 //! its own list of torrents with their progress (`fastresume`), so a paused
@@ -34,7 +34,7 @@ const MAGNET_TIMEOUT: Duration = Duration::from_secs(180);
 /// The most segments shown for a torrent; neighbouring files are grouped.
 const MAX_SEGMENTS: usize = 64;
 
-/// Settings of the BitTorrent session.
+/// Settings of the Torrent session.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EngineConfig {
     /// TCP port for incoming connections; `0` picks one and keeps it.
@@ -42,7 +42,7 @@ pub struct EngineConfig {
     pub download_limit: Option<u64>,
     pub upload_limit: Option<u64>,
     /// Empty for none, or a proxy URL; only SOCKS5 proxies carry
-    /// BitTorrent traffic.
+    /// Torrent traffic.
     pub proxy: String,
     /// Share a finished torrent until this many percent of its size were
     /// uploaded: `0` for not at all, [`SEED_FOREVER`] until SDM quits.
@@ -161,13 +161,13 @@ impl TorrentEngine {
         let port = self.port(&config);
         let session = match create(&self.dir, &config, port).await {
             Err(error) if port != 0 => {
-                tracing::warn!(%error, port, "BitTorrent port unavailable, using another one");
+                tracing::warn!(%error, port, "Torrent port unavailable, using another one");
                 create(&self.dir, &config, 0).await
             }
             result => result,
         }
-        .map_err(|error| format!("BitTorrent could not start: {error:#}"))?;
-        tracing::info!(addr = ?session.listen_addr(), "BitTorrent session started");
+        .map_err(|error| format!("Torrent could not start: {error:#}"))?;
+        tracing::info!(addr = ?session.listen_addr(), "Torrent session started");
         *self.session.write().unwrap_or_else(PoisonError::into_inner) = Some(session.clone());
 
         // Torrents restored from the last run wait until their download
@@ -318,7 +318,7 @@ impl TorrentEngine {
                     .map_err(|e| format!("{e:#}"))?;
                 Ok((bytes, Vec::new()))
             }
-            AddTorrentResponse::Added(..) => Err("unexpected answer from BitTorrent".into()),
+            AddTorrentResponse::Added(..) => Err("unexpected answer from Torrent".into()),
         }
     }
 
@@ -407,7 +407,7 @@ impl TorrentEngine {
         {
             AddTorrentResponse::Added(_, handle)
             | AddTorrentResponse::AlreadyManaged(_, handle) => Ok(handle),
-            AddTorrentResponse::ListOnly(_) => Err("unexpected answer from BitTorrent".into()),
+            AddTorrentResponse::ListOnly(_) => Err("unexpected answer from Torrent".into()),
         }
     }
 
@@ -687,7 +687,7 @@ async fn run(
         if matches!(stats.state, TorrentStatsState::Error) {
             return Err(stats
                 .error
-                .unwrap_or_else(|| "BitTorrent stopped with an error".into()));
+                .unwrap_or_else(|| "Torrent stopped with an error".into()));
         }
         let checking = matches!(stats.state, TorrentStatsState::Initializing { .. });
         let mut now = progress(&stats, &config, resumed_from.unwrap_or(0));

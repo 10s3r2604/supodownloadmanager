@@ -31,8 +31,9 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 - [x] Clipboard monitoring: offer to download copied links
 - [x] English and Vietnamese, light and dark themes
 - [ ] Sparse files on Windows, so pre-allocating multi-gigabyte downloads is instant on NTFS
-- [ ] Start with the computer (optional)
-- [ ] Automatic updates
+- [x] Start with the computer (optional, opens in the tray)
+- [x] Signed stable automatic updates on Windows; see [release setup](AUTO_UPDATES.md)
+- [ ] Automatic update installation/restart validation on Linux and macOS
 
 ## Phase 3: Browser integration ✅ (v0.2)
 
@@ -47,7 +48,7 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 
 ## Phase 4: Looks, progress windows and videos ✅ (v0.3)
 
-- [x] Minimal download list, dark by default; light/system themes and on-demand speed charts, connections and torrent details
+- [x] Compact IDM-style toolbar and download table, dark by default; light/system themes and on-demand speed charts, connections and torrent details
 - [x] A progress window for every download, in three styles (speed graph, ring, classic)
 - [x] "Show a dialog when done" and "Open the file when done" per download, "Don't show this dialog again"
 - [x] Video grabber: YouTube, Facebook, X, TikTok and ~1800 other sites through yt-dlp, with a quality picker
@@ -57,9 +58,9 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 - [ ] Playlists and channels
 - [ ] Subtitles
 
-## Phase 5: BitTorrent ✅ (v0.4)
+## Phase 5: Torrent ✅ (v0.4)
 
-Built on [librqbit](https://github.com/ikatson/rqbit), a BitTorrent engine in Rust.
+Built on [librqbit](https://github.com/ikatson/rqbit), a Torrent engine in Rust.
 
 - [x] Magnet links and `.torrent` files (from a link, a file, drag and drop or the command line)
 - [x] "Add torrent" dialog with the files to choose, as a folder tree

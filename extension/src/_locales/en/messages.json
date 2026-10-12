@@ -54,7 +54,7 @@
     "message": "Sent to SDM"
   },
   "videoFailed": {
-    "message": "SDM is not running"
+    "message": "Could not get the video qualities."
   },
   "videoButtonLabel": {
     "message": "Show a “Download this video” button on videos"
@@ -108,5 +108,17 @@
   },
   "linksReload": {
     "message": "Reload the page, then try again."
+  },
+  "videoRetry": {
+    "message": "Try again"
+  },
+  "videoUnknownSize": {
+    "message": "Size unknown"
+  },
+  "videoEstimatedSize": {
+    "message": "Estimated file size; the final file may differ."
+  },
+  "videoPostNotFound": {
+    "message": "This video’s post link is not available yet. Try again after the post finishes loading."
   }
 }

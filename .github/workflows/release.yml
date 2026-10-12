@@ -1,51 +1,158 @@
 name: Release
 
-# Push a tag such as `v0.2.0`, or run this workflow by hand with the version,
-# to build the desktop app installers, the `sdm` command line tool and the
-# browser extension, and publish them as a GitHub release (the release
-# creates the tag when it does not exist yet).
+# A versioned main commit becomes public only after its full CI run succeeds.
+# Tags/manual retries use the same exact-commit CI gate; PR/fork runs cannot sign.
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: Version to release, e.g. v0.4.0
+        description: Stable version already committed on main, e.g. v0.7.0
         required: true
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
-  VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
+  prepare:
+    name: Bind stable version to successful main CI
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    outputs:
+      eligible: ${{ steps.eligible.outputs.eligible }}
+      sha: ${{ steps.source.outputs.sha }}
+      ci_run: ${{ steps.source.outputs.ci_run }}
+      version: ${{ steps.eligible.outputs.version }}
+      tag: ${{ steps.eligible.outputs.tag }}
+    steps:
+      # This API-only guard runs before checking out any code or using signing
+      # secrets. workflow_run payloads from forks/PRs are never executable here.
+      - name: Verify trusted source before checkout
+        id: source
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const { data: main } = await github.rest.git.getRef({ ...context.repo, ref: 'heads/main' });
+            let sha;
+            let run;
+            if (context.eventName === 'workflow_run') {
+              run = context.payload.workflow_run;
+              if (run.event !== 'push' || run.head_branch !== 'main' ||
+                  run.head_repository?.full_name !== repository || run.path?.split('@')[0] !== '.github/workflows/ci.yml') {
+                core.notice('Ignoring CI from a PR, fork or unrelated workflow.');
+                return;
+              }
+              sha = run.head_sha;
+            } else {
+              if (context.eventName === 'workflow_dispatch' && context.ref !== 'refs/heads/main') {
+                throw new Error('Manual stable releases must run from main.');
+              }
+              if (context.eventName === 'push' && !/^refs\/tags\/v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(context.ref)) {
+                throw new Error('Only stable SemVer tags can be released.');
+              }
+              sha = context.eventName === 'push'
+                ? (await github.rest.repos.getCommit({ ...context.repo, ref: context.ref })).data.sha
+                : context.sha;
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                ...context.repo, workflow_id: 'ci.yml', event: 'push', branch: 'main', head_sha: sha, per_page: 100
+              });
+              run = data.workflow_runs.find((candidate) => candidate.head_sha === sha && candidate.status === 'completed' && candidate.conclusion === 'success');
+            }
+            if (sha !== main.object.sha) {
+              core.notice('Ignoring a commit superseded by the current main HEAD.');
+              return;
+            }
+            if (!run || run.status !== 'completed' || run.conclusion !== 'success' ||
+                run.event !== 'push' || run.head_branch !== 'main' || run.head_repository?.full_name !== repository) {
+              throw new Error('This exact main commit needs a completed successful full CI run first.');
+            }
+            core.setOutput('sha', sha);
+            core.setOutput('ci_run', run.id);
+            core.setOutput('trusted', 'true');
+      - uses: actions/checkout@v5
+        if: steps.source.outputs.trusted == 'true'
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        if: steps.source.outputs.trusted == 'true'
+        with:
+          node-version: 22
+      - name: Check stable version, CI jobs and release history
+        id: eligible
+        if: steps.source.outputs.trusted == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+          RELEASE_CI_RUN: ${{ steps.source.outputs.ci_run }}
+          REQUESTED_TAG: ${{ inputs.version || (github.event_name == 'push' && github.ref_name) || '' }}
+        run: node .github/scripts/release/eligibility.mjs
+      - name: Validate matching application versions and release helper tests
+        if: steps.eligible.outputs.eligible == 'true'
+        env:
+          VERSION: ${{ steps.eligible.outputs.tag }}
+        run: |
+          node .github/scripts/check-version.mjs
+          node --test .github/scripts/release/*.test.mjs
+          node --test extension/tests/*.test.mjs
+
   desktop:
-    name: Desktop app (${{ matrix.name }})
+    needs: prepare
+    if: needs.prepare.outputs.eligible == 'true'
+    name: Signed desktop (${{ matrix.platform }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Windows
+          - platform: windows-x86_64
             os: windows-latest
             args: ""
+            bundle_dir: target/release/bundle
             deno: deno-x86_64-pc-windows-msvc.zip
-          - name: Linux
+          - platform: linux-x86_64
             os: ubuntu-22.04
             args: ""
+            bundle_dir: target/release/bundle
             deno: deno-x86_64-unknown-linux-gnu.zip
-          - name: macOS Apple Silicon
+          - platform: darwin-aarch64
             os: macos-latest
             args: --target aarch64-apple-darwin
+            bundle_dir: target/aarch64-apple-darwin/release/bundle
             deno: deno-aarch64-apple-darwin.zip
-          - name: macOS Intel
+          - platform: darwin-x86_64
             os: macos-latest
             args: --target x86_64-apple-darwin
+            bundle_dir: target/x86_64-apple-darwin/release/bundle
             deno: deno-x86_64-apple-darwin.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Require the official updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY must be configured before stable releases can be built."
+            exit 1
+          fi
       - name: Install system libraries
         if: runner.os == 'Linux'
         run: |
@@ -66,46 +173,33 @@ jobs:
         shell: bash
         env:
           DENO_ASSET: ${{ matrix.deno }}
-        run: |
-          bash .github/scripts/bundle-tools.sh "$RUNNER_OS" "$DENO_ASSET"
-          du -sh apps/desktop/src-tauri/tools
-      - uses: tauri-apps/tauri-action@v0
+        run: bash .github/scripts/bundle-tools.sh "$RUNNER_OS" "$DENO_ASSET"
+      # Use the official action for bundle/signature generation, with no release
+      # upload. Its read/delete/upload manifest merge races across parallel jobs.
+      - name: Build signed desktop packages
+        uses: tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4 # v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
-          tagName: ${{ env.VERSION }}
-          releaseName: Supo Download Manager ${{ env.VERSION }}
-          releaseBody: |
-            Free, open-source download manager with multi-connection downloads, a video grabber and BitTorrent (magnet links and .torrent files).
-
-            Pick a video quality directly on the web page. SDM reads formats in advance and ships yt-dlp and Deno, plus ffmpeg on Windows, so video downloads can start without installing tools first.
-
-            ## Which file do I need?
-
-            | System | File |
-            | --- | --- |
-            | Windows 10/11 | `Supo.Download.Manager_*_x64-setup.exe` (or the `.msi`) |
-            | macOS, Apple Silicon (M1–M4) | `Supo.Download.Manager_*_aarch64.dmg` |
-            | macOS, Intel | `Supo.Download.Manager_*_x64.dmg` |
-            | Ubuntu, Debian, Mint | `*_amd64.deb` |
-            | Fedora, openSUSE | `*.x86_64.rpm` |
-            | Any Linux | `*_amd64.AppImage` |
-            | Command line only | `sdm-cli-*` for your system |
-            | Browser extension (manual install) | `sdm-extension-chromium-*.zip` or `sdm-extension-firefox-*.zip` |
-
-            The installers are not code-signed yet:
-
-            - **Windows**: if SmartScreen warns, click **More info → Run anyway**.
-            - **macOS**: if macOS says the app is damaged or from an unidentified developer, run
-              `xattr -dr com.apple.quarantine "/Applications/Supo Download Manager.app"` once, then open it.
-
-            After installing, open SDM and click **Browsers** to add the browser extension.
-            See the [README](https://github.com/10s3r2604/supodownloadmanager#readme) for details.
           args: ${{ matrix.args }}
+          includeUpdaterJson: false
+      - name: Verify signatures and stage desktop packages
+        env:
+          BUNDLE_DIR: ${{ matrix.bundle_dir }}
+          UPDATER_PLATFORM: ${{ matrix.platform }}
+        run: node .github/scripts/release/artifacts.mjs stage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdm-release-desktop-${{ matrix.platform }}
+          path: release-desktop/
+          if-no-files-found: error
 
   cli:
-    name: CLI ${{ matrix.target }}
+    needs: prepare
+    if: needs.prepare.outputs.eligible == 'true'
+    name: CLI (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
@@ -119,11 +213,17 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p sdm-cli --target ${{ matrix.target }}
       - name: Package
         shell: bash
@@ -140,33 +240,66 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: sdm-cli-${{ matrix.target }}
+          name: sdm-release-cli-${{ matrix.target }}
           path: |
             sdm-cli-*.zip
             sdm-cli-*.tar.gz
+          if-no-files-found: error
 
-  publish:
-    name: Publish CLI and extension
-    needs: [desktop, cli]
+  extension:
+    needs: prepare
+    if: needs.prepare.outputs.eligible == 'true'
+    name: Package tested browser extensions
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - name: Package the browser extension
-        run: |
+      - run: |
+          node --test extension/tests/*.test.mjs
           node extension/build.mjs
           (cd extension/dist/chromium && zip -r "../../../sdm-extension-chromium-${VERSION}.zip" .)
           (cd extension/dist/firefox && zip -r "../../../sdm-extension-firefox-${VERSION}.zip" .)
           (cd extension/dist/chromium-store && zip -r "../../../sdm-extension-store-chromium-${VERSION}.zip" .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdm-release-extensions
+          path: sdm-extension-*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish complete signed stable release
+    needs: [prepare, desktop, cli, extension]
+    if: needs.prepare.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+      RELEASE_CI_RUN: ${{ needs.prepare.outputs.ci_run }}
+      REQUESTED_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
       - uses: actions/download-artifact@v4
         with:
-          path: dist
-          merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.VERSION }}
-          files: |
-            dist/*
-            sdm-extension-*.zip
+          pattern: sdm-release-*
+          path: release-input
+      - name: Merge and verify every signed updater platform and package
+        run: node .github/scripts/release/artifacts.mjs merge
+      - name: Recheck exact CI/main version and publish all assets together
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release/publish.mjs

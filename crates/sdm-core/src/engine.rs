@@ -13,17 +13,18 @@ use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Response, StatusCode, Url};
 use serde::Serialize;
 use tokio::fs::{self, File, OpenOptions};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+use crate::completion::prepare_completion;
 use crate::error::{Error, Result};
 use crate::filename;
 use crate::limiter::RateLimiter;
 use crate::probe::{self, ContentRange, RemoteInfo};
 use crate::segment::{Scheduler, Segment, lock};
-use crate::state::{self, SavedSegment, SavedState};
+use crate::state::{PartialFiles, SavedSegment, SavedState, sync_parent};
 
 /// Data is collected in memory up to this size before it is written.
 const WRITE_BUFFER: usize = 256 * 1024;
@@ -33,6 +34,7 @@ const TICK: Duration = Duration::from_millis(250);
 const SAVE_EVERY: u32 = 8;
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(15);
 const PROBE_ATTEMPTS: u32 = 3;
+const MAX_REMOTE_RESTARTS: u32 = 1;
 
 const RUNNING: u8 = 0;
 const PAUSE: u8 = 1;
@@ -102,6 +104,13 @@ pub struct DownloadOptions {
     pub speed_limit: Option<u64>,
     /// Replace an existing file instead of choosing another name.
     pub overwrite: bool,
+    /// Keep unfinished data and progress under this root. `None` preserves
+    /// the CLI's sidecar layout. Each destination gets an isolated subfolder.
+    pub temp_dir: Option<PathBuf>,
+    /// Retain a verified publication journal until the application saves its
+    /// Completed history and calls [`crate::acknowledge_completion`]. Use a
+    /// stable, unique application row ID. `None` preserves CLI cleanup.
+    pub completion_id: Option<String>,
 }
 
 impl Default for DownloadOptions {
@@ -113,6 +122,8 @@ impl Default for DownloadOptions {
             retry_delay: Duration::from_millis(500),
             speed_limit: None,
             overwrite: false,
+            temp_dir: None,
+            completion_id: None,
         }
     }
 }
@@ -585,10 +596,10 @@ impl Shared {
 static ACTIVE_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Default::default);
 
 /// Keeps a path reserved in [`ACTIVE_PATHS`] while it is alive.
-struct PathGuard(PathBuf);
+pub(crate) struct PathGuard(PathBuf);
 
 impl PathGuard {
-    fn try_new(path: &Path) -> Option<Self> {
+    pub(crate) fn try_new(path: &Path) -> Option<Self> {
         lock(&ACTIVE_PATHS)
             .insert(path.to_owned())
             .then(|| Self(path.to_owned()))
@@ -599,6 +610,25 @@ impl Drop for PathGuard {
     fn drop(&mut self) {
         lock(&ACTIVE_PATHS).remove(&self.0);
     }
+}
+
+/// Cleans this download's workspace only when no transfer owns its target.
+pub async fn cleanup_partial(path: &Path, temp_dir: Option<&Path>) -> Result<()> {
+    let _guard = PathGuard::try_new(path).ok_or_else(|| Error::InUse(path.to_owned()))?;
+    PartialFiles::new(path, temp_dir).cleanup().await?;
+    let root = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".sdm-finalizing");
+    PartialFiles::new(path, Some(&root)).cleanup().await?;
+    let _ = fs::remove_dir(root).await;
+    Ok(())
+}
+
+/// Moves legacy sidecars without contacting the server or starting a transfer.
+pub async fn migrate_partial(path: &Path, temp_dir: &Path) -> Result<()> {
+    let _guard = PathGuard::try_new(path).ok_or_else(|| Error::InUse(path.to_owned()))?;
+    PartialFiles::new(path, Some(temp_dir)).prepare(path).await
 }
 
 async fn run_task(
@@ -638,12 +668,17 @@ async fn run(
     let url = parse_url(&url)?;
     let headers = build_headers(&headers)?;
 
-    let info = match probe_with_retry(&client, &url, &headers, &options, &shared.cancel).await {
+    let mut info = match probe_with_retry(&client, &url, &headers, &options, &shared.cancel).await {
         Err(Error::Cancelled) => return Ok(shared.stopped_outcome(None)),
         result => result?,
     };
-    let (path, mut saved, _guard) =
-        resolve_destination(&destination, &info, options.overwrite).await?;
+    let (path, mut saved, _guard, files) = resolve_destination(
+        &destination,
+        &info,
+        options.overwrite,
+        options.temp_dir.as_deref(),
+    )
+    .await?;
     {
         let mut status = lock(&shared.status);
         status.info = Some(info.clone());
@@ -655,13 +690,14 @@ async fn run(
     }
 
     let mut ranged = info.resumable && info.size.is_some_and(|size| size > 0);
+    let mut remote_restarts = 0;
     loop {
         let ctx = Arc::new(Ctx {
             client: client.clone(),
             url: url.clone(),
             headers: headers.clone(),
-            part: state::part_path(&path),
-            state: state::state_path(&path),
+            part: files.data.clone(),
+            state: files.state.clone(),
             info: info.clone(),
             ranged,
             options: options.clone(),
@@ -670,12 +706,65 @@ async fn run(
             cancel: shared.cancel.child_token(),
         });
         match transfer(ctx, &path, saved.take()).await {
+            Err(Error::RemoteChanged) => {
+                // No byte from the previous representation may survive. Bound
+                // the automatic restart so unstable servers cannot loop.
+                files.cleanup().await?;
+                {
+                    let mut status = lock(&shared.status);
+                    status.scheduler = None;
+                    status.resumed_from = 0;
+                    status.phase = Phase::Connecting;
+                }
+                if remote_restarts >= MAX_REMOTE_RESTARTS {
+                    return Err(Error::RemoteChanged);
+                }
+                remote_restarts += 1;
+                info = match probe_with_retry(&client, &url, &headers, &options, &shared.cancel)
+                    .await
+                {
+                    Err(Error::Cancelled) => return Ok(shared.stopped_outcome(Some(path))),
+                    result => result?,
+                };
+                files.prepare(&path).await?;
+                ranged = info.resumable && info.size.is_some_and(|size| size > 0);
+                let mut status = lock(&shared.status);
+                status.info = Some(info.clone());
+                status.phase = Phase::Downloading;
+            }
             Err(Error::RangeIgnored) if ranged => {
                 tracing::warn!("server ignores byte ranges; continuing with a single connection");
                 ranged = false;
-                remove_if_exists(&state::state_path(&path)).await?;
+                remove_if_exists(&files.state).await?;
             }
-            result => return result,
+            result => {
+                if matches!(
+                    result,
+                    Ok(Outcome::Completed { .. }
+                        | Outcome::Cancelled
+                        | Outcome::Paused {
+                            resumable: false,
+                            ..
+                        })
+                ) {
+                    let cleanup = if options.completion_id.is_some()
+                        && matches!(result, Ok(Outcome::Completed { .. }))
+                    {
+                        files.cleanup_transfer().await
+                    } else {
+                        files.cleanup().await
+                    };
+                    if let Err(error) = cleanup {
+                        tracing::warn!(%error, "could not clean download temporary files");
+                    }
+                    if options.temp_dir.is_some()
+                        && let Err(error) = PartialFiles::new(&path, None).cleanup().await
+                    {
+                        tracing::warn!(%error, "could not clean migrated download files");
+                    }
+                }
+                return result;
+            }
         }
     }
 }
@@ -715,20 +804,26 @@ async fn resolve_destination(
     destination: &Destination,
     info: &RemoteInfo,
     overwrite: bool,
-) -> Result<(PathBuf, Option<SavedState>, PathGuard)> {
+    temp_dir: Option<&Path>,
+) -> Result<(PathBuf, Option<SavedState>, PathGuard, PartialFiles)> {
     match destination {
         Destination::File(path) => {
             let guard = PathGuard::try_new(path).ok_or_else(|| Error::InUse(path.clone()))?;
             if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
                 fs::create_dir_all(parent).await?;
             }
-            if let Some(saved) = saved_progress(path, info).await? {
-                return Ok((path.clone(), Some(saved), guard));
+            let files = PartialFiles::new(path, temp_dir);
+            files.prepare(path).await?;
+            if let Some(saved) = saved_progress(&files, info).await? {
+                return Ok((path.clone(), Some(saved), guard, files));
             }
             if !overwrite && fs::try_exists(path).await? {
+                if let Some(directory) = files.directory() {
+                    let _ = fs::remove_dir(directory).await;
+                }
                 return Err(Error::FileExists(path.clone()));
             }
-            Ok((path.clone(), None, guard))
+            Ok((path.clone(), None, guard, files))
         }
         Destination::Directory(dir) => {
             fs::create_dir_all(dir).await?;
@@ -736,10 +831,15 @@ async fn resolve_destination(
                 let Some(guard) = PathGuard::try_new(&candidate) else {
                     continue;
                 };
-                if let Some(saved) = saved_progress(&candidate, info).await? {
-                    return Ok((candidate, Some(saved), guard));
+                let files = PartialFiles::new(&candidate, temp_dir);
+                files.prepare(&candidate).await?;
+                if let Some(saved) = saved_progress(&files, info).await? {
+                    return Ok((candidate, Some(saved), guard, files));
                 }
                 if !overwrite && fs::try_exists(&candidate).await? {
+                    if let Some(directory) = files.directory() {
+                        let _ = fs::remove_dir(directory).await;
+                    }
                     continue;
                 }
                 // Creating the part file reserves the name, so two programs
@@ -747,10 +847,10 @@ async fn resolve_destination(
                 match OpenOptions::new()
                     .write(true)
                     .create_new(true)
-                    .open(state::part_path(&candidate))
+                    .open(&files.data)
                     .await
                 {
-                    Ok(_) => return Ok((candidate, None, guard)),
+                    Ok(_) => return Ok((candidate, None, guard, files)),
                     Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
                     Err(e) => return Err(e.into()),
                 }
@@ -762,10 +862,10 @@ async fn resolve_destination(
 
 /// Loads usable saved progress for `path`. Progress that does not match the
 /// file on the server any more is deleted.
-async fn saved_progress(path: &Path, info: &RemoteInfo) -> Result<Option<SavedState>> {
-    let state_path = state::state_path(path);
-    let part_path = state::part_path(path);
-    let saved = match SavedState::load(&state_path).await {
+async fn saved_progress(files: &PartialFiles, info: &RemoteInfo) -> Result<Option<SavedState>> {
+    let state_path = &files.state;
+    let part_path = &files.data;
+    let saved = match SavedState::load(state_path).await {
         Ok(None) => return Ok(None),
         Ok(Some(saved)) => Some(saved),
         Err(Error::State(error)) => {
@@ -776,14 +876,23 @@ async fn saved_progress(path: &Path, info: &RemoteInfo) -> Result<Option<SavedSt
     };
     if let Some(saved) = saved
         && saved.is_valid()
-        && saved.matches(info)
-        && fs::try_exists(&part_path).await?
+        && saved.has_valid_data(part_path).await?
     {
-        return Ok(Some(saved));
+        if saved.matches(info) {
+            return Ok(Some(saved));
+        }
+        if saved.url != info.url {
+            // A new link must be validated by retarget_partial before
+            // replacing a different URL's usable saved data.
+            return Err(Error::NotSameFile(
+                "this partial download belongs to another link; refresh its link or restart it"
+                    .into(),
+            ));
+        }
     }
-    tracing::warn!(path = %path.display(), "the file changed on the server; starting over");
-    remove_if_exists(&state_path).await?;
-    remove_if_exists(&part_path).await?;
+    tracing::warn!(path = %part_path.display(), "the file changed on the server; starting over");
+    remove_if_exists(state_path).await?;
+    remove_if_exists(part_path).await?;
     Ok(None)
 }
 
@@ -812,9 +921,17 @@ impl Ctx {
     async fn save_state(&self, scheduler: &Scheduler) -> Result<()> {
         match self.info.size {
             Some(size) if self.ranged => {
-                SavedState::new(&self.info, size, scheduler.saved_segments())
-                    .save(&self.state)
-                    .await
+                // Snapshot first, then sync the data backing those positions.
+                // Taking the snapshot after syncing could claim newer writes
+                // which have not yet reached stable storage.
+                let saved = SavedState::new(&self.info, size, scheduler.saved_segments());
+                OpenOptions::new()
+                    .write(true)
+                    .open(&self.part)
+                    .await?
+                    .sync_all()
+                    .await?;
+                saved.save(&self.state).await
             }
             _ => Ok(()),
         }
@@ -859,6 +976,9 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
         status.scheduler = Some(scheduler.clone());
     }
 
+    // Keep a fresh range plan recoverable from the first connection onward.
+    ctx.save_state(&scheduler).await?;
+
     let mut tasks = JoinSet::new();
     for _ in 0..workers {
         tasks.spawn(worker(ctx.clone(), scheduler.clone()));
@@ -895,6 +1015,22 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
     }
     shared.speed.store(0, Ordering::Relaxed);
 
+    // A simultaneous pause must never persist positions from a representation
+    // which one of the workers has already rejected.
+    if matches!(&failure, Some(Error::RemoteChanged)) && shared.stop_reason() != RUNNING {
+        PartialFiles::new(path, ctx.options.temp_dir.as_deref())
+            .cleanup()
+            .await?;
+        return Ok(if shared.stop_reason() == CANCEL {
+            Outcome::Cancelled
+        } else {
+            Outcome::Paused {
+                path: Some(path.to_owned()),
+                resumable: false,
+            }
+        });
+    }
+
     match shared.stop_reason() {
         CANCEL => {
             remove_if_exists(&ctx.part).await?;
@@ -921,7 +1057,7 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
     }
 
     if let Some(error) = failure {
-        if matches!(error, Error::RangeIgnored) {
+        if matches!(error, Error::RangeIgnored | Error::RemoteChanged) {
             return Err(error);
         }
         if ctx.ranged {
@@ -949,12 +1085,121 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
             .set_len(size)
             .await?;
     }
-    fs::rename(&ctx.part, path).await?;
-    remove_if_exists(&ctx.state).await?;
+    // Save complete progress before committing, so disk/copy failures can be
+    // retried without downloading the bytes again.
+    ctx.save_state(&scheduler).await?;
+    // Non-ranged downloads have no state snapshot but their data must also
+    // reach stable storage before publishing the final name.
+    OpenOptions::new()
+        .write(true)
+        .open(&ctx.part)
+        .await?
+        .sync_all()
+        .await?;
+    // Without ranges the data cannot be kept for later, so a pause (or
+    // quitting) must not stop the last steps; only deleting it does.
+    let never = CancellationToken::new();
+    let finishing_cancel = if ctx.ranged { &ctx.cancel } else { &never };
+    if let Some(completion_id) = &ctx.options.completion_id {
+        match prepare_completion(
+            path,
+            ctx.options.temp_dir.as_deref(),
+            completion_id,
+            size,
+            finishing_cancel,
+        )
+        .await
+        {
+            Err(Error::Cancelled) => return stopped_before_publication(&ctx, path).await,
+            result => result?,
+        }
+    }
+    if let Err(error) = publish_file(&ctx, path).await {
+        if matches!(error, Error::Cancelled) {
+            return match shared.stop_reason() {
+                CANCEL => Ok(Outcome::Cancelled),
+                _ => Ok(Outcome::Paused {
+                    path: Some(path.to_owned()),
+                    resumable: ctx.ranged,
+                }),
+            };
+        }
+        return Err(error);
+    }
     Ok(Outcome::Completed {
         path: path.to_owned(),
         size,
     })
+}
+
+async fn stopped_before_publication(ctx: &Ctx, path: &Path) -> Result<Outcome> {
+    if ctx.shared.stop_reason() == CANCEL {
+        PartialFiles::new(path, ctx.options.temp_dir.as_deref())
+            .cleanup()
+            .await?;
+        Ok(Outcome::Cancelled)
+    } else {
+        Ok(Outcome::Paused {
+            path: Some(path.to_owned()),
+            resumable: ctx.ranged,
+        })
+    }
+}
+
+/// Rename on one volume; copy to a private staging folder on the destination
+/// volume otherwise. The final filename appears only after the copy succeeds.
+async fn publish_file(ctx: &Ctx, path: &Path) -> Result<()> {
+    // Paused downloads without ranges finish anyway: see `finish`.
+    let stopped =
+        || ctx.shared.cancel.is_cancelled() && (ctx.ranged || ctx.shared.stop_reason() == CANCEL);
+    if stopped() {
+        return Err(Error::Cancelled);
+    }
+    match fs::rename(&ctx.part, path).await {
+        Ok(()) => {
+            sync_parent(path).await?;
+            sync_parent(&ctx.part).await?;
+            return Ok(());
+        }
+        Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {}
+        Err(error) => return Err(error.into()),
+    }
+    let root = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".sdm-finalizing");
+    let staging_files = PartialFiles::new(path, Some(&root));
+    let directory = staging_files.directory().unwrap();
+    fs::create_dir_all(directory).await?;
+    let result = async {
+        let mut source = File::open(&ctx.part).await?;
+        let mut target = File::create(&staging_files.data).await?;
+        let mut buffer = vec![0; WRITE_BUFFER];
+        loop {
+            if stopped() {
+                return Err(Error::Cancelled);
+            }
+            let count = source.read(&mut buffer).await?;
+            if count == 0 {
+                break;
+            }
+            target.write_all(&buffer[..count]).await?;
+        }
+        target.sync_all().await?;
+        drop(target);
+        if stopped() {
+            return Err(Error::Cancelled);
+        }
+        fs::rename(&staging_files.data, path).await?;
+        sync_parent(path).await?;
+        Ok(())
+    }
+    .await;
+    if let Err(error) = staging_files.cleanup().await {
+        tracing::warn!(%error, "could not clean finalization staging files");
+    }
+    let _ = fs::remove_dir(root).await; // Only remove an empty shared folder.
+    result
 }
 
 /// Splits a fresh download into segments of roughly equal size.
@@ -1067,13 +1312,16 @@ async fn fetch(ctx: &Ctx, segment: &Segment) -> Result<()> {
     let mut request = ctx.client.get(ctx.url.clone()).headers(ctx.headers.clone());
     if ctx.ranged {
         request = request.header(header::RANGE, format!("bytes={start}-{}", end - 1));
+        if let Some(validator) = if_range_validator(&ctx.info) {
+            request = request.header(header::IF_RANGE, validator);
+        }
     }
     let response = tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => return Err(Error::Cancelled),
         response = request.send() => response?,
     };
-    check_response(ctx, &response, start)?;
+    check_response(ctx, &response, start, end)?;
     let _active = ActiveConnection::new(&ctx.shared.connections);
 
     let mut file = OpenOptions::new().write(true).open(&ctx.part).await?;
@@ -1089,8 +1337,41 @@ async fn fetch(ctx: &Ctx, segment: &Segment) -> Result<()> {
     streamed.and(flushed)
 }
 
-fn check_response(ctx: &Ctx, response: &Response, start: u64) -> Result<()> {
+/// Weak entity tags are forbidden in If-Range; a date is the fallback.
+fn if_range_validator(info: &RemoteInfo) -> Option<&str> {
+    info.etag
+        .as_deref()
+        .filter(|etag| etag.starts_with('"') && etag.ends_with('"'))
+        .or(info.last_modified.as_deref())
+}
+
+fn check_response(ctx: &Ctx, response: &Response, start: u64, end: u64) -> Result<()> {
     let status = response.status();
+    if status == StatusCode::RANGE_NOT_SATISFIABLE
+        && let Some(range) = response
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(probe::parse_content_range)
+        && range.total.is_some()
+        && range.total != ctx.info.size
+    {
+        return Err(Error::RemoteChanged);
+    }
+    // A different entity tag means another version of the file. A missing
+    // one proves nothing (If-Range already guards ranges), and Last-Modified
+    // is left out: many servers send the current time with every response.
+    if status.is_success()
+        && let Some(expected) = &ctx.info.etag
+        && let Some(actual) = response
+            .headers()
+            .get(header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+        && actual != expected.as_str()
+    {
+        return Err(Error::RemoteChanged);
+    }
     if !ctx.ranged {
         return if status.is_success() {
             Ok(())
@@ -1107,9 +1388,9 @@ fn check_response(ctx: &Ctx, response: &Response, start: u64) -> Result<()> {
                 .and_then(probe::parse_content_range);
             match range {
                 Some(ContentRange {
-                    range: Some((first, _)),
+                    range: Some((first, last)),
                     total,
-                }) if first == start => {
+                }) if first == start && last < end => {
                     if total.is_some() && total != ctx.info.size {
                         return Err(Error::RemoteChanged);
                     }
@@ -1118,8 +1399,8 @@ fn check_response(ctx: &Ctx, response: &Response, start: u64) -> Result<()> {
                 _ => Err(Error::BadContentRange),
             }
         }
-        // The whole file still works for a segment that starts at zero.
-        StatusCode::OK if start == 0 => Ok(()),
+        // A full response must restart the entire file with one connection,
+        // even at offset zero; otherwise its bytes can mix with other ranges.
         StatusCode::OK => Err(Error::RangeIgnored),
         status => Err(Error::Status(status)),
     }
@@ -1271,6 +1552,7 @@ fn build_headers(pairs: &[(String, String)]) -> Result<HeaderMap> {
         let name = HeaderName::from_bytes(name.trim().as_bytes()).map_err(|_| invalid())?;
         if [
             header::RANGE,
+            header::IF_RANGE,
             header::ACCEPT_ENCODING,
             header::CONTENT_LENGTH,
             header::HOST,
