@@ -107,7 +107,7 @@ computer you own, and the code is right here.
 **Pleasant to use**
 - A small progress window per download, in three styles (speed graph, ring or classic),
   with "open the file when done".
-- Two looks: **Minimal** (the default: dark, light or like the system, with a file's
+- Two looks: **IDM · Supo** (the default: dark, light or like the system, with a file's
   speed chart, connections and torrent files one click away) and **Neon** (dark, with a
   live speed chart and every connection on screen). English and Vietnamese.
 - Categories with their own folders, clipboard monitoring, tray icon and notifications.
@@ -121,8 +121,8 @@ computer you own, and the code is right here.
     <td width="50%"><img src="docs/images/sdm-video-en.png" alt="Choosing the quality of a video"><br><sub><b>Videos:</b> pick the quality</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/images/sdm-minimal-en.png" alt="Minimal look"><br><sub><b>Minimal</b> look, light</sub></td>
-    <td><img src="docs/images/sdm-minimal-dark-en.png" alt="Minimal look, dark"><br><sub><b>Minimal</b> look, dark (default)</sub></td>
+    <td><img src="docs/images/sdm-idm-en.png" alt="Compact IDM-style Supo window"><br><sub><b>IDM · Supo</b>, dark (default)</sub></td>
+    <td><img src="docs/images/sdm-capture-compact-en.png" alt="Compact download confirmation"><br><sub><b>Browser capture:</b> choose where and when to download</sub></td>
   </tr>
   <tr>
     <td><img src="docs/images/video-button-en.png" alt="Download this video button"><br><sub>The <b>Download this video</b> button</sub></td>
@@ -197,15 +197,18 @@ progress windows. The browser extension talks to the app through a small server 
 
 ## Building from source
 
-You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 20 or newer. On
+You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 22 or newer. On
 Linux, also the WebKitGTK libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```sh
 cd apps/desktop
 npm install
 npm run tauri dev      # run the app
-npm run tauri build    # build an installer
+npm run tauri build -- --config '{"bundle":{"createUpdaterArtifacts":false}}' # local installer
 ```
+
+Stable release installers generate signed updater artifacts and require the
+matching private signing key. See [AUTO_UPDATES.md](docs/AUTO_UPDATES.md).
 
 ## Contributing
 
@@ -251,8 +254,11 @@ cài trên bao nhiêu máy cũng được, và mã nguồn công khai.
   chọn tệp muốn tải.
 - **Extension** cho Chrome, Edge, Firefox, Cốc Cốc, Brave, Opera, Vivaldi; tải được cả
   link cần đăng nhập.
-- Hai giao diện: **Tối giản** (mặc định, nền tối/sáng/theo hệ thống) và **Neon**, có tiếng Việt
-  (vào **Cài đặt → Giao diện**). Bấm tên file để xem biểu đồ tốc độ và chi tiết.
+- Hai giao diện: **IDM · Supo** (mặc định, nền tối/sáng/theo hệ thống) và **Neon**, có tiếng Việt
+  (vào **Cài đặt → Giao diện**). Bấm đúp tên file để xem biểu đồ tốc độ và chi tiết.
+- **Khởi động cùng Windows** là tùy chọn, mặc định tắt; khi bật, SDM mở ở khay hệ thống.
+- **Cập nhật ổn định có chữ ký trên Windows**: kiểm tra và tải nền, cài khi công việc đã
+  dừng và lịch sử đã được lưu. Cần cài 0.7.0 thủ công một lần để dùng updater.
 
 **Cài đặt:** tải bộ cài ở trang [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
 (Windows: `…-setup.exe`; macOS: `.dmg`; Linux: `.deb`, `.rpm`, `.AppImage`), mở SDM rồi

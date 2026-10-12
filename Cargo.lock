@@ -4832,6 +4832,7 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "embed-resource",
  "flate2",
  "libc",
  "librqbit",
