@@ -75,7 +75,7 @@ async fn serve(
     let is_probe = range == Some((0, Some(0)));
     let honours_range = match mode.as_str() {
         "file" | "named" | "flaky" | "changed" | "ifrangechanged" | "oscillating" | "weak"
-        | "dated" | "missingvalidator" => true,
+        | "dated" | "missingvalidator" | "nowdated" => true,
         "lying" => is_probe,
         "norange" | "chunked" => false,
         _ => {
@@ -114,6 +114,15 @@ async fn serve(
     }
     if matches!(mode.as_str(), "weak" | "dated") {
         response = response.header(header::LAST_MODIFIED, "Wed, 21 Oct 2015 07:28:00 GMT");
+    }
+    if mode == "nowdated" {
+        // Some servers send the time of the request as the file's date.
+        let second =
+            server.probes.load(Ordering::SeqCst) + server.data_requests.load(Ordering::SeqCst);
+        response = response.header(
+            header::LAST_MODIFIED,
+            format!("Wed, 21 Oct 2015 07:28:{:02} GMT", second % 60),
+        );
     }
     if mode == "named" {
         response = response.header(
@@ -758,8 +767,8 @@ async fn restarts_all_ranges_when_same_size_representation_changes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn unstable_or_missing_validators_fail_after_one_clean_restart() {
-    for mode in ["oscillating", "missingvalidator"] {
+async fn unstable_validators_fail_after_one_clean_restart() {
+    for mode in ["oscillating"] {
         let (base, server) = start_server(test_data(256 * 1024), 0).await;
         let output = tempfile::tempdir().unwrap();
         let temp = tempfile::tempdir().unwrap();
@@ -779,6 +788,23 @@ async fn unstable_or_missing_validators_fail_after_one_clean_restart() {
         assert_eq!(control.progress().downloaded, 0);
         assert!(!path.exists());
         assert!(std::fs::read_dir(temp.path()).unwrap().next().is_none());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tolerates_missing_tags_and_changing_dates_on_ranges() {
+    // Some servers leave the entity tag out of range responses, or send a
+    // new date with every response, for a file that does not change.
+    for mode in ["missingvalidator", "nowdated"] {
+        let data = test_data(1024 * 1024);
+        let (base, _server) = start_server(data.clone(), 0).await;
+        let output = tempfile::tempdir().unwrap();
+        let (path, _) = completed(downloader().start(request(
+            format!("{base}/{mode}/file.bin"),
+            Destination::Directory(output.path().into()),
+        )))
+        .await;
+        assert_eq!(std::fs::read(path).unwrap(), data, "{mode}");
     }
 }
 
@@ -856,6 +882,37 @@ async fn corrupt_layout_or_partial_length_never_reports_completed_progress() {
         assert!(server.data_requests.load(Ordering::SeqCst) > before);
         assert!(!files.directory().unwrap().exists());
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pausing_while_finishing_keeps_data_that_cannot_resume() {
+    // Without ranges nothing can be kept for later, so a pause (or quitting
+    // the app) during the last checks must let the file finish.
+    let data = test_data(64 * 1024 * 1024);
+    let (base, _) = start_server(data.clone(), 0).await;
+    let output = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let path = output.path().join("whole.bin");
+    let mut download = request(
+        format!("{base}/norange/whole.bin"),
+        Destination::File(path.clone()),
+    );
+    download.options.temp_dir = Some(temp.path().into());
+    download.options.completion_id = Some("row".into());
+    let handle = downloader().start(download);
+    let control = handle.control();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while control.progress().phase != sdm_core::Phase::Finishing {
+        assert!(
+            Instant::now() < deadline,
+            "never reached the finishing phase"
+        );
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    control.pause();
+    let (done, size) = completed(handle).await;
+    assert_eq!(size, data.len() as u64);
+    assert_eq!(std::fs::read(done).unwrap(), data);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

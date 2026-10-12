@@ -1194,14 +1194,21 @@ impl Manager {
                 active.control.pause();
             }
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // Downloads that are putting their finished file in place get longer:
+        // stopping one without range support would lose all of its data.
+        let started = Instant::now();
         while {
             let inner = self.lock();
-            !inner.active.is_empty()
+            let finishing = inner
+                .active
+                .values()
+                .any(|a| a.control.progress().phase == Phase::Finishing);
+            let limit = Duration::from_secs(if finishing { 120 } else { 5 });
+            (!inner.active.is_empty()
                 || !inner.migrating.is_empty()
-                || !inner.cleanup_running.is_empty()
-        } && Instant::now() < deadline
-        {
+                || !inner.cleanup_running.is_empty())
+                && started.elapsed() < limit
+        } {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         {

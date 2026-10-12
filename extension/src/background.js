@@ -6,7 +6,9 @@
 
 const DEFAULT_PORT = 17360;
 const PING_CACHE_MS = 5000;
-const MEDIA_TIMEOUT_MS = 25_000;
+// Adding a video can read the page again or fetch ffmpeg first.
+const MEDIA_ADD_TIMEOUT_MS = 180_000;
+const KEEP_AWAKE_MS = 20_000;
 const DEFAULT_PREFS = { capture: true, videoButton: true, magnets: true, port: DEFAULT_PORT, minSizeMb: 0 };
 
 // Sites where the video button and menu stay away. The Chrome Web Store
@@ -254,15 +256,35 @@ async function videoRequest(message, sender) {
       cookies: await cookieList(pageUrl),
       userAgent: navigator.userAgent,
     };
-    const response = await callApp(add ? "/api/media/add" : "/api/media/probe/start",
-      add ? { source, option: message.option } : { source, clientId: message.clientId },
-      add ? MEDIA_TIMEOUT_MS : 2500, probeHeaders);
+    const response = add
+      ? await keepingAwake(() => callApp("/api/media/add", { source, option: message.option }, MEDIA_ADD_TIMEOUT_MS, probeHeaders))
+      : await callApp("/api/media/probe/start", { source, clientId: message.clientId }, 2500, probeHeaders);
     if (!response.ok) throw new Error((await response.text()) || chrome.i18n.getMessage("videoFailed"));
     const result = await response.json();
     if (add) return { ok: true, id: result.id };
     return result.state === "error" ? { ok: false, error: result.error } : { ok: true, ...result };
   } catch (error) {
     return { ok: false, error: error instanceof TypeError ? chrome.i18n.getMessage("statusOffline") : error.message };
+  }
+}
+
+/**
+ * Chrome stops an idle extension service worker after 30 seconds, even
+ * while it waits for a reply. Calling an extension API now and then keeps
+ * it awake during a slow request.
+ */
+async function keepingAwake(task) {
+  let done = false;
+  const tick = () => {
+    if (done) return;
+    chrome.runtime.getPlatformInfo?.()?.catch?.(() => {});
+    setTimeout(tick, KEEP_AWAKE_MS)?.unref?.();
+  };
+  setTimeout(tick, KEEP_AWAKE_MS)?.unref?.();
+  try {
+    return await task();
+  } finally {
+    done = true;
   }
 }
 
@@ -304,8 +326,21 @@ async function handOverLinks(tabId, { frameId = 0, selection = false } = {}) {
   }
 }
 
+// Downloads the user resumed in the browser. Taking one over would erase
+// the part Chrome already has, so they stay in the browser.
+const resumedInBrowser = new Set();
+const STARTED_LONG_AGO_MS = 60_000;
+
+/** A download that was already running before, not one that just started. */
+function alreadyUnderway(item) {
+  if (resumedInBrowser.has(item.id)) return true;
+  const started = Date.parse(item.startTime || "");
+  return item.bytesReceived > 0 && started > 0 && Date.now() - started > STARTED_LONG_AGO_MS;
+}
+
 async function captureDownload(item) {
   if (capturedDownloads.has(item.id) || item.state !== "in_progress" || !item.filename) return;
+  if (alreadyUnderway(item)) return;
   const settings = await prefs();
   if (!settings.capture) return;
   const status = await ping();
@@ -353,6 +388,10 @@ chrome.downloads.onDeterminingFilename?.addListener((item, suggest) => {
 });
 chrome.downloads.onChanged.addListener(async (delta) => {
   if (capturedDownloads.has(delta.id)) return;
+  if (delta.state?.previous === "interrupted") {
+    resumedInBrowser.add(delta.id);
+    return;
+  }
   if (!delta.filename && !delta.url && !delta.finalUrl && !delta.mime && !delta.fileSize && !delta.totalBytes && delta.state?.current !== "in_progress") return;
   const [item] = await chrome.downloads.search({ id: delta.id }).catch(() => []);
   if (item) await queueCapture(item);

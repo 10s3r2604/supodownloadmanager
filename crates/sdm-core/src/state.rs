@@ -236,11 +236,14 @@ impl SavedState {
     /// Whether the file on the server still looks like the one we started
     /// downloading.
     pub(crate) fn matches(&self, info: &RemoteInfo) -> bool {
-        info.resumable
-            && self.url == info.url
-            && info.size == Some(self.size)
-            && self.etag == info.etag
-            && self.last_modified == info.last_modified
+        // The entity tag identifies the version. The date is only used when
+        // there is no tag: many servers send the current time as the date.
+        let same_version = if self.etag.is_some() || info.etag.is_some() {
+            self.etag == info.etag
+        } else {
+            self.last_modified == info.last_modified
+        };
+        info.resumable && self.url == info.url && info.size == Some(self.size) && same_version
     }
 }
 
@@ -367,6 +370,22 @@ mod tests {
         assert!(!state.matches(&info(10, None)));
         assert!(!state.matches(&info(10, Some("\"v2\""))));
         assert!(!state.matches(&info(11, Some("\"v1\""))));
+
+        // A server that sends the current time as its date: the tag decides.
+        let dated = |etag: Option<&str>, date: &str| RemoteInfo {
+            last_modified: Some(date.into()),
+            ..info(10, etag)
+        };
+        let segments = vec![SavedSegment {
+            start: 0,
+            pos: 5,
+            end: 10,
+        }];
+        let state = SavedState::new(&dated(Some("\"v1\""), "Mon"), 10, segments.clone());
+        assert!(state.matches(&dated(Some("\"v1\""), "Tue")));
+        let state = SavedState::new(&dated(None, "Mon"), 10, segments);
+        assert!(state.matches(&dated(None, "Mon")));
+        assert!(!state.matches(&dated(None, "Tue")));
     }
 
     #[test]

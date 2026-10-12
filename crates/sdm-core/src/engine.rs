@@ -1096,13 +1096,17 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
         .await?
         .sync_all()
         .await?;
+    // Without ranges the data cannot be kept for later, so a pause (or
+    // quitting) must not stop the last steps; only deleting it does.
+    let never = CancellationToken::new();
+    let finishing_cancel = if ctx.ranged { &ctx.cancel } else { &never };
     if let Some(completion_id) = &ctx.options.completion_id {
         match prepare_completion(
             path,
             ctx.options.temp_dir.as_deref(),
             completion_id,
             size,
-            &ctx.cancel,
+            finishing_cancel,
         )
         .await
         {
@@ -1145,7 +1149,10 @@ async fn stopped_before_publication(ctx: &Ctx, path: &Path) -> Result<Outcome> {
 /// Rename on one volume; copy to a private staging folder on the destination
 /// volume otherwise. The final filename appears only after the copy succeeds.
 async fn publish_file(ctx: &Ctx, path: &Path) -> Result<()> {
-    if ctx.shared.cancel.is_cancelled() {
+    // Paused downloads without ranges finish anyway: see `finish`.
+    let stopped =
+        || ctx.shared.cancel.is_cancelled() && (ctx.ranged || ctx.shared.stop_reason() == CANCEL);
+    if stopped() {
         return Err(Error::Cancelled);
     }
     match fs::rename(&ctx.part, path).await {
@@ -1169,7 +1176,7 @@ async fn publish_file(ctx: &Ctx, path: &Path) -> Result<()> {
         let mut target = File::create(&staging_files.data).await?;
         let mut buffer = vec![0; WRITE_BUFFER];
         loop {
-            if ctx.shared.cancel.is_cancelled() {
+            if stopped() {
                 return Err(Error::Cancelled);
             }
             let count = source.read(&mut buffer).await?;
@@ -1180,7 +1187,7 @@ async fn publish_file(ctx: &Ctx, path: &Path) -> Result<()> {
         }
         target.sync_all().await?;
         drop(target);
-        if ctx.shared.cancel.is_cancelled() {
+        if stopped() {
             return Err(Error::Cancelled);
         }
         fs::rename(&staging_files.data, path).await?;
@@ -1351,22 +1358,19 @@ fn check_response(ctx: &Ctx, response: &Response, start: u64, end: u64) -> Resul
     {
         return Err(Error::RemoteChanged);
     }
-    if status.is_success() {
-        for (expected, name) in [
-            (&ctx.info.etag, header::ETAG),
-            (&ctx.info.last_modified, header::LAST_MODIFIED),
-        ] {
-            if let Some(expected) = expected {
-                let actual = response
-                    .headers()
-                    .get(name)
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::trim);
-                if actual != Some(expected.as_str()) {
-                    return Err(Error::RemoteChanged);
-                }
-            }
-        }
+    // A different entity tag means another version of the file. A missing
+    // one proves nothing (If-Range already guards ranges), and Last-Modified
+    // is left out: many servers send the current time with every response.
+    if status.is_success()
+        && let Some(expected) = &ctx.info.etag
+        && let Some(actual) = response
+            .headers()
+            .get(header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+        && actual != expected.as_str()
+    {
+        return Err(Error::RemoteChanged);
     }
     if !ctx.ranged {
         return if status.is_success() {

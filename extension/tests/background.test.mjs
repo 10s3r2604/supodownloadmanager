@@ -275,3 +275,10 @@ test("a stale startup ping cannot hide videos after a newer successful connectio
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(await app.message({ type: "video-enabled" }), true);
 });
+
+test("adding a video waits long enough for a slow page or an ffmpeg download", async () => {
+  const app = await background();
+  assert.equal((await app.message({ type: "video-add", ...page, option: "v1080" })).ok, true);
+  const add = mediaCalls(app).find(({ path }) => path === "/api/media/add");
+  assert.ok(add.timeout >= 120_000, `add timeout ${add.timeout} is too short`);
+});

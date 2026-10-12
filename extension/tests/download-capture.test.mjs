@@ -139,3 +139,22 @@ test("blob downloads, completed files and extension-initiated fallback downloads
     assert.equal(app.calls.length, 0);
   }
 });
+
+test("a download resumed in the browser keeps its partial data", async () => {
+  const app = await harness();
+  const zip = item({ url: "https://example.org/big.zip", finalUrl: "https://example.org/big.zip", filename: "big.zip", bytesReceived: 900, startTime: new Date().toISOString() });
+  await app.changed(zip, { state: { previous: "interrupted", current: "in_progress" } });
+  await app.changed(zip, { filename: { current: "big.zip" } });
+  assert.deepEqual(app.cancelled, []);
+  assert.equal(app.calls.length, 0);
+});
+
+test("a download that has run for a while is left alone after a worker restart", async () => {
+  const app = await harness();
+  const old = new Date(Date.now() - 5 * 60_000).toISOString();
+  await app.changed(item({ bytesReceived: 4000, startTime: old }), { totalBytes: { current: 4096 } });
+  assert.deepEqual(app.cancelled, []);
+  const fresh = item({ id: 2, bytesReceived: 4000, startTime: new Date().toISOString() });
+  await app.created(fresh);
+  assert.deepEqual(app.cancelled, [2]);
+});
