@@ -15,8 +15,14 @@ const executable = [process.env['ProgramFiles(x86)'], process.env.ProgramFiles]
   .find(file => fs.existsSync(file));
 assert(executable, 'The test image must include Edge');
 const directory = path.join(process.env.RUNNER_TEMP, 'SDM tiện ích', 'chromium');
-fs.mkdirSync(path.dirname(directory), {recursive:true});
-fs.cpSync(path.resolve('extension/dist/chromium'), directory, {recursive:true});
+function copyBundle(source,target) {
+  fs.mkdirSync(target,{recursive:true});
+  for(const entry of fs.readdirSync(source,{withFileTypes:true})) {
+    const from=path.join(source,entry.name), to=path.join(target,entry.name);
+    if(entry.isDirectory()) copyBundle(from,to); else fs.copyFileSync(from,to);
+  }
+}
+copyBundle(path.resolve('extension/dist/chromium'), directory);
 const request = {executable, directory, page:'edge://extensions', engine:'chromium',
   version:JSON.parse(fs.readFileSync(path.join(directory,'manifest.json'),'utf8')).version};
 let connected = false;

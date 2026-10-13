@@ -47,8 +47,8 @@ extension 0.6.4. CI packages remain review builds until a stable release is publ
   setup through the browser's normal controls and shows any remaining confirmation.
 - Optional startup in the Windows tray; off by default in **Settings → General**.
 - Signed stable updates on Windows, with background download, manual checks and
-  installation after work stops. Installed 0.7.0 builds can update to 0.7.1 from
-  **Settings → Updates → Check now**; older Windows builds need the 0.7.1 installer once. Repository signing
+  installation after work stops. Installed 0.7.0 or newer builds can update to 0.7.2 from
+  **Settings → Updates → Check now**; older Windows builds need the latest installer once. Repository signing
   setup and release behavior are described in [AUTO_UPDATES.md](docs/AUTO_UPDATES.md).
 
 **Faster downloads**
