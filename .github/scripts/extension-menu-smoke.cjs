@@ -386,6 +386,7 @@ function fixture(content) {
     const beforeCancel = probes().length;
     await manualMenu(0);
     const cancelledProbe = await until(() => probes().slice(beforeCancel).find(r => r.body.source?.pageUrl.endsWith('/status/444')), 'Cancellable probe did not start');
+    assert.notEqual(cancelledProbe.owner, slowProbe.owner, 'Reloaded documents must have distinct probe owners');
     await until(() => statuses(cancelledProbe.body.clientId).length >= 1, 'Cancellable discovery was not pending');
     await page.keyboard.press('Escape');
     await until(() => requests.some(r => r.path === '/api/media/probe/cancel'
@@ -402,11 +403,15 @@ function fixture(content) {
     await page.keyboard.press('Escape');
 
     html = fixture('<div data-testid="cellInnerDiv"><video></video></div><article><a href="/unrelated/status/999"><time>Another post</time></a></article>');
-    await page.reload();
+    const previousOwners = new Set(probes().map(request => request.owner));
     const before = probes().length;
+    await page.reload();
     await manualMenu(0);
     await until(async () => (await menuText()).includes('post link is not available'), 'Unresolved post did not stay in the extension');
-    assert.equal(probes().length, before, 'An unresolved feed must not reach yt-dlp');
+    // Requests already sent by a prior document can arrive after navigation.
+    // Reject every probe from the unresolved document, regardless of its URL.
+    assert.equal(probes().slice(before).filter(request => !previousOwners.has(request.owner)).length, 0,
+      'An unresolved document must not reach yt-dlp');
     report.push({ name: 'unresolved-post-stays-inline', passed: true });
 
     assert(probes().every(r => /\/status\/\d+/.test(r.body.source?.pageUrl || r.body.pageUrl)));
