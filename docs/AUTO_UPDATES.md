@@ -37,7 +37,7 @@ application version advances beyond existing public releases.
    Cargo lockfile, desktop package/lockfile and Tauri configuration. Run
    `node .github/scripts/check-version.mjs` and update the release notes in
    `.github/scripts/release/notes.md`.
-2. Merge the reviewed change to `main`. All nine CI jobs must pass for that exact
+2. Merge the reviewed change to `main`. All ten CI jobs must pass for that exact
    commit, including native Windows and Chrome/Edge checks. Fork and pull-request
    runs cannot authorize a release.
 3. Build and sign Windows x64, Linux x64 and both macOS architectures, plus the
