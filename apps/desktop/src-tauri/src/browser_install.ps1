@@ -130,18 +130,37 @@ public static class SdmBrowserWindow {
     }
     if ($null -eq $window) { throw 'The extensions page is not available through accessibility.' }
     $root = $window.root
+    $stage = 'page'
+    $management = Wait-For {
+        $documents = $root.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Document))
+        foreach ($document in $documents) {
+            if ($document.Current.IsOffscreen) { continue }
+            $value = $null
+            if ($document.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$value) -and
+                $value.Current.Value.TrimEnd('/') -eq $request.page.TrimEnd('/')) { return $document }
+        }
+        return $null
+    }
+    if ($null -eq $management) { throw 'The management document is not ready.' }
     if ($request.engine -eq 'chromium') {
         $stage = 'developer'
-        $developer = Wait-For { Find-Control $root @('Developer mode', 'Chế độ dành cho nhà phát triển') ([Windows.Automation.TogglePattern]::Pattern) }
+        $developerNames = @('Developer mode', 'Turn on Developer mode', 'Turn off Developer mode', 'Chế độ dành cho nhà phát triển', 'Bật chế độ dành cho nhà phát triển', 'Tắt chế độ dành cho nhà phát triển')
+        $developer = Find-Control $management $developerNames ([Windows.Automation.TogglePattern]::Pattern)
+        if ($null -eq $developer) {
+            # Edge's narrow extensions page puts this switch in its sidebar.
+            $menu = Find-Control $management @('Extensions menu', 'Menu tiện ích mở rộng') ([Windows.Automation.InvokePattern]::Pattern)
+            if ($null -ne $menu) { $menu.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke() }
+            $developer = Wait-For { Find-Control $management $developerNames ([Windows.Automation.TogglePattern]::Pattern) }
+        }
         if ($null -eq $developer) { throw 'Developer mode requires confirmation.' }
         $toggle = $developer.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
         if ($toggle.Current.ToggleState -eq [Windows.Automation.ToggleState]::Off) { $toggle.Toggle() }
         $stage = 'load'
-        $load = Wait-For { Find-Control $root @('Load unpacked', 'Tải tiện ích đã giải nén', 'Tải phần mở rộng đã giải nén') ([Windows.Automation.InvokePattern]::Pattern) }
+        $load = Wait-For { Find-Control $management @('Load unpacked', 'Tải tiện ích đã giải nén', 'Tải phần mở rộng đã giải nén') ([Windows.Automation.InvokePattern]::Pattern) }
         $path = $request.directory
     } else {
         $stage = 'load'
-        $load = Wait-For { Find-Control $root @('Load Temporary Add-on…', 'Load Temporary Add-on...', 'Tải tiện ích tạm thời…') ([Windows.Automation.InvokePattern]::Pattern) }
+        $load = Wait-For { Find-Control $management @('Load Temporary Add-on…', 'Load Temporary Add-on...', 'Tải tiện ích tạm thời…') ([Windows.Automation.InvokePattern]::Pattern) }
         $path = Join-Path $request.directory 'manifest.json'
     }
     if ($null -eq $load) { throw 'Loading requires confirmation.' }
@@ -187,7 +206,7 @@ public static class SdmBrowserWindow {
         $dialogs = Get-OwnedDialogs
         if ($dialogs.Count -ne 0) { return $null }
         $name = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Supo Download Manager')
-        $brand = $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $name)
+        $brand = $management.FindFirst([Windows.Automation.TreeScope]::Descendants, $name)
         if ($null -ne $brand) {
             $version = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $request.version)
             $card = $brand

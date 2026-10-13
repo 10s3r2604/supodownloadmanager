@@ -101,7 +101,7 @@ async function automation(script) {
           } catch {}
         }`],{timeout:30_000});
       console.log('Remaining native controls:',controls.stdout);
-      const policy=await run(powershell,['-NoProfile','-Command',"foreach($key in @('HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge','HKCU:\\SOFTWARE\\Policies\\Microsoft\\Edge')) {Get-ItemProperty -Path $key -Name ExtensionDeveloperModeSettings,DeveloperToolsAvailability -ErrorAction SilentlyContinue|Select-Object ExtensionDeveloperModeSettings,DeveloperToolsAvailability|ConvertTo-Json -Compress}"],{timeout:10_000});
+      const policy=await run(powershell,['-NoProfile','-Command',"foreach($key in @('HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge','HKCU:\\SOFTWARE\\Policies\\Microsoft\\Edge')) {Get-ItemProperty -Path $key -Name ExtensionDeveloperModeSettings,DeveloperToolsAvailability -ErrorAction SilentlyContinue|Select-Object ExtensionDeveloperModeSettings,DeveloperToolsAvailability|ConvertTo-Json -Compress};exit 0"],{timeout:10_000});
       console.log('Explicit Edge developer policies:',policy.stdout.trim());
     }
     if(result.stdout==='loaded') {
