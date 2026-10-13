@@ -4,9 +4,12 @@ The SDM extension hands downloads from your browser over to the SDM desktop
 app. It works in Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi, Chromium and
 Firefox.
 
-Extension 0.6.5 connects automatically through Native Messaging with SDM 0.7.4
-or newer and retains compatibility with SDM 0.6.1 or newer. Desktop 0.7.2 adds first-run
-setup: select the detected browsers and choose **Set up selected**. Windows
+The current packages require Chromium-based browsers version **116 or newer**,
+or Firefox **140 or newer**, as declared in their manifests.
+
+The current stable release is **SDM 0.7.4**, with extension **0.6.5**. It connects
+automatically and retains compatibility with SDM 0.6.1 or newer. On first-run
+setup, select the detected browsers and choose **Set up selected**. Windows
 attempts to load the unpacked extension using the selected browser's normal
 controls. If the browser requires confirmation, SDM shows the remaining steps.
 Automatic loading is validated in Chrome. Other browsers may need the guided
@@ -66,27 +69,38 @@ Port settings are reserved for older versions under **Advanced → Connection di
 
 ### The easy way
 
-Open SDM, click **Browsers**, choose your browser and click **Install
-extension**. SDM opens the browser's extension page and shows the steps.
+Open SDM, click **Browsers**, tick the browsers you use and choose **Set up
+selected**. On Windows, SDM attempts loading through each browser's normal
+controls. Chrome automatic loading is verified. Follow the remaining guided
+steps if your browser requires confirmation or its controls are unavailable.
 
-Browsers do not allow other programs to install extensions silently, so the
-last click always happens in the browser. Once the extension is published in
-the Chrome Web Store and on addons.mozilla.org, that click is simply "Add to
-browser". Until then it is installed from a folder:
+Wait for **Connected**. Setup does not alter browser profiles or enterprise
+policies. Store listings are not published yet; SDM includes the extension and
+the [latest release](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
+also has public ZIPs. You do not need a GitHub Actions artifact to install it.
 
 ### Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi
 
-1. In SDM, click **Browsers → Install extension** next to your browser. SDM
-   copies the extension to its data folder and opens the extension page
+If SDM shows manual steps:
+
+1. In SDM, use **Browsers → Set up selected** (or **Install extension** next to
+   one browser). SDM copies the extension to its data folder and opens the extension page
    (`chrome://extensions`, `edge://extensions`, ...).
 2. Turn on **Developer mode**.
 3. Click **Load unpacked** and choose the folder SDM shows (or drag the folder
    onto the page).
 
-When updating an unpacked extension, replace its files and click **Reload**
-on its card in the browser's extension page, then reload open video tabs.
-An app update alone does not reload an already installed unpacked extension.
-If loading a new folder, remove the old SDM extension first so only one is active.
+For an existing installation, update SDM first, then use **Set up selected** to
+refresh the bundled extension. If manual reload is requested, click **Reload**
+on its card, then reload open video tabs. An app update alone does not reload an
+already installed unpacked extension. If using a new folder, remove the old SDM
+extension first so only one is active.
+
+To install from a release ZIP, choose `sdm-extension-chromium-v0.7.4.zip`, extract
+it into a permanent folder, then **Load unpacked** from the folder containing
+`manifest.json`. Keep that folder in place. The `store-chromium` build is for
+store submission and disables YouTube video controls; use the regular Chromium
+build for the app's full video integration.
 
 ### Firefox
 
@@ -95,10 +109,33 @@ If loading a new folder, remove the old SDM extension first so only one is activ
 2. Click **Load Temporary Add-on…** and choose `manifest.json` in the folder
    SDM shows.
 
-Firefox removes temporary add-ons when it restarts. A permanent version will be
-available on addons.mozilla.org.
+Firefox removes temporary add-ons when it restarts. Permanent store installation
+is planned; no addons.mozilla.org listing is published yet.
+
+For ZIP installation, extract `sdm-extension-firefox-v0.7.4.zip` and select its
+`manifest.json`. Keep SDM running while connecting a newly loaded extension.
+
+## Troubleshooting
+
+- **Not connected:** keep SDM running and click **Try again** in the popup.
+  Use **Open SDM** when offered. If integration is disabled, enable it in
+  **Settings → Browser & clipboard**.
+- **Old extension after an app update:** use **Browsers → Set up selected**,
+  complete any reload step, and reload video tabs.
+- **A file stays in Chrome/Edge:** check that capture is on, its file type is
+  selected in SDM and its size meets the minimum. An unavailable or refused
+  handover leaves the browser able to download normally.
+- **X feed video:** use the hovered clip's Supo button to choose quality and
+  estimated size. If discovery fails, use **Try again** in the page menu.
+- **ZIP downloads:** use public release assets. Actions artifacts may require
+  GitHub sign-in and expire.
+
+Advanced diagnostics are for older clients and connection troubleshooting.
+Current versions do not need matching port settings.
 
 ## How the extension talks to SDM
+
+This section is for developers and advanced troubleshooting.
 
 Current versions use the browser's Native Messaging API. SDM registers its host
 for the current user. The host connects to a private named pipe on Windows or a
@@ -149,3 +186,27 @@ store build is the one for the Chrome Web Store and Edge Add-ons (see
 
 See [STORE.md](STORE.md) for the store packages, listing texts, privacy answers, images
 and the publishing workflow.
+
+## Tiếng Việt
+
+Gói hiện tại yêu cầu Chrome/Chromium 116 trở lên hoặc Firefox 140 trở lên.
+
+1. Cài hoặc cập nhật SDM từ [bản ổn định mới nhất](https://github.com/10s3r2604/supodownloadmanager/releases/latest).
+2. Mở **Trình duyệt**, tick browser đang dùng rồi bấm **Thiết lập đã chọn**.
+   Đã kiểm tra nạp tự động trên Chrome Windows; browser khác có thể cần xác nhận
+   theo các bước SDM hiển thị.
+3. Chờ **Đã kết nối**, rồi tải thử file hoặc bấm **logo Supo + Download** trên video.
+   Chất lượng và dung lượng ước tính được chọn ngay trên trang, kể cả video trong feed X.
+
+Không phải nhập port. Nếu chưa kết nối, mở SDM và bấm **Thử lại** trong popup;
+dùng **Mở SDM** khi được hiển thị. Sau khi cập nhật app, cần làm mới tiện ích và
+tải lại tab video.
+
+<img src="images/extension-popup-vi.png" alt="Tiện ích SDM với trạng thái kết nối và phần nâng cao đóng mặc định" width="320">
+
+Nếu cài từ ZIP public: với Chrome/Edge dùng `sdm-extension-chromium-v0.7.4.zip`,
+giải nén vào thư mục cố định, bật **Developer mode**, bấm **Load unpacked** rồi
+chọn thư mục chứa `manifest.json`. Không dùng bản `store-chromium` nếu cần đầy
+đủ nút video. Với Firefox, dùng ZIP `firefox`, vào `about:debugging`, bấm
+**Load Temporary Add-on…** và chọn `manifest.json`; cần nạp lại sau khi khởi động
+Firefox. Chưa có listing chính thức trên các kho tiện ích.

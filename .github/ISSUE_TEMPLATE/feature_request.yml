@@ -1,0 +1,21 @@
+name: Feature request / Đề xuất
+description: Suggest an improvement to SDM.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: English or tiếng Việt is welcome. Check docs/ROADMAP.md for existing plans.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve / Vấn đề cần giải quyết
+      description: Describe the task that is difficult with the current version.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested behavior / Cách hoạt động đề xuất
+      description: Include an example or sketch if it helps.
+    validations:
+      required: true

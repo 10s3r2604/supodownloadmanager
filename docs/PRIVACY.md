@@ -9,21 +9,23 @@ connections and update checks contact the services described below.
 ## The browser extension
 
 The extension exists to hand downloads from your browser to the SDM app on the same
-computer. To do that it reads, only when you download something or click its button:
+computer. For a captured download, magnet link or video quality menu (including
+preparing formats when you hover a video), it reads the relevant:
 
 - the address of the file, video page or magnet link,
 - the address of the page it came from (the referer),
 - the cookies the website set for that address, and the browser's user agent, so that
   downloads which need you to be logged in keep working.
 
-This information is handed to the SDM app on your own computer, at
-`http://127.0.0.1` (port 17360 unless you change it). It is never sent to the
+This information is handed to the SDM app on your own computer through Native
+Messaging and a private local pipe/socket. Older clients retain a loopback HTTP
+connection, configured only through advanced diagnostics. It is never sent to the
 developers of SDM. The extension inspects links and video elements on the current
 page to display download controls and identify the selected video. It does not
 record your browsing history or send analytics.
 
-Its settings (on/off switches, the port and the minimum file size) are kept in the
-browser's extension storage on your computer.
+Its settings (on/off switches, the minimum file size and legacy connection
+preferences) are kept in the browser's extension storage on your computer.
 
 ## The desktop app
 
@@ -62,7 +64,9 @@ open an issue at <https://github.com/10s3r2604/supodownloadmanager/issues>.
 
 SDM không có dịch vụ tài khoản, thống kê hay quảng cáo của nhà phát triển. Lịch sử
 tải và cài đặt được lưu trên máy bạn. Extension đọc địa chỉ tải, trang nguồn, cookie
-và user agent cần cho lần tải rồi chuyển cho SDM trên chính máy (`127.0.0.1`).
+và user agent cần cho lần tải rồi chuyển cho SDM trên chính máy qua Native
+Messaging và kết nối cục bộ riêng. Client cũ giữ kết nối HTTP loopback; cấu hình
+chỉ nằm trong chẩn đoán nâng cao.
 Extension kiểm tra link và phần tử video trên trang để hiện nút tải, không ghi lại
 lịch sử duyệt web hay gửi thống kê cho nhà phát triển. SDM dùng thông tin đó để tải
 từ website và xoá cookie khỏi danh sách tải khi file hoàn tất.

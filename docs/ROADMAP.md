@@ -1,6 +1,9 @@
 # Roadmap
 
-SDM is built in phases. Each phase ends with something people can use.
+Current stable: **SDM 0.7.4**, extension **0.6.5**. Checked items are implemented;
+unchecked items are planned, without a promised release date. Historical phase
+versions show when each area started. See [Changelog](../CHANGELOG.md) and the
+[product guidelines](PRODUCT_GUIDELINES.md) for current behavior.
 
 ## Phase 1: Download engine and command line ✅ (v0.1)
 
@@ -41,20 +44,22 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 - [x] Take over browser downloads by file type and size
 - [x] "Download with SDM" in the context menu for links, images, videos and audio
 - [x] Forward cookies, referer and user agent so downloads that need a login work
-- [x] Local bridge that only browser extensions can use
-- [x] Find installed browsers and guide the extension installation from the app
+- [x] Automatic Native Messaging connection, status/retry and explicit Open SDM; older clients retain compatibility under diagnostics
+- [x] First-run browser detection and checkbox selection; normal UI loading verified in Chrome Windows, guided confirmation for other browsers
 - [ ] Publish in the Chrome Web Store, Edge Add-ons and on addons.mozilla.org (one-click install);
       packages, listing and images are ready, see [STORE.md](STORE.md)
 
 ## Phase 4: Looks, progress windows and videos ✅ (v0.3)
 
-- [x] Compact IDM-style toolbar and download table, dark by default; light/system themes and on-demand speed charts, connections and torrent details
+- [x] Compact Supo toolbar and download table, dark by default; light/system themes and on-demand speed charts, connections and Torrent details
+- [x] Separate compact browser confirmation window and readable English/Vietnamese labels
+- [x] Configurable SDM temporary folder, resume recovery and completed/removed working-data cleanup
 - [x] A progress window for every download, in three styles (speed graph, ring, classic)
 - [x] "Show a dialog when done" and "Open the file when done" per download, "Don't show this dialog again"
 - [x] Video grabber: YouTube, Facebook, X, TikTok and ~1800 other sites through yt-dlp, with a quality picker
 - [x] HLS (`.m3u8`) and DASH streams, video and sound merged with ffmpeg
 - [x] Supo logo + "Download" button on videos in the browser, with the page's cookies
-- [x] yt-dlp downloaded on first use (SHA-256 checked) and kept up to date; ffmpeg.exe fetched on Windows
+- [x] Bundled yt-dlp and Deno, plus ffmpeg on Windows; checksum-verified packaging and yt-dlp updates
 - [ ] Playlists and channels
 - [ ] Subtitles
 
@@ -83,7 +88,8 @@ Built on [librqbit](https://github.com/ikatson/rqbit), a Torrent engine in Rust.
 ## Phase 7: Distribution
 
 - [x] Installers built by CI: MSI/NSIS for Windows, DMG for macOS, deb/rpm/AppImage for Linux
-- [ ] Code signing for Windows and macOS
+- [x] Signed stable update packages and verified publication after full CI/platform builds
+- [ ] Windows publisher signing (Authenticode) and macOS signing/notarization
 - [ ] Packages for winget, Scoop, Homebrew and Flathub
 - [ ] More languages
 

@@ -4,6 +4,10 @@ Thank you for helping! Bug reports, ideas, translations, documentation and code
 are all welcome. Issues and pull requests can be written in English or
 Vietnamese (tiếng Việt).
 
+Read the [product guidelines](docs/PRODUCT_GUIDELINES.md) before changing the
+interface, browser flow or repository presentation. They record the owner's
+chosen defaults. Keep the English and Vietnamese READMEs consistent.
+
 ## Reporting a bug
 
 Please include:
@@ -12,6 +16,10 @@ Please include:
 - what you did, and the link if it is public
 - what you expected and what happened
 - for the command line tool, the output of the same command with `-vv` added
+
+Use the [issue forms](https://github.com/10s3r2604/supodownloadmanager/issues/new/choose).
+Remove cookies, tokens, private URLs and personal paths before sharing logs or
+screenshots. For layout issues, include the window size and display scaling.
 
 ## Development setup
 
@@ -71,6 +79,10 @@ cargo run -p sdm-cli -- get https://example.com/file.zip
 
 Run the same checks as CI:
 
+For documentation-only changes, verify links, asset paths and the described
+behavior. An app version bump is not needed. For code changes, use the relevant
+checks below:
+
 ```sh
 cargo fmt --all --check
 node .github/scripts/check-version.mjs
@@ -82,6 +94,8 @@ cargo test --workspace
 ```
 
 - Keep pull requests focused on one change.
+- While GitHub CI runs, inspect metadata. Read logs only after the entire
+  workflow and all jobs have completed.
 - Add tests for new behaviour. The engine's integration tests in
   `crates/sdm-core/tests/download.rs` run against a local server that can
   imitate misbehaving servers; extend it when you need a new behaviour.

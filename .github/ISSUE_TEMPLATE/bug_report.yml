@@ -1,0 +1,43 @@
+name: Bug report / Báo lỗi
+description: Report a problem with SDM or its browser extension.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English or tiếng Việt is welcome. Check the latest stable release first.
+        Remove cookies, tokens, private download links and personal paths from logs/screenshots.
+  - type: input
+    id: version
+    attributes:
+      label: SDM version / Phiên bản SDM
+      description: Settings → Updates. Include the extension version if this is a browser problem.
+      placeholder: "SDM 0.7.4; extension 0.6.5"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: System and browser / Hệ điều hành và trình duyệt
+      placeholder: "Windows 11, Chrome; display scaling 125%"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce / Các bước gây lỗi
+      description: Include a public test URL when available; never include a signed or private URL.
+      placeholder: "1. …\n2. …"
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior / Mong muốn và kết quả
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or redacted error output / Ảnh hoặc lỗi đã ẩn thông tin riêng
+      description: For layout problems, include the window size and display scaling. Attach files here if useful.

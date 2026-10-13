@@ -1,11 +1,34 @@
-Supo Download Manager 0.7.4 and extension 0.6.5 connect through Native Messaging and the desktop's private local pipe/socket. The app and extension show connection status, Try again and Open SDM. Port settings remain available under collapsed connection diagnostics for older clients. The Windows installer registers the connection per user; startup refreshes registration and uninstall removes it.
+**SDM 0.7.4 · Browser extension 0.6.5**
 
-Update SDM first, then open Browsers, select the browsers you use and choose Set up selected to refresh extension 0.6.5. Reload open video tabs after the extension reloads. Existing extension IDs and preferences are preserved, and older extensions continue to work through the compatibility connection. Automatic extension loading is validated on Chrome; other browsers may need the guided confirmation steps. Firefox temporary add-ons still require reloading after browser restart.
+## Highlights
 
-Native file capture with cookies and referrer, video quality/size selection, and explicit launch/reconnect are verified using the release Windows executable in Chrome and Edge with HTTP bridge calls disabled. The compact Supo logo + Download video button and readable Vietnamese toolbar labels remain included.
+- Automatic browser connection with connection status, **Try again** and **Open SDM**. Legacy port settings stay under advanced diagnostics.
+- First-run browser detection and selection. Windows attempts loading through normal browser controls; Chrome automatic loading is verified. Other browsers retain guided confirmation when needed.
+- The compact Supo interface, readable English/Vietnamese toolbar labels and **Supo logo + Download** video button. Choose video quality, format and estimated size directly in the page, including the selected video on an X feed.
 
-Installed Windows SDM 0.7.0 or newer can update through Settings → Updates → Check now, then Install and restart after transfers and sharing stop. Update packages retain the pinned signing key. These signatures are separate from Windows Authenticode and macOS notarization.
+## Update and refresh the extension
 
-Downloads: Windows x64 setup.exe/MSI; macOS Intel/Apple Silicon DMG; Linux deb/rpm/AppImage; CLI packages; Chromium, Firefox and Chromium store extension ZIPs. The Chromium store build leaves YouTube video controls disabled.
+**Windows SDM 0.7.0 or newer:** **Settings → Updates → Check now → Install and restart**, after transfers and sharing stop. Older Windows versions need the latest installer once. Linux/macOS use their normal installers.
 
-Release publication requires the successful full CI run for the exact main commit, every platform package, valid updater signatures and signed versions, and matching uploaded checksums. Ordinary commits without a new version skip publication safely.
+After updating SDM, open **Browsers**, tick your browsers and choose **Set up selected** to refresh extension 0.6.5. Reload open video tabs. Existing IDs/preferences are preserved; older extensions continue to work during setup. Firefox temporary add-ons need reloading after browser restart.
+
+**Tiếng Việt:** **Cài đặt → Cập nhật → Kiểm tra ngay → Cài và khởi động lại**. Sau đó vào **Trình duyệt**, tick browser rồi bấm **Thiết lập đã chọn** và tải lại tab video. Không cần nhập port để kết nối.
+
+## Downloads
+
+| Your system | Choose |
+| --- | --- |
+| Windows 10/11 x64 | `Supo.Download.Manager_0.7.4_x64-setup.exe` (recommended), or the MSI |
+| macOS Apple Silicon / Intel | `…_aarch64.dmg` / `…_x64.dmg` |
+| Ubuntu / Debian / Mint | `…_amd64.deb` |
+| Fedora / openSUSE | `….x86_64.rpm` |
+| Linux portable | `…_amd64.AppImage` |
+| Chromium extension, manual setup | `sdm-extension-chromium-v0.7.4.zip` |
+| Firefox extension, manual setup | `sdm-extension-firefox-v0.7.4.zip` |
+| Command line | `sdm-cli-…` for your platform |
+
+Use the regular Chromium extension for full video integration. The `store-chromium` ZIP is for store submission and disables YouTube video controls. Store listings are not published yet.
+
+Installers, update packages and `SHA256SUMS` are included. Updater signatures protect package integrity; Windows publisher signing and macOS notarization are separate work. Native capture, browser cookies/referrer, video quality/size and launch/reconnect are verified in Chrome and Edge with the release Windows executable.
+
+[English guide](https://github.com/10s3r2604/supodownloadmanager#readme) · [Hướng dẫn tiếng Việt](https://github.com/10s3r2604/supodownloadmanager/blob/main/README.vi.md) · [Browser setup](https://github.com/10s3r2604/supodownloadmanager/blob/main/docs/BROWSER_EXTENSION.md)

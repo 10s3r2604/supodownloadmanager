@@ -1,12 +1,21 @@
 # Startup and stable updates
 
-SDM 0.7.0 adds optional login startup and signed automatic updates on Windows.
-The first signed stable update is 0.7.1. Installed 0.7.0 review builds can receive
-it directly through **Settings → Updates → Check now**, then **Install and restart**.
-The signing key and update endpoint are unchanged. Windows builds older than
-0.7.0 need the 0.7.1 installer once because they do not contain the updater.
+Windows SDM 0.7.0 or newer can receive the
+[latest stable release](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
+through **Settings → Updates → Check now**, then **Install and restart**.
+The current stable version is **0.7.4**. The signing key and update endpoint are
+unchanged. Windows builds older than 0.7.0 need the latest installer once because
+they do not contain the updater.
 Linux and macOS still use their normal installers; their automatic updater is
 disabled until installation and restart behavior has been tested on those systems.
+
+After an app update, use **Browsers → select your browsers → Set up selected**
+to refresh the extension, then reload video tabs. SDM 0.7.4 ships extension 0.6.5
+with automatic connection and status/retry controls.
+
+Tiếng Việt: **Cài đặt → Cập nhật → Kiểm tra ngay → Cài và khởi động lại**.
+Sau đó vào **Trình duyệt**, tick browser và bấm **Thiết lập đã chọn** để làm mới
+tiện ích. Chỉ nhận bản ổn định đã qua kiểm tra, không nhận mọi commit trên main.
 
 ## Application settings
 

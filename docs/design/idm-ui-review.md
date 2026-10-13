@@ -4,7 +4,9 @@ Anh đã chọn **mẫu 3 — IDM tối, màu Supo**. Bố cục này được t
 
 ![So sánh 8 phương án](idm-ui-options-overview.png)
 
-[Mở bản HTML để chọn mẫu và xem popup](idm-ui-review.html). Bản HTML chạy độc lập, không cần mạng hoặc cài thư viện; nếu xem trên GitHub, tải file rồi mở bằng trình duyệt.
+[Mở bản HTML tham khảo các mẫu và popup](idm-ui-review.html). Đây là bản thiết kế
+lưu trữ, không phải ảnh phần mềm hiện tại. Xem [giao diện đang phát hành](../../README.vi.md).
+Bản HTML chạy độc lập; nếu xem trên GitHub, tải file rồi mở bằng trình duyệt.
 
 | Mẫu | Hướng thiết kế | Điểm nên cân nhắc |
 | --- | --- | --- |
@@ -25,10 +27,12 @@ Popup vẫn hiển thị tên file chỉnh được, nguồn, dung lượng, kh�
 
 Các phương án vẫn phải giữ bộ lọc loại/trạng thái file, chọn nhiều lượt tải, hàng chờ và lịch tải, trình duyệt, cài đặt, torrent và lỗi chi tiết. Hình thức đặt các lựa chọn thay đổi theo mẫu; không bỏ chức năng để đạt kích thước nhỏ.
 
-Hành vi đã chốt cho phần triển khai tiếp theo:
+Hành vi đã chốt và được triển khai:
 
 - **Khởi động cùng Windows:** tùy chọn, mặc định tắt. Khi bật, mở ở khay hệ thống khi đăng nhập, không tự giành focus hoặc mở cửa sổ chính.
 - **Cập nhật tự động:** nhận **bản phát hành ổn định đã qua kiểm tra**, theo lựa chọn của anh. Commit được kiểm tra và đưa vào bản phát hành có phiên bản mới; ứng dụng nhận bản phát hành đó. Kiểm tra/tải nền, cài khi các tác vụ đã dừng an toàn hoặc khi thoát; có nút kiểm tra ngay và tùy chọn tắt.
-- Bản 0.6.1 hiện chưa có updater. Bản đầu tiên bổ sung tính năng này cần được cài thủ công một lần. Chữ ký bảo vệ gói cập nhật là cơ chế riêng; ký EXE để hiện nhà phát hành trên Windows vẫn là phần việc riêng.
+- Windows 0.7.0 trở lên có updater và nhận bản ổn định mới nhất. Bản cũ hơn cần cài
+  bộ mới thủ công một lần. Chữ ký gói cập nhật là cơ chế riêng; ký EXE để hiện nhà
+  phát hành trên Windows vẫn là phần việc riêng.
 
 Chi tiết hoạt động và cấu hình phát hành: [Khởi động và cập nhật ổn định](../AUTO_UPDATES.md). Bộ cài từ CI dùng để review; cập nhật công khai cần bản phát hành ổn định đã ký.

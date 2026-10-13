@@ -68,8 +68,8 @@ The extension needs the free SDM app: https://github.com/10s3r2604/supodownloadm
 When the app is not running, your browser downloads as usual.
 
 Privacy: no analytics or ads. Download details go to the SDM app on your own computer
-(127.0.0.1), which uses them to download from the selected website. No accounts.
-See the privacy policy for Torrent connections and update checks. Source code (GPL-3.0):
+through a local connection. The app uses them to download from the selected website. No accounts.
+See the privacy policy for Torrent connections and update checks. Source code (GPL-3.0-or-later):
 https://github.com/10s3r2604/supodownloadmanager
 ```
 
@@ -93,7 +93,7 @@ Cần cài ứng dụng SDM miễn phí: https://github.com/10s3r2604/supodownlo
 Khi ứng dụng không chạy, trình duyệt tải như bình thường.
 
 Quyền riêng tư: không thống kê hay quảng cáo. Thông tin tải được chuyển cho SDM trên
-máy bạn (127.0.0.1) để tải từ website đã chọn. Không tài khoản. Xem chính sách quyền
+máy bạn qua kết nối cục bộ để tải từ website đã chọn. Không tài khoản. Xem chính sách quyền
 riêng tư về kết nối Torrent và kiểm tra cập nhật.
 ```
 
@@ -108,20 +108,23 @@ the Supo Download Manager desktop app installed on the same computer.
 | --- | --- |
 | `downloads` | To notice downloads of the file types the user chose, cancel them in the browser and hand them to the SDM app, and to give them back to the browser when the app is not running. |
 | `contextMenus` | Adds "Download with SDM" to the right-click menu of links, images, audio and video pages. |
-| `cookies` | Downloads behind a login need the site's cookies; they are read only for the address being downloaded and sent only to the SDM app on 127.0.0.1. |
-| `storage` | Keeps the extension's own settings (switches, port, minimum size). |
+| `cookies` | Downloads behind a login need the site's cookies; they are read only for the address being downloaded and sent only to the local SDM app. |
+| `storage` | Keeps the extension's own settings (switches, minimum size and legacy connection preferences). |
 | `alarms` | Checks once a minute whether the SDM app is running, to show its status. |
-| Host permission `<all_urls>` | Downloads and videos can come from any website, and cookies must be readable for any download address. The extension also talks to the app at http://127.0.0.1. |
-| Content scripts on all sites | Show the "Download" button when the pointer is over a video, and open magnet links in SDM. They read nothing else from the page. |
+| `nativeMessaging` | Connects to the installed SDM host for local status, download handover, video quality selection and explicit Open SDM. |
+| Host permission `<all_urls>` | Downloads and videos can come from any website, and cookies must be readable for the selected download address. Older clients also use the loopback HTTP connection. |
+| Content scripts on all sites | Inspect links and video elements to show the Supo logo + Download button, identify the selected post/clip and open magnet links in SDM. They do not record browsing history. |
 
 **Remote code:** No. All code is in the package; nothing is downloaded or evaluated.
 
 **Data usage:** The extension does not collect or transmit user data off the device. The
 download address, referer, cookies and user agent go only to the companion app on the same
-computer (127.0.0.1) to perform the download the user started. If a store form insists on
+computer through Native Messaging, or the compatibility loopback connection, to perform
+the download the user started. The app then contacts the selected website as described
+in the privacy policy. If a store form insists on
 listing data types handled locally, tick *Authentication information* (cookies) and
-*Web history* (download addresses) and state "used only locally, never transmitted to the
-developer or third parties". Certify: not sold, not used for unrelated purposes, not used
+*Web history* (download addresses) and state "handed only to the local companion app for
+the user's selected download; no developer analytics". Certify: not sold, not used for unrelated purposes, not used
 for creditworthiness.
 
 **Firefox:** the manifest declares `data_collection_permissions: { required: ["none"] }`.
@@ -131,12 +134,13 @@ The source is not minified or generated, so no source upload is needed.
 
 ```
 This extension works together with the free, open-source Supo Download Manager desktop
-app (GPL-3.0): https://github.com/10s3r2604/supodownloadmanager/releases
+app (GPL-3.0-or-later): https://github.com/10s3r2604/supodownloadmanager/releases
 Without the app it does nothing and the browser downloads normally.
 
 To test:
 1. Install and open the app (Windows .exe/.msi, macOS .dmg or Linux .deb/.AppImage).
-2. The toolbar popup shows "Connected to SDM".
+2. In SDM choose Browsers, select your browser and use Set up selected; complete any
+   browser confirmation. The toolbar popup shows "Connected to SDM".
 3. Download any .zip or .pdf: SDM opens an "Add download" dialog instead of the browser
    downloading it.
 4. Right-click a link: "Download link with SDM".
@@ -144,7 +148,9 @@ To test:
    and hover the video: a "Download" button appears.
 6. Click a magnet link (e.g. on https://webtorrent.io/free-torrents): SDM shows the files
    of the torrent.
-All communication is with http://127.0.0.1:17360 only.
+Extension handover uses Native Messaging to the local app. Older clients retain a
+loopback HTTP compatibility connection. Download traffic goes from the desktop app
+to the website the user selected. See the privacy policy for Torrent and update traffic.
 ```
 
 ## 5. Images

@@ -82,5 +82,5 @@
 - A completion journal reconciles a downloaded file with history after an
   interrupted final save. Completion cleanup waits for history to be saved.
 
-The browser extension is version 0.6.3. Its video menu requires SDM 0.6.1 or newer.
-Existing extension 0.6.2 clients can still use the desktop bridge's legacy API.
+SDM 0.6.1 shipped with extension 0.6.3; its video menu required SDM 0.6.1 or newer.
+Extension 0.6.2 clients could still use the desktop bridge's legacy API.

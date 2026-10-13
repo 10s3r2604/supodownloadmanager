@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Download the latest stable SDM / Tải bản ổn định
+    url: https://github.com/10s3r2604/supodownloadmanager/releases/latest
+    about: Installers and public browser extension ZIPs.
+  - name: Browser setup / Hướng dẫn tiện ích
+    url: https://github.com/10s3r2604/supodownloadmanager/blob/main/docs/BROWSER_EXTENSION.md
+    about: First-run setup, extension refresh and troubleshooting.
