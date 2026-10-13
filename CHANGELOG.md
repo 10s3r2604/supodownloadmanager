@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Keep Windows browser setup diagnostics in one script scope and retry address-bar
+  navigation until focus is confirmed.
+- Look up progress windows by an in-memory record ID index and sync only the
+  requested download; keep persisted ordering and save-failure rollbacks intact.
+- Check ranged-transfer checkpoints every four seconds and skip unchanged
+  snapshots. Mandatory startup, pause, failure and completion saves stay intact.
+- Attempt to disable real-time scanning on hosted Windows CI runners on a
+  best-effort basis, while retaining every test and release gate.
+
 ## 0.7.5
 
 - Remember observed browser extensions and their versions across app restarts,

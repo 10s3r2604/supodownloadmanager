@@ -30,8 +30,8 @@ use crate::state::{PartialFiles, SavedSegment, SavedState, sync_parent};
 const WRITE_BUFFER: usize = 256 * 1024;
 /// How often speed is measured.
 const TICK: Duration = Duration::from_millis(250);
-/// Progress is saved every `SAVE_EVERY` ticks (two seconds).
-const SAVE_EVERY: u32 = 8;
+/// Changed progress is saved every `SAVE_EVERY` ticks (four seconds).
+const SAVE_EVERY: u32 = 16;
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(15);
 const PROBE_ATTEMPTS: u32 = 3;
 const MAX_REMOTE_RESTARTS: u32 = 1;
@@ -979,6 +979,8 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
     // Keep a fresh range plan recoverable from the first connection onward.
     ctx.save_state(&scheduler).await?;
 
+    let mut last_saved = scheduler.saved_segments();
+
     let mut tasks = JoinSet::new();
     for _ in 0..workers {
         tasks.spawn(worker(ctx.clone(), scheduler.clone()));
@@ -1005,10 +1007,16 @@ async fn transfer(ctx: Arc<Ctx>, path: &Path, saved: Option<SavedState>) -> Resu
             _ = ticker.tick() => {
                 shared.speed.store(meter.update(scheduler.downloaded()), Ordering::Relaxed);
                 ticks += 1;
-                if ticks.is_multiple_of(SAVE_EVERY)
-                    && let Err(error) = ctx.save_state(&scheduler).await
-                {
-                    tracing::warn!(%error, "could not save progress");
+                if ticks.is_multiple_of(SAVE_EVERY) && ctx.ranged {
+                    let segments = scheduler.saved_segments();
+                    if segments != last_saved {
+                        match ctx.save_state(&scheduler).await {
+                            // Keep the pre-flush snapshot: workers may advance
+                            // while syncing, and those bytes need a later save.
+                            Ok(()) => last_saved = segments,
+                            Err(error) => tracing::warn!(%error, "could not save progress"),
+                        }
+                    }
                 }
             }
         }
