@@ -13,7 +13,7 @@ try {
     # client-side providers so classic picker controls expose their patterns.
     $proxy = [Windows.Automation.AutomationElement].Assembly.GetName()
     $proxy.Name = 'UIAutomationClientsideProviders'
-    [Windows.Automation.ClientSettings]::RegisterProxyAssembly($proxy)
+    [Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($proxy)
     Add-Type 'using System; using System.Runtime.InteropServices; public static class SdmBrowserWindow { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr key, IntPtr flags); [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint kind); public static bool IsOwnedBy(IntPtr window, IntPtr owner) { for (int i = 0; i < 8; i++) { window = GetWindow(window, 4); if (window == IntPtr.Zero) return false; if (window == owner) return true; } return false; } }'
     $script:stage = 'locate-window'
     $script:navigated = $false

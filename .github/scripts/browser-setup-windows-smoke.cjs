@@ -56,6 +56,9 @@ async function automation(script) {
     const diagnosis = await run(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',`
       Add-Type -AssemblyName UIAutomationClient
       Add-Type -AssemblyName UIAutomationTypes
+        $proxy=[Windows.Automation.AutomationElement].Assembly.GetName()
+        $proxy.Name='UIAutomationClientsideProviders'
+        [Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($proxy)
       $children=[Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)
       foreach($element in $children) {
         try {
@@ -94,6 +97,9 @@ async function automation(script) {
       const controls=await run(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',`
         Add-Type -AssemblyName UIAutomationClient
         Add-Type -AssemblyName UIAutomationTypes
+        $proxy=[Windows.Automation.AutomationElement].Assembly.GetName()
+        $proxy.Name='UIAutomationClientsideProviders'
+        [Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($proxy)
         $roots=[Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)
         foreach($window in $roots) {
           try {
