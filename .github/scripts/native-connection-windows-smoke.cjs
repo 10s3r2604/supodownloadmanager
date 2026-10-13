@@ -9,11 +9,16 @@ const crypto=require('node:crypto');
 const {spawn,execFileSync}=require('node:child_process');
 const {chromium}=require(path.join(process.env.SDM_SMOKE_NODE_MODULES,'playwright-core'));
 assert.equal(process.platform,'win32');
-const root=process.cwd(),exe=path.join(root,'target/release/sdm-desktop.exe');
+const root=process.cwd();
 const output=path.join(root,'native-connection-smoke');fs.mkdirSync(output,{recursive:true});
 const data=path.join(process.env.APPDATA,'com.supodownloadmanager.app');
 const temp=fs.mkdtempSync(path.join(process.env.RUNNER_TEMP||os.tmpdir(),'sdm-native-'));
-const extension=path.join(temp,'Tiện ích Supo','chromium');
+// DevTools' loadUnpacked API cannot resolve this runner's Unicode directory.
+// Keep the extension path ASCII and exercise Unicode in the real host path.
+const hostDirectory=path.join(temp,'Ứng dụng Supo');fs.mkdirSync(hostDirectory,{recursive:true});
+const exe=path.join(hostDirectory,'sdm-desktop.exe');fs.copyFileSync(path.join(root,'target/release/sdm-desktop.exe'),exe);
+const extension=path.join(temp,'extension','chromium');
+fs.mkdirSync(extension,{recursive:true});
 fs.cpSync(path.join(root,'extension/dist/chromium'),extension,{recursive:true});
 const normalized=extension[0].toUpperCase()+extension.slice(1);
 const expectedId=[...crypto.createHash('sha256').update(Buffer.from(normalized,'utf16le')).digest().subarray(0,16)]
