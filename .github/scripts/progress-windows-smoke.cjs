@@ -369,7 +369,7 @@ const server=http.createServer((req,res)=>{
       {env:{...process.env,SDM_BROWSER_INSTALL_SCRIPT:path.join(root,'apps/desktop/src-tauri/src/browser_install.ps1')}});
     const edge=installedBrowsers.find(b=>b.id==='edge');
     assert(edge,'The Windows image must include Edge for the installation check');
-    child(edge.executable,['--no-first-run',edge.extensionsPage],'edge-setup-fixture');
+    child(edge.executable,['--no-first-run','--disable-features=msEdgeFirstRunExperience',edge.extensionsPage],'edge-setup-fixture');
     await new Promise(resolve=>setTimeout(resolve,1500));
     const browserSetup=bounded(main.evaluate(()=>window.__TAURI_INTERNALS__.invoke('install_extension',{id:'edge'})),
       'Browser setup exceeded its bounded native timeout',35_000);

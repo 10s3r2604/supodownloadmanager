@@ -9,7 +9,7 @@ try {
     Add-Type -AssemblyName UIAutomationTypes
     Add-Type 'using System; using System.Runtime.InteropServices; public static class SdmBrowserWindow { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }'
     $clock = [Diagnostics.Stopwatch]::StartNew()
-    $stage = 'locate'
+    $stage = 'locate-window'
     function Wait-For($action) {
         while ($clock.Elapsed.TotalSeconds -lt 18) {
             $value = & $action
@@ -49,9 +49,10 @@ try {
                     $root = $windows[0]
                     $process = Get-Process -Id $root.Current.ProcessId
                 }
+                $stage = 'locate-address'
                 $addressTypes = [Windows.Automation.OrCondition]::new(
-                    [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit),
-                    [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ComboBox))
+                    [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty, $true),
+                    [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::IsTextPatternAvailableProperty, $true))
                 $edits = $root.FindAll([Windows.Automation.TreeScope]::Descendants, $addressTypes)
                 foreach ($edit in $edits) {
                     # Page inputs can impersonate a URL; only the browser's
@@ -63,8 +64,12 @@ try {
                         $parent = [Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($parent)
                     }
                     if ($inDocument) { continue }
+                    $stage = 'locate-url'
                     $provider = $null
-                    if ($edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$provider) -and $provider.Current.Value.TrimEnd('/') -eq $request.page.TrimEnd('/')) {
+                    $address = $null
+                    if ($edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$provider)) { $address = $provider.Current.Value }
+                    elseif ($edit.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$provider)) { $address = $provider.DocumentRange.GetText(-1) }
+                    if ($null -ne $address -and $address.Trim().TrimEnd('/') -eq $request.page.TrimEnd('/')) {
                         return @{root=$root; pid=$process.Id}
                     }
                 }
