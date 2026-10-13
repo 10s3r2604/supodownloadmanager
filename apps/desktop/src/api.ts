@@ -213,6 +213,7 @@ export interface InstallInfo {
   engine: Engine;
   extensionDir: string;
   extensionsPage: string;
+  setupStep?: string | null;
 }
 
 /** A cookie as the browser extension reads it. */

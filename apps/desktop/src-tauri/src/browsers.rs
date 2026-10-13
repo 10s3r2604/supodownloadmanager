@@ -175,6 +175,8 @@ pub struct InstallInfo {
     pub engine: Engine,
     pub extension_dir: PathBuf,
     pub extensions_page: String,
+    /// Non-sensitive stage identifier for installation diagnostics.
+    pub setup_step: Option<&'static str>,
 }
 
 /// Browsers installed on this computer.
@@ -314,25 +316,31 @@ pub fn install(browser: &Browser, bundled: &Path, data_dir: &Path) -> io::Result
         Engine::Chromium => CHROME_WEB_STORE_URL,
         Engine::Firefox => FIREFOX_ADDONS_URL,
     };
-    let method = match store {
+    let (method, setup_step) = match store {
         Some(url) => {
             open_in(browser, url)?;
-            "store"
+            ("store", None)
         }
         None => {
             prepare_extension(&bundled.join(folder), &extension_dir)?;
             open_in(browser, &browser.extensions_page)?;
             #[cfg(windows)]
-            if automation::load(browser, &extension_dir) {
-                return Ok(InstallInfo {
-                    method: "automatic",
-                    browser: browser.name.clone(),
-                    engine: browser.engine,
-                    extension_dir,
-                    extensions_page: browser.extensions_page.clone(),
-                });
-            }
-            "manual"
+            let setup_step = match automation::load(browser, &extension_dir) {
+                Ok(()) => {
+                    return Ok(InstallInfo {
+                        method: "automatic",
+                        browser: browser.name.clone(),
+                        engine: browser.engine,
+                        extension_dir,
+                        extensions_page: browser.extensions_page.clone(),
+                        setup_step: None,
+                    });
+                }
+                Err(step) => Some(step),
+            };
+            #[cfg(not(windows))]
+            let setup_step = None;
+            ("manual", setup_step)
         }
     };
     Ok(InstallInfo {
@@ -341,6 +349,7 @@ pub fn install(browser: &Browser, bundled: &Path, data_dir: &Path) -> io::Result
         engine: browser.engine,
         extension_dir,
         extensions_page: browser.extensions_page.clone(),
+        setup_step,
     })
 }
 

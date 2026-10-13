@@ -369,6 +369,8 @@ const server=http.createServer((req,res)=>{
       {env:{...process.env,SDM_BROWSER_INSTALL_SCRIPT:path.join(root,'apps/desktop/src-tauri/src/browser_install.ps1')}});
     const edge=installedBrowsers.find(b=>b.id==='edge');
     assert(edge,'The Windows image must include Edge for the installation check');
+    child(edge.executable,['--no-first-run',edge.extensionsPage],'edge-setup-fixture');
+    await new Promise(resolve=>setTimeout(resolve,1500));
     const browserSetup=bounded(main.evaluate(()=>window.__TAURI_INTERNALS__.invoke('install_extension',{id:'edge'})),
       'Browser setup exceeded its bounded native timeout',35_000);
     await new Promise(resolve=>setTimeout(resolve,700));
@@ -379,12 +381,12 @@ const server=http.createServer((req,res)=>{
     assert.equal(setupResult.browser,'Microsoft Edge');
     assert.equal(JSON.parse(fs.readFileSync(path.join(setupResult.extensionDir,'manifest.json'),'utf8')).version,
       JSON.parse(fs.readFileSync(path.join(root,'extension/dist/chromium/manifest.json'),'utf8')).version);
-    let connected=false;
+    let connected=(await invoke('list_browsers')).find(b=>b.id==='edge')?.connected??false;
     if(setupResult.method==='automatic') {
       await until(async()=>{connected=(await invoke('list_browsers')).find(b=>b.id==='edge')?.connected;return connected},
         'An automatically loaded extension did not connect to SDM',15_000);
     }
-    report.push({name:'selected-edge-extension-setup-real-browser',passed:true,method:setupResult.method,connected,mainResponsive:true});
+    report.push({name:'selected-edge-extension-setup-real-browser',passed:true,method:setupResult.method,setupStep:setupResult.setupStep,connected,mainResponsive:true});
     execFileSync(process.execPath,[path.join(root,'.github/scripts/browser-onboarding-ui-smoke.cjs')],{
       env:{...process.env,SDM_UI_BASE:'http://127.0.0.1:1420',SDM_UI_BROWSER:edge.executable,SDM_UI_OUTPUT:path.join(output,'browser-onboarding')},
       stdio:'inherit',timeout:90_000,

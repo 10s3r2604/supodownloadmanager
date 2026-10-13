@@ -9,6 +9,7 @@ try {
     Add-Type -AssemblyName UIAutomationTypes
     Add-Type 'using System; using System.Runtime.InteropServices; public static class SdmBrowserWindow { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }'
     $clock = [Diagnostics.Stopwatch]::StartNew()
+    $stage = 'locate'
     function Wait-For($action) {
         while ($clock.Elapsed.TotalSeconds -lt 18) {
             $value = & $action
@@ -31,12 +32,37 @@ try {
     $window = Wait-For {
             try {
                 $handle = [SdmBrowserWindow]::GetForegroundWindow()
-                if ($handle -eq [IntPtr]::Zero) { return $null }
-                $root = [Windows.Automation.AutomationElement]::FromHandle($handle)
-                $process = Get-Process -Id $root.Current.ProcessId
-                if ($process.Path -ne $request.executable) { return $null }
-                $edits = $root.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit))
+                $root = $null
+                if ($handle -ne [IntPtr]::Zero) {
+                    $foreground = [Windows.Automation.AutomationElement]::FromHandle($handle)
+                    $process = Get-Process -Id $foreground.Current.ProcessId
+                    if ($process.Path -eq $request.executable) { $root = $foreground }
+                }
+                if ($null -eq $root) {
+                    # A service/CI desktop may have no foreground window. A
+                    # single browser window is unambiguous; multiple windows
+                    # or profiles still require the user to choose/focus one.
+                    $windows = @([Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Window)) | Where-Object {
+                        try { (Get-Process -Id $_.Current.ProcessId).Path -eq $request.executable } catch { $false }
+                    })
+                    if ($windows.Count -ne 1) { return $null }
+                    $root = $windows[0]
+                    $process = Get-Process -Id $root.Current.ProcessId
+                }
+                $addressTypes = [Windows.Automation.OrCondition]::new(
+                    [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit),
+                    [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ComboBox))
+                $edits = $root.FindAll([Windows.Automation.TreeScope]::Descendants, $addressTypes)
                 foreach ($edit in $edits) {
+                    # Page inputs can impersonate a URL; only the browser's
+                    # address control outside document content is trusted.
+                    $parent = $edit
+                    $inDocument = $false
+                    while ($null -ne $parent -and $parent -ne $root) {
+                        if ($parent.Current.ControlType -eq [Windows.Automation.ControlType]::Document) { $inDocument = $true; break }
+                        $parent = [Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($parent)
+                    }
+                    if ($inDocument) { continue }
                     $provider = $null
                     if ($edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$provider) -and $provider.Current.Value.TrimEnd('/') -eq $request.page.TrimEnd('/')) {
                         return @{root=$root; pid=$process.Id}
@@ -48,18 +74,22 @@ try {
     if ($null -eq $window) { throw 'The extensions page is not available through accessibility.' }
     $root = $window.root
     if ($request.engine -eq 'chromium') {
+        $stage = 'developer'
         $developer = Find-Control $root @('Developer mode', 'Chế độ dành cho nhà phát triển') ([Windows.Automation.TogglePattern]::Pattern)
         if ($null -eq $developer) { throw 'Developer mode requires confirmation.' }
         $toggle = $developer.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
         if ($toggle.Current.ToggleState -eq [Windows.Automation.ToggleState]::Off) { $toggle.Toggle() }
+        $stage = 'load'
         $load = Wait-For { Find-Control $root @('Load unpacked', 'Tải tiện ích đã giải nén', 'Tải phần mở rộng đã giải nén') ([Windows.Automation.InvokePattern]::Pattern) }
         $path = $request.directory
     } else {
+        $stage = 'load'
         $load = Wait-For { Find-Control $root @('Load Temporary Add-on…', 'Load Temporary Add-on...', 'Tải tiện ích tạm thời…') ([Windows.Automation.InvokePattern]::Pattern) }
         $path = Join-Path $request.directory 'manifest.json'
     }
     if ($null -eq $load) { throw 'Loading requires confirmation.' }
     $load.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $stage = 'picker'
     $dialogCondition = [Windows.Automation.AndCondition]::new(
         [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$window.pid),
         [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ClassNameProperty, '#32770'))
@@ -77,9 +107,11 @@ try {
         if ($null -eq $field -or -not $field.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$provider)) { throw 'No writable file-picker field.' }
     }
     $provider.SetValue($path)
+    $stage = 'confirm'
     $confirm = $dialog.FindFirst([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, '1'))
     if ($null -eq $confirm -or -not $confirm.Current.IsEnabled) { throw 'The browser requires confirmation.' }
     $confirm.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $stage = 'verify'
     $loaded = Wait-For {
         $dialogs = [Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children, $dialogCondition)
         if ($dialogs.Count -ne 0) { return $null }
@@ -97,4 +129,4 @@ try {
     }
     if ($loaded -eq $true) { [Console]::Out.Write('loaded'); exit 0 }
 } catch { }
-[Console]::Out.Write('manual')
+[Console]::Out.Write("manual:$stage")
