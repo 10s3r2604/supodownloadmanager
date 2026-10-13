@@ -9,7 +9,7 @@ try {
     Add-Type -AssemblyName UIAutomationTypes
     Add-Type 'using System; using System.Runtime.InteropServices; public static class SdmBrowserWindow { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }'
     $clock = [Diagnostics.Stopwatch]::StartNew()
-    $stage = 'locate-window'
+    $script:stage = 'locate-window'
     function Wait-For($action) {
         while ($clock.Elapsed.TotalSeconds -lt 18) {
             $value = & $action
@@ -42,14 +42,14 @@ try {
                     # A service/CI desktop may have no foreground window. A
                     # single browser window is unambiguous; multiple windows
                     # or profiles still require the user to choose/focus one.
-                    $windows = @([Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Window)) | Where-Object {
+                    $windows = @([Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition) | Where-Object {
                         try { (Get-Process -Id $_.Current.ProcessId).Path -eq $request.executable } catch { $false }
                     })
                     if ($windows.Count -ne 1) { return $null }
                     $root = $windows[0]
                     $process = Get-Process -Id $root.Current.ProcessId
                 }
-                $stage = 'locate-address'
+                $script:stage = 'locate-address'
                 $addressTypes = [Windows.Automation.OrCondition]::new(
                     [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty, $true),
                     [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::IsTextPatternAvailableProperty, $true))
@@ -64,7 +64,7 @@ try {
                         $parent = [Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($parent)
                     }
                     if ($inDocument) { continue }
-                    $stage = 'locate-url'
+                    $script:stage = 'locate-url'
                     $provider = $null
                     $address = $null
                     if ($edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$provider)) { $address = $provider.Current.Value }

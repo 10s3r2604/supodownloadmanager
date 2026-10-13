@@ -1,0 +1,23 @@
+name: Browser setup
+
+on:
+  pull_request:
+    paths:
+      - apps/desktop/src-tauri/src/browser_install.ps1
+      - apps/desktop/src-tauri/src/browser_automation.rs
+      - .github/scripts/browser-setup-windows-smoke.cjs
+      - .github/workflows/browser-setup-smoke.yml
+
+jobs:
+  edge:
+    name: Load unpacked extension through normal Edge controls
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node extension/build.mjs
+      - run: node .github/scripts/browser-setup-windows-smoke.cjs
+
