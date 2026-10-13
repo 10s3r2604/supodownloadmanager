@@ -98,8 +98,13 @@ async function automation(script) {
         foreach($window in $roots) {
           try {
             if((Get-Process -Id $window.Current.ProcessId).ProcessName -ne '${browser==='chrome'?'chrome':'msedge'}') {continue}
+            $window.Current.Name
             foreach($element in $window.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)) {
-              if($element.Current.Name -match 'Developer|Load unpacked' -or $element.Current.ControlType -in @([Windows.Automation.ControlType]::Edit,[Windows.Automation.ControlType]::ComboBox)) {
+              if($element.Current.ControlType -eq [Windows.Automation.ControlType]::Document) {
+                $value=$null
+                if($element.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern,[ref]$value)) {@{'document'=$element.Current.Name;'url'=$value.Current.Value}|ConvertTo-Json -Compress}
+              }
+              if($element.Current.Name -match 'Developer|Load unpacked|Address|Folder|Select|Cancel' -or $element.Current.ControlType -in @([Windows.Automation.ControlType]::Edit,[Windows.Automation.ControlType]::ComboBox)) {
                 @{'name'=$element.Current.Name;'id'=$element.Current.AutomationId;'class'=$element.Current.ClassName;'type'=$element.Current.ControlType.ProgrammaticName;'enabled'=$element.Current.IsEnabled;'patterns'=@($element.GetSupportedPatterns()|ForEach-Object {$_.ProgrammaticName})}|ConvertTo-Json -Compress
               }
             }
