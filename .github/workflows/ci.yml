@@ -9,6 +9,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  browser_setup:
+    name: Test first-run browser loading (Chrome)
+    runs-on: windows-latest
+    timeout-minutes: 5
+    env:
+      SDM_SETUP_TEST_BROWSER: chrome
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node extension/build.mjs
+      - run: node .github/scripts/browser-setup-windows-smoke.cjs
+
   extension:
     name: Test browser download capture (Chrome)
     runs-on: windows-latest

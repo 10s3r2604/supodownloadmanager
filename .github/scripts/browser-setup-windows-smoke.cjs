@@ -10,11 +10,11 @@ const run = promisify(execFile);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 assert.equal(process.platform, 'win32');
-const browser=process.env.SDM_SETUP_TEST_BROWSER || 'edge';
+const browser=process.env.SDM_SETUP_TEST_BROWSER || 'chrome';
 const executable = [process.env['ProgramFiles(x86)'], process.env.ProgramFiles]
   .filter(Boolean).map(base => path.join(base,browser==='chrome'?'Google/Chrome/Application/chrome.exe':'Microsoft/Edge/Application/msedge.exe'))
   .find(file => fs.existsSync(file));
-assert(executable, 'The test image must include Edge');
+assert(executable, `The test image must include ${browser}`);
 const directory = path.join(process.env.RUNNER_TEMP, 'SDM tiện ích', 'chromium');
 function copyBundle(source,target) {
   fs.mkdirSync(target,{recursive:true});
@@ -79,31 +79,6 @@ async function automation(script) {
     console.log(JSON.stringify(result));
     assert.equal(result.code,0);
     if(browser==='chrome') assert.equal(result.stdout,'loaded','Normal Chrome controls must load the extension automatically');
-    if(result.stdout!=='loaded') {
-      const controls=await run(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',`
-        ${providerInitialization}
-        $roots=[Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)
-        foreach($window in $roots) {
-          try {
-            if((Get-Process -Id $window.Current.ProcessId).ProcessName -ne '${browser==='chrome'?'chrome':'msedge'}') {continue}
-            $window.Current.Name
-            foreach($element in $window.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)) {
-              if($element.Current.ControlType -eq [Windows.Automation.ControlType]::Document) {
-                $value=$null
-                if($element.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern,[ref]$value)) {@{'document'=$element.Current.Name;'url'=$value.Current.Value}|ConvertTo-Json -Compress}
-                $text=$null
-                if($element.Current.Name -eq 'Extensions' -and $element.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern,[ref]$text)) {@{'documentText'=$text.DocumentRange.GetText(2000)}|ConvertTo-Json -Compress}
-              }
-              if($element.Current.ControlType -eq [Windows.Automation.ControlType]::Button -or $element.Current.Name -match 'Developer|My extensions|Load unpacked|Address|Folder|Select|Cancel' -or $element.Current.ControlType -in @([Windows.Automation.ControlType]::Edit,[Windows.Automation.ControlType]::ComboBox)) {
-                @{'name'=$element.Current.Name;'id'=$element.Current.AutomationId;'class'=$element.Current.ClassName;'type'=$element.Current.ControlType.ProgrammaticName;'enabled'=$element.Current.IsEnabled;'patterns'=@($element.GetSupportedPatterns()|ForEach-Object {$_.ProgrammaticName})}|ConvertTo-Json -Compress
-              }
-            }
-          } catch {}
-        }`],{timeout:30_000});
-      console.log('Remaining native controls:',controls.stdout);
-      const policy=await run(powershell,['-NoProfile','-Command',"foreach($key in @('HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge','HKCU:\\SOFTWARE\\Policies\\Microsoft\\Edge')) {Get-ItemProperty -Path $key -Name ExtensionDeveloperModeSettings,DeveloperToolsAvailability -ErrorAction SilentlyContinue|Select-Object ExtensionDeveloperModeSettings,DeveloperToolsAvailability|ConvertTo-Json -Compress};exit 0"],{timeout:10_000});
-      console.log('Explicit Edge developer policies:',policy.stdout.trim());
-    }
     if(result.stdout==='loaded') {
       const deadline=Date.now()+15_000;
       while(!connected && Date.now()<deadline) await sleep(200);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 export const EXPECTED_CI_JOBS = [
+  "Test first-run browser loading (Chrome)",
   "Test browser download capture (Chrome)",
   "Test browser video menus (Edge)",
   "Format and lint",

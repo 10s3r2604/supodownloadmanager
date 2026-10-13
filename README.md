@@ -45,6 +45,7 @@ extension 0.6.4. CI packages remain review builds until a stable release is publ
   default window. Browser captures use a separate 480 × 320 confirmation window.
 - On first launch, select the browsers SDM detects. Windows attempts extension
   setup through the browser's normal controls and shows any remaining confirmation.
+  Automatic loading is validated in Chrome; other browsers may need guided steps.
 - Optional startup in the Windows tray; off by default in **Settings → General**.
 - Signed stable updates on Windows, with background download, manual checks and
   installation after work stops. Installed 0.7.0 or newer builds can update to 0.7.2 from

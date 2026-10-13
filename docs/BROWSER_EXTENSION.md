@@ -8,7 +8,9 @@ Extension 0.6.4 works with SDM 0.6.1 or newer. Desktop 0.7.2 adds first-run
 setup: select the detected browsers and choose **Set up selected**. Windows
 attempts to load the unpacked extension using the selected browser's normal
 controls. If the browser requires confirmation, SDM shows the remaining steps.
-The list shows **Connected** only after the extension talks to SDM.
+Automatic loading is validated in Chrome. Other browsers may need the guided
+steps when their controls require confirmation or are unavailable. The list shows
+**Connected** only after the extension talks to SDM.
 
 Existing installations can open **Browsers** for the same selection and setup.
 Choosing **Later** dismisses the first-run prompt; it can always be reopened
