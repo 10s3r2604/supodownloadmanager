@@ -36,7 +36,7 @@ const server = http.createServer((req,res) => {
 const powershell = path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
 async function automation(script) {
   return new Promise((resolve,reject) => {
-    const child = spawn(powershell,['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true});
+    const child = spawn(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',script],{windowsHide:true});
     let stdout='',stderr='';
     child.stdout.on('data',chunk => {stdout+=chunk});
     child.stderr.on('data',chunk => {stderr+=chunk});
@@ -53,7 +53,7 @@ async function automation(script) {
     // the management URL with no extra browser launch flags.
     spawn(executable,['--no-first-run','--no-default-browser-check','--disable-features=msEdgeFirstRunExperience',request.page],{stdio:'ignore'}).unref();
     await sleep(2000);
-    const diagnosis = await run(powershell,['-NoProfile','-NonInteractive','-Command',`
+    const diagnosis = await run(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',`
       Add-Type -AssemblyName UIAutomationClient
       Add-Type -AssemblyName UIAutomationTypes
       $children=[Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)
@@ -76,7 +76,7 @@ async function automation(script) {
             }
           }
         } catch {}
-      }`],{timeout:10_000});
+      }`],{timeout:30_000});
     console.log('Browser accessibility control types, classes and value counts:',diagnosis.stdout.trim());
     const source=fs.readFileSync('apps/desktop/src-tauri/src/browser_install.ps1','utf8');
     // The only instrumentation reports exceptions from this isolated fixture;

@@ -5,10 +5,10 @@ $ErrorActionPreference = 'Stop'
 try {
     [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
     $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+    $clock = [Diagnostics.Stopwatch]::StartNew()
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
     Add-Type 'using System; using System.Runtime.InteropServices; public static class SdmBrowserWindow { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }'
-    $clock = [Diagnostics.Stopwatch]::StartNew()
     $script:stage = 'locate-window'
     function Wait-For($action) {
         while ($clock.Elapsed.TotalSeconds -lt 18) {

@@ -23,7 +23,7 @@ pub(super) fn load(browser: &Browser, directory: &std::path::Path) -> Result<(),
             .iter().map(u32::to_string).collect::<Vec<_>>().join("."),
     });
     let Ok(mut child) = Command::new(executable)
-        .args(["-NoProfile", "-NonInteractive", "-Command"])
+        .args(["-NoProfile", "-NonInteractive", "-Mta", "-Command"])
         .arg(include_str!("browser_install.ps1"))
         .creation_flags(0x0800_0000)
         .stdin(Stdio::piped())
