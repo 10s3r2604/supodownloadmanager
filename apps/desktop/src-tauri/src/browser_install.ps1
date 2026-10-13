@@ -163,7 +163,14 @@ public static class SdmBrowserWindow {
         return $null
     }
     if ($null -eq $dialog) { throw 'The browser file picker is not available.' }
-    $field = $dialog.FindFirst([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, '1148'))
+    $field = Wait-For {
+        # File pickers use 1148; folder pickers use the native 1152 edit.
+        foreach ($id in @('1148', '1152')) {
+            $candidate = $dialog.FindFirst([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, $id))
+            if ($null -ne $candidate) { return $candidate }
+        }
+        return $null
+    }
     if ($null -eq $field) { throw 'The browser file picker requires confirmation.' }
     $provider = $null
     if (-not $field.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$provider)) {
