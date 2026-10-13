@@ -8,7 +8,7 @@ async function worker(native,{legacyReady=true}={}) {
  const calls=[], legacy=[];let listener;
  const event={addListener(){}};
  const chrome={
-  runtime:{id,sendNativeMessage:async(host,message)=>{calls.push({host,message});return native(message)},onInstalled:event,onStartup:event,onMessage:{addListener(fn){listener=fn}}},
+  runtime:{id,getURL:path=>`chrome-extension://${id}/${path}`,sendNativeMessage:async(host,message)=>{calls.push({host,message});return native(message)},onInstalled:event,onStartup:event,onMessage:{addListener(fn){listener=fn}}},
   storage:{local:{async get(defaults){return {...defaults,port:19999}}}},
   cookies:{async getAll(){return [{name:'session',value:'fixture'}]}},
   downloads:{onCreated:event,onChanged:event,onDeterminingFilename:event},
@@ -48,6 +48,7 @@ test('a closed app is distinct from a host configuration error; launch is restri
  const status=await app.send({type:'connection-status'});assert.equal(status.error,'appNotRunning');assert.equal(status.canLaunch,true);
  assert.equal(await app.send({type:'open-app'},{tab:{url:'https://example.com'}}),'rejected');
  assert.equal((await app.send({type:'open-app'})).ok,true);assert(app.legacy.every(call=>!call.options.body));
+ assert.equal((await app.send({type:'open-app'},{url:`chrome-extension://${id}/popup.html`,tab:{id:7}})).ok,true);
 });
 test('an old executable in a stale registration is detected with GET before handing over once through compatibility',async()=>{
  const app=await worker(()=>{throw new Error('Native host has exited.');});

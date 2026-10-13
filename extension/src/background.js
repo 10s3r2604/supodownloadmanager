@@ -536,11 +536,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 ping(true);
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (message?.type === "connection-status" && !sender.tab) {
+  const popupUrl = chrome.runtime.getURL?.("popup.html");
+  const extensionPage = !sender.tab || (typeof popupUrl === "string" && sender.url === popupUrl);
+  if (message?.type === "connection-status" && extensionPage) {
     ping(true).then(status=>reply({status, transport:status ? connectionTransport : "none", error:connectionFailure, canLaunch:nativeAvailable}));
     return true;
   }
-  if (message?.type === "open-app" && !sender.tab) {
+  if (message?.type === "open-app" && extensionPage) {
     nativeMessage({action:"launch"}, 5000).then(result=>reply({ok:result?.launched === true})).catch(()=>reply({ok:false}));
     return true;
   }
