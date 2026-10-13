@@ -90,6 +90,23 @@ async function automation(script) {
     const result=await automation(instrumented);
     console.log(JSON.stringify(result));
     assert.equal(result.code,0);
+    if(result.stdout!=='loaded') {
+      const controls=await run(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',`
+        Add-Type -AssemblyName UIAutomationClient
+        Add-Type -AssemblyName UIAutomationTypes
+        $roots=[Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)
+        foreach($window in $roots) {
+          try {
+            if((Get-Process -Id $window.Current.ProcessId).ProcessName -ne '${browser==='chrome'?'chrome':'msedge'}') {continue}
+            foreach($element in $window.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)) {
+              if($element.Current.Name -match 'Developer|Load unpacked' -or $element.Current.ControlType -in @([Windows.Automation.ControlType]::Edit,[Windows.Automation.ControlType]::ComboBox)) {
+                @{'name'=$element.Current.Name;'id'=$element.Current.AutomationId;'class'=$element.Current.ClassName;'type'=$element.Current.ControlType.ProgrammaticName;'enabled'=$element.Current.IsEnabled;'patterns'=@($element.GetSupportedPatterns()|ForEach-Object {$_.ProgrammaticName})}|ConvertTo-Json -Compress
+              }
+            }
+          } catch {}
+        }`],{timeout:30_000});
+      console.log('Remaining native controls:',controls.stdout);
+    }
     if(result.stdout==='loaded') {
       const deadline=Date.now()+15_000;
       while(!connected && Date.now()<deadline) await sleep(200);
