@@ -126,7 +126,7 @@ function sdmVideoSource(video, pageUrl, title) {
         @media (prefers-reduced-motion: reduce) { .loading::before { animation: none; } }
       </style>
       <button class="trigger" type="button" aria-haspopup="menu" aria-expanded="false">
-        <img class="logo" src="${chrome.runtime.getURL("icons/32.png")}" width="18" height="18" alt="">
+        <img class="logo" src="${chrome.runtime.getURL("icons/48.png")}" width="18" height="18" alt="">
         <span></span>
       </button>
       <div class="menu" role="menu" hidden></div>`;

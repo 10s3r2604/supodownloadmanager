@@ -27,7 +27,7 @@ const base = {
   permissions: ["downloads", "contextMenus", "cookies", "storage", "alarms"],
   host_permissions: ["<all_urls>"],
   action: { default_popup: "popup.html", default_title: "__MSG_extName__", default_icon: icons },
-  web_accessible_resources: [{ resources: ["icons/32.png"], matches: ["http://*/*", "https://*/*"] }],
+  web_accessible_resources: [{ resources: ["icons/48.png"], matches: ["http://*/*", "https://*/*"] }],
   content_scripts: [
     {
       matches: ["http://*/*", "https://*/*"],
