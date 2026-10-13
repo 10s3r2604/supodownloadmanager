@@ -493,7 +493,9 @@ function sdmVideoSource(video, pageUrl, title) {
       const video = contextVideo?.isConnected ? contextVideo
         : videos.find((v) => message.mediaUrl && (v.currentSrc || v.src) === message.mediaUrl);
       if (!video) { reply({ ok: false }); return; }
-      closeMenu();
+      // Promote the hovered video's pending discovery. Replacing an open menu
+      // still releases its old interest; show() handles a different video.
+      if (menuOpen) closeMenu();
       show(video);
       openMenu({ preventDefault() {}, stopPropagation() {}, detail: 0 }).catch(() => {});
       reply({ ok: true });

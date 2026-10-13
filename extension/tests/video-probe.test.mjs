@@ -79,6 +79,7 @@ function content({ respond, crypto: cryptoAPI } = {}) {
   let result = { ok: true, state: "pending" };
   const timers = new Map();
   const messages = [];
+  let receive;
   const document = new Element("document");
   document.title = "Clip";
   document.body = new Element("body");
@@ -107,7 +108,7 @@ function content({ respond, crypto: cryptoAPI } = {}) {
       i18n: { getMessage: key => key },
       runtime: {
         getURL: path => `chrome-extension://sdm-test/${path}`,
-        onMessage: { addListener() {} },
+        onMessage: { addListener(listener) { receive = listener; } },
         async sendMessage(message) {
           messages.push(JSON.parse(JSON.stringify(message)));
           if (message.type === "video-enabled") return true;
@@ -139,6 +140,10 @@ function content({ respond, crypto: cryptoAPI } = {}) {
     finish() { result = done; },
     async hover() { await document.dispatch("mousemove", { clientX: 100, clientY: 100 }); await advance(0); },
     open: () => host().shadow.querySelector(".trigger").dispatch("click"),
+    async contextOpen() {
+      await document.dispatch("contextmenu", { composedPath: () => [video] });
+      return new Promise(resolve => receive({ type: "video-open-menu" }, {}, resolve));
+    },
     keepHover: () => host().dispatch("mouseenter"),
     close: () => document.dispatch("keydown", { key: "Escape" }),
     menu,
@@ -146,6 +151,23 @@ function content({ respond, crypto: cryptoAPI } = {}) {
     scroll: () => windowEvents.dispatch("scroll"),
   };
 }
+
+test("the context menu promotes a pending hover without replacing its discovery lease", async () => {
+  const page = content();
+  await page.hover();
+  const id = page.messages.find(message => message.type === "video-prefetch").clientId;
+  assert.equal(page.trigger().hidden, true);
+  await page.contextOpen();
+  await flush();
+  assert.equal(page.messages.filter(message => message.type === "video-prefetch").length, 1);
+  assert.equal(page.messages.filter(message => message.type === "video-probe-cancel").length, 0);
+  await page.advance(31_000);
+  assert(page.messages.filter(message => message.type === "video-probe-status").every(message => message.clientId === id));
+  page.finish();
+  await page.advance(1000);
+  assert.equal(page.trigger().hidden, false);
+  assert.equal(page.menu().querySelector(".quality").textContent, "1080p HD");
+});
 
 test("a content-owned client ID follows prefetch, menu promotion, and polls past 30 seconds", async () => {
   const page = content();

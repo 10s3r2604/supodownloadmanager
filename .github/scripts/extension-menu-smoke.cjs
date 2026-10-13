@@ -337,6 +337,8 @@ function fixture(content) {
     const slowProbe = await until(() => probes().slice(beforeSlow).find(r => r.body.source?.pageUrl.endsWith('/status/333')), 'Slow probe did not start');
     const slowClientId = slowProbe.body.clientId;
     await until(() => statuses(slowClientId).length >= 2, 'Slow discovery did not use short status polls');
+    assert.equal(probes().slice(beforeSlow).filter(r => r.body.source?.pageUrl.endsWith('/status/333')).length, 1,
+      'The context menu must reuse the pending hover discovery rather than restart it');
     assert(!(await menuText()).includes('1080p60'), 'The slow fixture must remain pending before completion');
     const oldTarget = (await loader.send('Target.getTargets')).targetInfos.find(t =>
       t.type === 'service_worker' && t.url === `chrome-extension://${installed.id}/background.js`);
