@@ -10,8 +10,9 @@ const run = promisify(execFile);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 assert.equal(process.platform, 'win32');
+const browser=process.env.SDM_SETUP_TEST_BROWSER || 'edge';
 const executable = [process.env['ProgramFiles(x86)'], process.env.ProgramFiles]
-  .filter(Boolean).map(base => path.join(base,'Microsoft/Edge/Application/msedge.exe'))
+  .filter(Boolean).map(base => path.join(base,browser==='chrome'?'Google/Chrome/Application/chrome.exe':'Microsoft/Edge/Application/msedge.exe'))
   .find(file => fs.existsSync(file));
 assert(executable, 'The test image must include Edge');
 const directory = path.join(process.env.RUNNER_TEMP, 'SDM tiện ích', 'chromium');
@@ -23,12 +24,12 @@ function copyBundle(source,target) {
   }
 }
 copyBundle(path.resolve('extension/dist/chromium'), directory);
-const request = {executable, directory, page:'edge://extensions', engine:'chromium',
+const request = {executable, directory, page:`${browser}://extensions`, engine:'chromium',
   version:JSON.parse(fs.readFileSync(path.join(directory,'manifest.json'),'utf8')).version};
 let connected = false;
 const server = http.createServer((req,res) => {
   if (req.url === '/api/ping' && req.headers['x-sdm-client'] === 'extension'
-    && req.headers['x-sdm-browser'] === 'edge') connected = true;
+    && req.headers['x-sdm-browser'] === browser) connected = true;
   res.setHeader('Content-Type','application/json');
   res.end(JSON.stringify({enabled:true, version:'browser-setup-fixture'}));
 });
@@ -50,7 +51,7 @@ async function automation(script) {
   try {
     // Suppress only the test image's first-use welcome page. The product opens
     // the management URL with no extra browser launch flags.
-    spawn(executable,['--no-first-run','--disable-features=msEdgeFirstRunExperience',request.page],{stdio:'ignore'}).unref();
+    spawn(executable,['--no-first-run','--no-default-browser-check','--disable-features=msEdgeFirstRunExperience',request.page],{stdio:'ignore'}).unref();
     await sleep(2000);
     const diagnosis = await run(powershell,['-NoProfile','-NonInteractive','-Command',`
       Add-Type -AssemblyName UIAutomationClient
@@ -58,13 +59,19 @@ async function automation(script) {
       $children=[Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)
       foreach($element in $children) {
         try {
-          if((Get-Process -Id $element.Current.ProcessId).ProcessName -eq 'msedge') {
+          if((Get-Process -Id $element.Current.ProcessId).ProcessName -eq '${browser==='chrome'?'chrome':'msedge'}') {
+            $element.Current.Name
             $element.Current.ControlType.ProgrammaticName
             $element.Current.ClassName
+            $element.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Document))|ForEach-Object {$_.Current.Name}
             foreach($edit in $element.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty,$true))) {
               $provider=$null
               if($edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern,[ref]$provider)) {
                 @{'type'=$edit.Current.ControlType.ProgrammaticName;'name'=$edit.Current.Name;'value'=$provider.Current.Value}|ConvertTo-Json -Compress
+              }
+              $provider=$null
+              if($edit.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern,[ref]$provider)) {
+                @{'name'=$edit.Current.Name;'text'=$provider.DocumentRange.GetText(-1)}|ConvertTo-Json -Compress
               }
             }
           }
