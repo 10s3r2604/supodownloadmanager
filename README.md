@@ -28,7 +28,7 @@ limit or ads.
 ## Download and install
 
 Get installers and extension ZIPs from the [latest stable release](https://github.com/10s3r2604/supodownloadmanager/releases/latest).
-**Current stable: SDM 0.7.4**, with browser extension **0.6.5**.
+**Current stable: SDM 0.7.5**, with browser extension **0.6.6**.
 
 | Your system | Choose this package |
 | --- | --- |
@@ -52,7 +52,8 @@ need the latest installer once. Linux and macOS use the normal installers;
 automatic installation is not enabled there yet.
 
 After updating the app, refresh an existing extension through
-**Browsers → select your browsers → Set up selected**, then reload open video tabs.
+**Browsers → Update extension**, follow any browser Reload step, then reload open video tabs.
+SDM remembers recognized extensions even when their browser is not connected.
 Older extensions continue to work while you complete setup.
 
 ## Browser setup
@@ -62,10 +63,10 @@ Older extensions continue to work while you complete setup.
    normal controls. Automatic loading is verified on Chrome; follow any remaining
    confirmation steps for your browser.
 3. Wait for **Connected**, then download a file or hover a video and click the
-   Supo logo + **Download** button.
+   Supo logo + **Download** button once quality and estimated size are ready.
 
 Reopen this flow from **Browsers** at any time. The extension connects automatically
-with SDM 0.7.4; its popup shows connection status, **Try again** and **Open SDM** when
+with SDM 0.7.5; its popup shows connection status, **Try again** and **Open SDM** when
 available. Connection diagnostics stay under Advanced.
 
 Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi and Firefox are supported. Store listings

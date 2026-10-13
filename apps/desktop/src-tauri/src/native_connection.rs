@@ -280,9 +280,12 @@ async fn dispatch(message: Message, bridge: Arc<Bridge>) -> Reply {
         }
         request = request.header("origin", origin.trim_end_matches('/'));
     }
-    // Only the media ownership header may be supplied by the client.
+    // Accept only media ownership and non-sensitive extension version metadata.
     if let Some(owner) = headers.get("X-SDM-Probe-Owner") {
         request = request.header("x-sdm-probe-owner", owner);
+    }
+    if let Some(version) = headers.get("X-SDM-Extension-Version") {
+        request = request.header("x-sdm-extension-version", version);
     }
     let body = body.map(|value| value.to_string()).unwrap_or_default();
     let Ok(request) = request.body(Body::from(body)) else {

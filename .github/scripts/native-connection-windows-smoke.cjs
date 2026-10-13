@@ -24,7 +24,7 @@ const normalized=extension[0].toUpperCase()+extension.slice(1);
 const expectedId=[...crypto.createHash('sha256').update(Buffer.from(normalized,'utf16le')).digest().subarray(0,16)]
  .flatMap(byte=>[String.fromCharCode(97+(byte>>4)),String.fromCharCode(97+(byte&15))]).join('');
 const origin=`chrome-extension://${expectedId}/`;
-const snapshots=['settings.json','settings.json.bak','downloads.json','downloads.json.bak','queues.json','queues.json.bak']
+const snapshots=['settings.json','settings.json.bak','downloads.json','downloads.json.bak','queues.json','queues.json.bak','browser-extensions.json','browser-extensions.json.bak']
  .map(name=>({file:path.join(data,name),bytes:fs.existsSync(path.join(data,name))?fs.readFileSync(path.join(data,name)):null}));
 const downloads=path.join(temp,'Tải xuống');fs.mkdirSync(downloads,{recursive:true});
 const version=JSON.parse(fs.readFileSync('apps/desktop/src-tauri/tauri.conf.json','utf8')).version;
@@ -97,6 +97,8 @@ const server=http.createServer((req,res)=>{
    const popup=await context.newPage();await popup.goto(`${origin}popup.html`);
    checkpoint(`${browser}-native-status`);const status=await popup.evaluate(()=>chrome.runtime.sendMessage({type:'connection-status'}));
    assert.equal(status.transport,'native');assert.equal(status.status.version,version);
+   const clients=JSON.parse(fs.readFileSync(path.join(data,'browser-extensions.json'),'utf8'));
+   assert.equal(clients[browser].version,JSON.parse(fs.readFileSync(path.join(extension,'manifest.json'),'utf8')).version);
    assert.equal(await popup.locator('#port').isVisible(),false);
    await popup.screenshot({path:path.join(output,`${browser}-connected.png`)});
    if(browser==='chrome'){

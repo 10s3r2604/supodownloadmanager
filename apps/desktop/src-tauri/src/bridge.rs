@@ -101,6 +101,7 @@ pub struct BridgeConfig {
 
 /// What the app does with requests from the extension.
 pub trait Handler: Send + Sync + 'static {
+    fn extension_seen(&self, _browser: &str, _version: Option<&str>) {}
     fn native_client(&self, _id: &str) {}
     fn native_ready(&self) -> bool {
         false
@@ -217,7 +218,13 @@ impl Bridge {
         self.seen
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(browser, Instant::now());
+            .insert(browser.clone(), Instant::now());
+        self.handler.extension_seen(
+            &browser,
+            headers
+                .get("x-sdm-extension-version")
+                .and_then(|v| v.to_str().ok()),
+        );
     }
 }
 

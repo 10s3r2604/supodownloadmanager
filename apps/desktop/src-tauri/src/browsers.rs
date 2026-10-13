@@ -171,6 +171,7 @@ pub struct InstallInfo {
     /// `automatic` only after the browser's UI confirms loading; `store`
     /// and `manual` still require the user's confirmation in that browser.
     pub method: &'static str,
+    pub updating: bool,
     pub browser: String,
     pub engine: Engine,
     pub extension_dir: PathBuf,
@@ -329,6 +330,7 @@ pub fn install(browser: &Browser, bundled: &Path, data_dir: &Path) -> io::Result
                 Ok(()) => {
                     return Ok(InstallInfo {
                         method: "automatic",
+                        updating: false,
                         browser: browser.name.clone(),
                         engine: browser.engine,
                         extension_dir,
@@ -345,6 +347,7 @@ pub fn install(browser: &Browser, bundled: &Path, data_dir: &Path) -> io::Result
     };
     Ok(InstallInfo {
         method,
+        updating: false,
         browser: browser.name.clone(),
         engine: browser.engine,
         extension_dir,
@@ -353,7 +356,7 @@ pub fn install(browser: &Browser, bundled: &Path, data_dir: &Path) -> io::Result
     })
 }
 
-fn extension_version(directory: &Path) -> io::Result<Vec<u32>> {
+pub(crate) fn extension_version(directory: &Path) -> io::Result<Vec<u32>> {
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("manifest.json"))?)?;
     let version = manifest["version"]
@@ -366,6 +369,38 @@ fn extension_version(directory: &Path) -> io::Result<Vec<u32>> {
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
         })
         .collect()
+}
+
+/// Refresh the app-managed bundle without loading a duplicate extension.
+/// Browser reload remains explicit when its normal controls require confirmation.
+pub fn update(browser: &Browser, bundled: &Path, data_dir: &Path) -> io::Result<InstallInfo> {
+    let _install = INSTALL_LOCK
+        .lock()
+        .map_err(|_| io::Error::other("Another browser setup failed"))?;
+    let extension_dir = data_dir
+        .join("extension")
+        .join(browser.engine.extension_folder());
+    prepare_extension(
+        &bundled.join(browser.engine.extension_folder()),
+        &extension_dir,
+    )?;
+    open_in(browser, &browser.extensions_page)?;
+    #[cfg(windows)]
+    let (method, setup_step) = match automation::reload(browser, &extension_dir) {
+        Ok(()) => ("automatic", None),
+        Err(step) => ("manual", Some(step)),
+    };
+    #[cfg(not(windows))]
+    let (method, setup_step) = ("manual", None);
+    Ok(InstallInfo {
+        method,
+        updating: true,
+        browser: browser.name.clone(),
+        engine: browser.engine,
+        extension_dir,
+        extensions_page: browser.extensions_page.clone(),
+        setup_step,
+    })
 }
 
 /// Prepare completely before replacing an installed bundle; never downgrade

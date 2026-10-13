@@ -453,18 +453,84 @@ pub struct BrowserStatus {
     browser: Browser,
     /// The extension in this browser talked to SDM recently.
     connected: bool,
+    extension_seen: bool,
+    extension_version: Option<String>,
+    available_extension_version: Option<String>,
+    extension_update_available: bool,
 }
 
 #[tauri::command]
-pub fn list_browsers(state: State<'_, AppState>) -> Vec<BrowserStatus> {
+pub fn list_browsers(app: AppHandle, state: State<'_, AppState>) -> Vec<BrowserStatus> {
     let seen = state.bridge.connected();
+    let bundled = app
+        .path()
+        .resolve("extension", BaseDirectory::Resource)
+        .ok();
     browsers::detect()
         .into_iter()
         .map(|browser| {
             let connected = seen.get(&browser.id).is_some_and(|secs| *secs < 120);
-            BrowserStatus { browser, connected }
+            let client = state.extension_clients.get(&browser.id);
+            let available = bundled.as_ref().and_then(|path| {
+                browsers::extension_version(&path.join(browser.engine.extension_folder())).ok()
+            });
+            let current = client.as_ref().and_then(|client| client.version.clone());
+            let update = client.is_some()
+                && available.as_ref().is_some_and(|available| {
+                    current
+                        .as_deref()
+                        .and_then(crate::extension_clients::version)
+                        .is_none_or(|current| crate::extension_clients::newer(available, &current))
+                });
+            BrowserStatus {
+                browser,
+                connected,
+                extension_seen: client.is_some(),
+                extension_version: current,
+                available_extension_version: available.map(|parts| {
+                    parts
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(".")
+                }),
+                extension_update_available: update,
+            }
         })
         .collect()
+}
+
+#[tauri::command]
+pub async fn update_extension(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<InstallInfo> {
+    let browser = browsers::detect()
+        .into_iter()
+        .find(|browser| browser.id == id)
+        .ok_or("this browser was not found")?;
+    let bundled = app
+        .path()
+        .resolve("extension", BaseDirectory::Resource)
+        .map_err(text_error)?;
+    let available = browsers::extension_version(&bundled.join(browser.engine.extension_folder()))
+        .map_err(text_error)?;
+    if state
+        .extension_clients
+        .get(&id)
+        .and_then(|client| client.version)
+        .as_deref()
+        .and_then(crate::extension_clients::version)
+        .is_some_and(|installed| crate::extension_clients::newer(&installed, &available))
+    {
+        return Err("the installed extension is newer than the bundled update".into());
+    }
+    let data_dir = state.data_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || browsers::update(&browser, &bundled, &data_dir))
+        .await
+        .map_err(text_error)?
+        .map_err(text_error)
 }
 
 #[tauri::command]

@@ -395,6 +395,10 @@ const server=http.createServer((req,res)=>{
       env:{...process.env,SDM_UI_BASE:'http://127.0.0.1:1420',SDM_UI_BROWSER:edge.executable,SDM_UI_OUTPUT:path.join(output,'connection-ui')},
       stdio:'inherit',timeout:90_000,
     });
+    execFileSync(process.execPath,[path.join(root,'.github/scripts/extension-update-ui-smoke.cjs')],{
+      env:{...process.env,SDM_UI_BASE:'http://127.0.0.1:1420',SDM_UI_BROWSER:edge.executable,SDM_UI_OUTPUT:path.join(output,'extension-update')},
+      stdio:'inherit',timeout:90_000,
+    });
 
     await main.locator('.idm-toolbar').waitFor();
     const mainDimensions=await main.evaluate(()=>({width:innerWidth,height:innerHeight,

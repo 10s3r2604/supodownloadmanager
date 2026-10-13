@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.5
+
+- Remember observed browser extensions and their versions across app restarts,
+  separately from live connection status. A disconnected browser no longer
+  appears to need another installation after its extension has connected once.
+- Update the bundled extension from Browsers. Windows attempts Reload on the
+  existing SDM card, with guided steps when confirmation is needed. Report the
+  new version only after the extension reconnects; preserve newer clients and IDs.
+- Browser extension 0.6.6 discovers quality and a positive estimated size before
+  showing the Supo logo + Download button. Omit unresolved Best/unknown-size
+  choices, keep selected-clip discovery on X, and cancel when the pointer leaves.
+- Read resolution and size estimates from single-file video metadata, and reject
+  invalid size/bitrate values. Audio format labels no longer repeat MP3.
+
 ## 0.7.4
 
 - Browser extension 0.6.5 uses Native Messaging with the desktop's private local

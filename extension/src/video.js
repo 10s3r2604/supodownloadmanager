@@ -71,9 +71,10 @@ function sdmVideoSource(video, pageUrl, title) {
   let request = 0;
   let frame = 0;
   let pointer = { x: -1, y: -1 };
-  let prefetched = { page: "", clientId: null, at: 0 };
+  let prefetched = { page: "", clientId: null, at: 0, promise: null, finished: false };
   let probeTimer = 0;
   let probeWake = null;
+  let pointerOnHost = false;
 
   function refresh() {
     if (checking || Date.now() - checkedAt < RECHECK_MS) return checking;
@@ -131,14 +132,15 @@ function sdmVideoSource(video, pageUrl, title) {
       </button>
       <div class="menu" role="menu" hidden></div>`;
     button = root.querySelector(".trigger");
+    button.hidden = true;
     label = button.querySelector("span");
     menu = root.querySelector(".menu");
     menu.setAttribute("aria-label", text("videoQualities"));
     label.textContent = text("videoButton");
     feedback("menuVideo");
     button.addEventListener("click", openMenu);
-    host.addEventListener("mouseenter", () => clearTimeout(hideTimer));
-    host.addEventListener("mouseleave", scheduleHide);
+    host.addEventListener("mouseenter", () => { pointerOnHost = true; clearTimeout(hideTimer); });
+    host.addEventListener("mouseleave", () => { pointerOnHost = false; scheduleHide(); });
     menu.addEventListener("keydown", (event) => {
       const rows = [...menu.querySelectorAll("button:not(:disabled)")];
       const index = rows.indexOf(root.activeElement);
@@ -181,9 +183,9 @@ function sdmVideoSource(video, pageUrl, title) {
     for (let attempt = 0; attempt < 3; ++attempt) {
       try { return await chrome.runtime.sendMessage(message); }
       catch {
-        if (!menuOpen || token !== request || attempt === 2) return null;
+        if (!current || token !== prefetched.clientId || attempt === 2) return null;
         await probeDelay();
-        if (!menuOpen || token !== request) return null;
+        if (!current || token !== prefetched.clientId) return null;
       }
     }
     return null;
@@ -194,7 +196,7 @@ function sdmVideoSource(video, pageUrl, title) {
     probeWake?.();
     probeWake = null;
     const clientId = prefetched.clientId;
-    prefetched = { page: "", clientId: null, at: 0 };
+    prefetched = { page: "", clientId: null, at: 0, promise: null, finished: false };
     if (clientId) chrome.runtime.sendMessage({ type: "video-probe-cancel", clientId }).catch(() => {});
   }
 
@@ -204,11 +206,33 @@ function sdmVideoSource(video, pageUrl, title) {
     const page = `${selected.pageUrl.split("#")[0]}|${selected.mediaUrl || ""}`;
     // Opening a menu after a long hover renews the interest before the
     // desktop's 20-second idle lease can leave a cached expiry error.
-    if (prefetched.page === page && prefetched.clientId && (!fresh || Date.now() - prefetched.at < 15_000)) return;
+    if (prefetched.page === page && prefetched.promise && (!prefetched.finished || !fresh || Date.now() - prefetched.at < 15_000)) return prefetched.promise;
     cancelProbe();
     const clientId = crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
-    prefetched = { page, clientId, at: Date.now() };
-    chrome.runtime.sendMessage({ type: "video-prefetch", ...selected, clientId }).catch(() => {});
+    prefetched = { page, clientId, at: Date.now(), promise: null, finished: false };
+    button.hidden = true;
+    prefetched.promise = (async () => {
+      let result = await probeMessage({type:"video-prefetch", ...selected, clientId}, clientId);
+      while (current && prefetched.clientId === clientId && result?.ok && result.state === "pending") {
+        await probeDelay();
+        if (!current || prefetched.clientId !== clientId) return null;
+        result = await probeMessage({type:"video-probe-status", clientId}, clientId);
+      }
+      if (!current || prefetched.clientId !== clientId) return null;
+      prefetched.finished = true;
+      if (!result?.ok) return result;
+      const options = (result.info?.options || []).filter(option =>
+        typeof option.id === "string" && typeof option.ext === "string" && option.ext.length > 0
+        && Number.isFinite(option.size) && option.size > 0
+        && (option.kind === "audio" || (option.kind === "video" && Number.isInteger(option.height) && option.height > 0)));
+      if (!options.length) return {ok:false, error:text("videoMetadataUnavailable")};
+      prefetched.at = Date.now();
+      button.hidden = false;
+      host.style.display = "block";
+      attach(); place(); scheduleHide();
+      return {...result, info:{...result.info, options}};
+    })();
+    return prefetched.promise;
   }
 
   function visibleVideoAt(x, y) {
@@ -225,6 +249,8 @@ function sdmVideoSource(video, pageUrl, title) {
     // Virtualized feeds may reuse the same VIDEO element for another post.
     if (!current.isConnected) { hide(); return; }
     const selected = source();
+    const selectedKey = `${selected.pageUrl.split("#")[0]}|${selected.mediaUrl || ""}`;
+    if (prefetched.page && selectedKey !== prefetched.page) { cancelProbe(); button.hidden = true; if (!menuOpen) prefetch(); }
     if (menuOpen && (selected.pageUrl !== menuSource?.pageUrl || selected.mediaUrl !== menuSource?.mediaUrl)) { closeMenu(); reset(); }
     const r = current.getBoundingClientRect();
     if (r.width < MIN_WIDTH || r.bottom < 0 || r.top > innerHeight) { hide(); return; }
@@ -245,8 +271,8 @@ function sdmVideoSource(video, pageUrl, title) {
   function show(video) {
     build();
     clearTimeout(hideTimer);
-    if (current !== video) { cancelProbe(); current = video; reset(); }
-    host.style.display = "block";
+    if (current !== video) { cancelProbe(); current = video; reset(); button.hidden = true; }
+    host.style.display = menuOpen || !button.hidden ? "block" : "none";
     attach();
     place();
     prefetch();
@@ -276,7 +302,10 @@ function sdmVideoSource(video, pageUrl, title) {
 
   function scheduleHide() {
     clearTimeout(hideTimer);
-    if (!menuOpen) hideTimer = setTimeout(hide, HIDE_AFTER_MS);
+    if (!menuOpen && !pointerOnHost) hideTimer = setTimeout(() => {
+      if (current && prefetched.promise && !prefetched.finished && visibleVideoAt(pointer.x, pointer.y) === current) { scheduleHide(); return; }
+      hide();
+    }, HIDE_AFTER_MS);
   }
 
   function reset() {
@@ -335,7 +364,7 @@ function sdmVideoSource(video, pageUrl, title) {
       const divisor = { GB: 1024 ** 3, MB: 1024 ** 2, KB: 1024, B: 1 }[unit];
       size = `~${Number((option.size / divisor).toFixed(1))} ${unit}`;
     }
-    const format = [option.vcodec, option.acodec, option.ext.toUpperCase()].filter(Boolean).join(" · ");
+    const format = [...new Set([option.vcodec, option.acodec, option.ext.toUpperCase()].filter(Boolean))].join(" · ");
     return { quality, format, size };
   }
 
@@ -348,6 +377,8 @@ function sdmVideoSource(video, pageUrl, title) {
     menuOpen = true;
     menuSource = source();
     menu.hidden = false;
+    host.style.display = "block";
+    attach();
     button.setAttribute("aria-expanded", "true");
     const token = ++request;
     status(text("videoFindingQualities"), "loading");
@@ -361,14 +392,7 @@ function sdmVideoSource(video, pageUrl, title) {
     }
     // The document owns the lease and polls through independent short messages.
     // Its ID survives service-worker restarts and never carries cookies in URLs.
-    prefetch(true);
-    const clientId = prefetched.clientId;
-    let result = await probeMessage({ type: "video-probe", ...menuSource, clientId }, token);
-    while (menuOpen && token === request && result?.ok && result.state === "pending") {
-      await probeDelay();
-      if (!menuOpen || token !== request) return;
-      result = await probeMessage({ type: "video-probe-status", clientId }, token);
-    }
+    const result = await prefetch(true);
     if (!menuOpen || token !== request) return;
     if (!result?.ok) {
       status(result?.error || text("videoFailed"), "error");
@@ -469,7 +493,9 @@ function sdmVideoSource(video, pageUrl, title) {
       const video = contextVideo?.isConnected ? contextVideo
         : videos.find((v) => message.mediaUrl && (v.currentSrc || v.src) === message.mediaUrl);
       if (!video) { reply({ ok: false }); return; }
-      closeMenu();
+      // Promote the hovered video's pending discovery. Replacing an open menu
+      // still releases its old interest; show() handles a different video.
+      if (menuOpen) closeMenu();
       show(video);
       openMenu({ preventDefault() {}, stopPropagation() {}, detail: 0 }).catch(() => {});
       reply({ ok: true });

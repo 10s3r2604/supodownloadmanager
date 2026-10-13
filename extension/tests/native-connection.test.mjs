@@ -8,7 +8,7 @@ async function worker(native,{legacyReady=true}={}) {
  const calls=[], legacy=[];let listener;
  const event={addListener(){}};
  const chrome={
-  runtime:{id,getURL:path=>`chrome-extension://${id}/${path}`,sendNativeMessage:async(host,message)=>{calls.push({host,message});return native(message)},onInstalled:event,onStartup:event,onMessage:{addListener(fn){listener=fn}}},
+  runtime:{id,getManifest:()=>({version:'0.6.6'}),getURL:path=>`chrome-extension://${id}/${path}`,sendNativeMessage:async(host,message)=>{calls.push({host,message});return native(message)},onInstalled:event,onStartup:event,onMessage:{addListener(fn){listener=fn}}},
   storage:{local:{async get(defaults){return {...defaults,port:19999}}}},
   cookies:{async getAll(){return [{name:'session',value:'fixture'}]}},
   downloads:{onCreated:event,onChanged:event,onDeterminingFilename:event},
@@ -28,6 +28,7 @@ test('native transport ignores an old custom port and preserves file metadata',a
  assert.equal(result.ok,true);assert.equal(app.legacy.length,0);
  const request=app.calls.find(call=>call.message.path==='/api/download');
  assert.equal(request.host,'com.supodownloadmanager.bridge');assert.equal(request.message.browser,'chrome');
+ assert.equal(request.message.headers['X-SDM-Extension-Version'],'0.6.6');
  assert.equal(request.message.body.url,'magnet:?xt=urn:btih:fixture');assert.equal(request.message.body.referrer,'https://fixture.example');
  const status=await app.send({type:'connection-status'});assert.equal(status.transport,'native');
 });

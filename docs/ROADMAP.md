@@ -1,6 +1,6 @@
 # Roadmap
 
-Current stable: **SDM 0.7.4**, extension **0.6.5**. Checked items are implemented;
+Current stable: **SDM 0.7.5**, extension **0.6.6**. Checked items are implemented;
 unchecked items are planned, without a promised release date. Historical phase
 versions show when each area started. See [Changelog](../CHANGELOG.md) and the
 [product guidelines](PRODUCT_GUIDELINES.md) for current behavior.
@@ -45,6 +45,8 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 - [x] "Download with SDM" in the context menu for links, images, videos and audio
 - [x] Forward cookies, referer and user agent so downloads that need a login work
 - [x] Automatic Native Messaging connection, status/retry and explicit Open SDM; older clients retain compatibility under diagnostics
+- [x] Remember observed extension versions; update the bundled extension with reload confirmation
+- [x] Prepare usable quality and estimated size before showing the video button
 - [x] First-run browser detection and checkbox selection; normal UI loading verified in Chrome Windows, guided confirmation for other browsers
 - [ ] Publish in the Chrome Web Store, Edge Add-ons and on addons.mozilla.org (one-click install);
       packages, listing and images are ready, see [STORE.md](STORE.md)

@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const code = readFileSync(new URL("../src/video.js", import.meta.url), "utf8");
 const flush = () => new Promise(resolve => setImmediate(resolve));
-const done = { ok: true, state: "done", info: { title: "Clip", options: [{ id: "v1080", kind: "video", height: 1080, fps: 30, ext: "mp4" }] } };
+const done = { ok: true, state: "done", info: { title: "Clip", options: [{ id: "v1080", kind: "video", height: 1080, fps: 30, ext: "mp4", size: 134217728 }] } };
 const deferred = () => {
   let resolve;
   const promise = new Promise(done => { resolve = done; });
@@ -79,6 +79,7 @@ function content({ respond, crypto: cryptoAPI } = {}) {
   let result = { ok: true, state: "pending" };
   const timers = new Map();
   const messages = [];
+  let receive;
   const document = new Element("document");
   document.title = "Clip";
   document.body = new Element("body");
@@ -107,7 +108,7 @@ function content({ respond, crypto: cryptoAPI } = {}) {
       i18n: { getMessage: key => key },
       runtime: {
         getURL: path => `chrome-extension://sdm-test/${path}`,
-        onMessage: { addListener() {} },
+        onMessage: { addListener(listener) { receive = listener; } },
         async sendMessage(message) {
           messages.push(JSON.parse(JSON.stringify(message)));
           if (message.type === "video-enabled") return true;
@@ -139,12 +140,34 @@ function content({ respond, crypto: cryptoAPI } = {}) {
     finish() { result = done; },
     async hover() { await document.dispatch("mousemove", { clientX: 100, clientY: 100 }); await advance(0); },
     open: () => host().shadow.querySelector(".trigger").dispatch("click"),
+    async contextOpen() {
+      await document.dispatch("contextmenu", { composedPath: () => [video] });
+      return new Promise(resolve => receive({ type: "video-open-menu" }, {}, resolve));
+    },
     keepHover: () => host().dispatch("mouseenter"),
     close: () => document.dispatch("keydown", { key: "Escape" }),
     menu,
+    trigger: () => host().shadow.querySelector(".trigger"),
     scroll: () => windowEvents.dispatch("scroll"),
   };
 }
+
+test("the context menu promotes a pending hover without replacing its discovery lease", async () => {
+  const page = content();
+  await page.hover();
+  const id = page.messages.find(message => message.type === "video-prefetch").clientId;
+  assert.equal(page.trigger().hidden, true);
+  await page.contextOpen();
+  await flush();
+  assert.equal(page.messages.filter(message => message.type === "video-prefetch").length, 1);
+  assert.equal(page.messages.filter(message => message.type === "video-probe-cancel").length, 0);
+  await page.advance(31_000);
+  assert(page.messages.filter(message => message.type === "video-probe-status").every(message => message.clientId === id));
+  page.finish();
+  await page.advance(1000);
+  assert.equal(page.trigger().hidden, false);
+  assert.equal(page.menu().querySelector(".quality").textContent, "1080p HD");
+});
 
 test("a content-owned client ID follows prefetch, menu promotion, and polls past 30 seconds", async () => {
   const page = content();
@@ -153,7 +176,7 @@ test("a content-owned client ID follows prefetch, menu promotion, and polls past
   assert.ok(prefetch.clientId);
   const opening = page.open();
   await flush();
-  const probe = page.messages.find(message => message.type === "video-probe");
+  const probe = page.messages.find(message => message.type === "video-prefetch");
   assert.equal(probe.clientId, prefetch.clientId);
   await page.advance(31_000);
   assert.equal(page.menu().hidden, false);
@@ -172,7 +195,7 @@ test("opening after a long hover renews an expired prefetch lease without showin
   let oldId;
   let expiredAttempts = 0;
   const page = content({ respond: message => {
-    if (message.type === "video-probe" && message.clientId === oldId) {
+    if (message.type === "video-prefetch" && message.clientId === oldId) {
       ++expiredAttempts;
       return { ok: false, error: "Probe interest expired" };
     }
@@ -183,7 +206,7 @@ test("opening after a long hover renews an expired prefetch lease without showin
   await page.keepHover();
   await page.advance(26_000);
   assert.equal(page.messages.filter(message => message.type === "video-prefetch").length, 1);
-  assert.equal(page.messages.filter(message => message.type === "video-probe-status").length, 0);
+  assert.equal(page.messages.filter(message => message.type === "video-probe-status").length, 1);
   const opening = page.open();
   await flush();
   const cancellations = page.messages.filter(message => message.type === "video-probe-cancel");
@@ -191,7 +214,7 @@ test("opening after a long hover renews an expired prefetch lease without showin
   const starts = page.messages.filter(message => message.type === "video-prefetch");
   assert.equal(starts.length, 2);
   assert.notEqual(starts[1].clientId, oldId);
-  assert.equal(page.messages.find(message => message.type === "video-probe").clientId, starts[1].clientId);
+  assert.equal(page.messages.filter(message => message.type === "video-prefetch").at(-1).clientId, starts[1].clientId);
   assert.equal(page.menu().querySelector(".loading").textContent, "videoFindingQualities");
   await page.advance(1000);
   await opening;
@@ -199,7 +222,7 @@ test("opening after a long hover renews an expired prefetch lease without showin
   assert.equal(page.menu().querySelector(".error"), null);
   assert.equal(page.menu().querySelectorAll("button").some(button => button.textContent === "videoRetry"), false);
   assert.equal(expiredAttempts, 0);
-  assert.equal(page.messages.find(message => message.type === "video-probe-status").clientId, starts[1].clientId);
+  assert.equal(page.messages.filter(message => message.type === "video-probe-status").at(-1).clientId, starts[1].clientId);
 });
 
 test("HTTP pages without randomUUID retain a cryptographic client ID through start, poll, and cancel", async () => {
@@ -221,13 +244,13 @@ test("HTTP pages without randomUUID retain a cryptographic client ID through sta
   await page.close();
   await opening;
   const owned = page.messages.filter(message => message.clientId);
-  assert.deepEqual(owned.map(message => message.type), ["video-prefetch", "video-probe", "video-probe-status", "video-probe-cancel"]);
+  assert.deepEqual(owned.map(message => message.type), ["video-prefetch", "video-probe-status", "video-probe-cancel"]);
   assert.ok(owned.every(message => message.clientId === "0102030405060708090a0b0c0d0e0f10"));
   assert.match(owned[0].clientId, /^[a-f0-9]{32}$/);
   assert.equal(randomReads, 1, "promotion and polling must reuse the original lease ID");
 });
 
-for (const type of ["video-probe", "video-probe-status"]) {
+for (const type of ["video-prefetch", "video-probe-status"]) {
   test(`a rejected ${type} recovers after one delay using the same lease ID`, async () => {
     let attempts = 0;
     const page = content({ respond: message => {
@@ -291,7 +314,7 @@ for (const type of ["video-probe", "video-probe-status"]) {
     await flush();
     assert.equal(finished, true, "closing must wake the runtime retry wait");
     assert.equal(page.menu().hidden, true);
-    const id = page.messages.find(message => message.type === "video-probe").clientId;
+    const id = page.messages.find(message => message.type === "video-prefetch").clientId;
     assert.deepEqual(page.messages.filter(message => message.type === "video-probe-cancel"), [{ type: "video-probe-cancel", clientId: id }]);
     await page.advance(1500);
     assert.equal(attempts, 1);
@@ -326,7 +349,7 @@ test("closing a pending menu cancels its lease and wakes its polling wait", asyn
   await flush();
   assert.equal(finished, true, "closing must release a pending content-script promise");
   assert.equal(page.menu().hidden, true);
-  const id = page.messages.find(message => message.type === "video-probe").clientId;
+  const id = page.messages.find(message => message.type === "video-prefetch").clientId;
   assert.deepEqual(page.messages.filter(message => message.type === "video-probe-cancel"), [{ type: "video-probe-cancel", clientId: id }]);
   await page.advance(1500);
   assert.equal(page.messages.filter(message => message.type === "video-probe-status").length, 0);
@@ -334,11 +357,11 @@ test("closing a pending menu cancels its lease and wakes its polling wait", asyn
 
 test("closing while start is in flight cancels immediately and ignores a late result", async () => {
   const start = deferred();
-  const page = content({ respond: message => message.type === "video-probe" ? start.promise : undefined });
+  const page = content({ respond: message => message.type === "video-prefetch" ? start.promise : undefined });
   await page.hover();
   const opening = page.open();
   await flush();
-  const probe = page.messages.find(message => message.type === "video-probe");
+  const probe = page.messages.find(message => message.type === "video-prefetch");
   await page.close();
   assert.deepEqual(page.messages.filter(message => message.type === "video-probe-cancel"), [{ type: "video-probe-cancel", clientId: probe.clientId }]);
   start.resolve(done);
@@ -352,9 +375,9 @@ test("closing while start is in flight cancels immediately and ignores a late re
 test("an old start reply cannot overwrite a reopened menu's newer qualities", async () => {
   const oldStart = deferred();
   let starts = 0;
-  const newer = { ...done, info: { options: [{ id: "v720", kind: "video", height: 720, ext: "mp4" }] } };
+  const newer = { ...done, info: { options: [{ id: "v720", kind: "video", height: 720, ext: "mp4", size: 67108864 }] } };
   const page = content({ respond: message => {
-    if (message.type === "video-probe") return ++starts === 1 ? oldStart.promise : newer;
+    if (message.type === "video-prefetch") return ++starts === 1 ? oldStart.promise : newer;
   } });
   await page.hover();
   const oldOpening = page.open();
@@ -366,7 +389,7 @@ test("an old start reply cannot overwrite a reopened menu's newer qualities", as
   await oldOpening;
   assert.equal(page.menu().hidden, false);
   assert.equal(page.menu().querySelector(".quality").textContent, "720p HD");
-  const ids = page.messages.filter(message => message.type === "video-probe").map(message => message.clientId);
+  const ids = page.messages.filter(message => message.type === "video-prefetch").map(message => message.clientId);
   assert.notEqual(ids[0], ids[1]);
 });
 
@@ -379,7 +402,7 @@ for (const [name, changeSource] of [
     await page.hover();
     const opening = page.open();
     await flush();
-    const first = page.messages.find(message => message.type === "video-probe").clientId;
+    const first = page.messages.find(message => message.type === "video-prefetch").clientId;
     changeSource(page);
     await page.scroll();
     await flush();
@@ -388,7 +411,7 @@ for (const [name, changeSource] of [
     await opening;
     page.finish();
     await page.open();
-    const starts = page.messages.filter(message => message.type === "video-probe");
+    const starts = page.messages.filter(message => message.type === "video-prefetch");
     assert.equal(starts.length, 2);
     assert.notEqual(starts[1].clientId, first);
     assert.equal(starts[1].pageUrl, page.location.href);
@@ -396,3 +419,57 @@ for (const [name, changeSource] of [
     assert.equal(page.menu().querySelector(".quality").textContent, "1080p HD");
   });
 }
+
+test("the Download trigger stays hidden while a stationary hover discovers quality and size", async () => {
+  const page = content();
+  await page.hover();
+  assert.equal(page.trigger().hidden, true);
+  await page.advance(31_000);
+  assert.equal(page.trigger().hidden, true);
+  assert(page.messages.filter(message => message.type === 'video-probe-status').length >= 30);
+  page.finish();
+  await page.advance(1000);
+  assert.equal(page.trigger().hidden, false);
+  const before = page.messages.length;
+  await page.open();
+  assert.equal(page.messages.length, before, 'opening ready choices must reuse the completed metadata');
+  assert.equal(page.menu().querySelector('.quality').textContent, '1080p HD');
+  assert.equal(page.menu().querySelector('.size').textContent, '~128 MB');
+});
+
+test("generic Best and unknown-size choices cannot expose the Download trigger", async () => {
+  const page = content({respond: message => message.type === 'video-prefetch' ? {ok:true,state:'done',info:{options:[
+    {id:'best',kind:'video',height:null,ext:'mp4',size:null},
+    {id:'mp3',kind:'audio',ext:'mp3',size:null},
+    {id:'zero',kind:'video',height:720,ext:'mp4',size:0},
+  ]}} : undefined});
+  await page.hover();
+  assert.equal(page.trigger().hidden,true);
+  await page.open();
+  assert.equal(page.menu().querySelector('.choice'),null);
+  assert.equal(page.menu().querySelector('.error').textContent,'videoMetadataUnavailable');
+});
+
+test("ready menus omit unresolved rows and deduplicate an audio format label", async () => {
+  const page=content({respond:message=>message.type==='video-prefetch'?{ok:true,state:'done',info:{options:[
+    {id:'best',kind:'video',height:null,ext:'mp4',size:1024},
+    {id:'audio',kind:'audio',ext:'mp3',acodec:'MP3',size:2097152},
+  ]}}:undefined});
+  await page.hover();
+  assert.equal(page.trigger().hidden,false);
+  await page.open();
+  assert.equal(page.menu().querySelectorAll('.choice').length,1);
+  assert.equal(page.menu().querySelector('.format').textContent,'MP3');
+  assert.equal(page.menu().querySelector('.size').textContent,'~2 MB');
+});
+
+test("leaving while discovery runs cancels its lease and suppresses late visibility",async()=>{
+  const start=deferred();
+  const page=content({respond:message=>message.type==='video-prefetch'?start.promise:undefined});
+  await page.hover();
+  await page.document.dispatch('mousemove',{clientX:999,clientY:799});
+  await page.advance(2000);
+  start.resolve(done);await flush();
+  assert.equal(page.trigger().hidden,true);
+  assert.equal(page.messages.filter(message=>message.type==='video-probe-cancel').length,1);
+});

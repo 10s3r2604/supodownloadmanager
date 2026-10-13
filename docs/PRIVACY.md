@@ -31,7 +31,10 @@ preferences) are kept in the browser's extension storage on your computer.
 
 The app downloads files from the addresses you give it, using the cookies and referer
 that came with them, just as your browser would. It keeps its download list and
-settings in its data folder on your computer. Cookies are deleted from that list as
+settings in its data folder on your computer. It also remembers the browser name
+and version reported by each connected SDM extension, so it can distinguish an
+observed installation from a live connection and offer the bundled update. This
+status file contains no browsing history, URLs or cookies. Cookies are deleted from that list as
 soon as a download is complete.
 
 The app contacts these services to perform downloads and enabled update checks:
@@ -70,6 +73,9 @@ chỉ nằm trong chẩn đoán nâng cao.
 Extension kiểm tra link và phần tử video trên trang để hiện nút tải, không ghi lại
 lịch sử duyệt web hay gửi thống kê cho nhà phát triển. SDM dùng thông tin đó để tải
 từ website và xoá cookie khỏi danh sách tải khi file hoàn tất.
+
+App lưu tên browser và phiên bản tiện ích từng kết nối để nhận diện và cập nhật
+bộ tiện ích đi kèm; file trạng thái không chứa lịch sử duyệt web, URL hay cookie.
 
 Khi tải Torrent, SDM kết nối tracker, DHT và các máy khác; việc chia sẻ dữ liệu để
 tải tiếp cho người khác làm họ thấy được địa chỉ IP của bạn. Có thể dừng chia sẻ

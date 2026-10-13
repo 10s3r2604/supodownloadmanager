@@ -7,7 +7,7 @@ Firefox.
 The current packages require Chromium-based browsers version **116 or newer**,
 or Firefox **140 or newer**, as declared in their manifests.
 
-The current stable release is **SDM 0.7.4**, with extension **0.6.5**. It connects
+The current stable release is **SDM 0.7.5**, with extension **0.6.6**. It connects
 automatically and retains compatibility with SDM 0.6.1 or newer. On first-run
 setup, select the detected browsers and choose **Set up selected**. Windows
 attempts to load the unpacked extension using the selected browser's normal
@@ -18,8 +18,13 @@ steps when their controls require confirmation or are unavailable. The list show
 
 Existing installations can open **Browsers** for the same selection and setup.
 Choosing **Later** dismisses the first-run prompt; it can always be reopened
-from the toolbar. Updating an unpacked extension still requires browser reload
-and reloading video tabs. SDM preserves a separately installed newer version.
+from the toolbar. **Update extension** prepares the version bundled with the current
+SDM app and attempts Reload of the existing card on Windows. Guided reload steps
+remain available when confirmation is needed. Reload open video tabs afterward.
+SDM preserves a separately installed newer version and existing IDs/preferences.
+It remembers observed versions across app restarts; recognized but disconnected
+is distinct from Connected. The reported version changes only when the extension
+reconnects, not merely when the files have been copied.
 
 <img src="images/extension-popup.png" alt="Extension popup" width="320">
 
@@ -41,12 +46,15 @@ and reloading video tabs. SDM preserves a separately installed newer version.
   **Cancel**. The main SDM window stays in the background. Each pending link
   has its own confirmation, and closing one does not quit the app.
 - **Puts a compact Supo logo + "Download" button on videos.** Hover any video that is
-  at least 200 × 112 pixels and the button appears in its top right corner
-  (also in full screen). Click to choose quality, format and estimated file
-  size right on the page. SDM discovers formats in the background; a download
+  at least 200 × 112 pixels. SDM first discovers formats in the background,
+  then shows the button in its top right corner (also in full screen) when
+  quality and a positive estimated size are ready. Click to choose them right
+  on the page; unresolved quality/size choices are omitted. A download
   starts only after you choose an option. On X feeds the extension finds the
   hovered video's post and retains its clip index. Errors and **Try again**
-  stay in the page menu, and the X video context menu opens that same picker.
+  stay in the page menu when opened explicitly through the video context menu.
+  If metadata cannot be resolved, the floating Download button remains hidden.
+  Leaving the video cancels pending discovery.
   The button can be turned off in the popup. SDM must be running.
 
   <img src="images/video-button-en.png" alt="Supo logo and Download button with video qualities" width="416">
@@ -90,13 +98,13 @@ If SDM shows manual steps:
 3. Click **Load unpacked** and choose the folder SDM shows (or drag the folder
    onto the page).
 
-For an existing installation, update SDM first, then use **Set up selected** to
-refresh the bundled extension. If manual reload is requested, click **Reload**
+For an existing installation, update SDM first, then use **Browsers → Update
+extension** to refresh the bundled extension. If manual reload is requested, click **Reload**
 on its card, then reload open video tabs. An app update alone does not reload an
 already installed unpacked extension. If using a new folder, remove the old SDM
 extension first so only one is active.
 
-To install from a release ZIP, choose `sdm-extension-chromium-v0.7.4.zip`, extract
+To install from a release ZIP, choose `sdm-extension-chromium-v0.7.5.zip`, extract
 it into a permanent folder, then **Load unpacked** from the folder containing
 `manifest.json`. Keep that folder in place. The `store-chromium` build is for
 store submission and disables YouTube video controls; use the regular Chromium
@@ -112,7 +120,7 @@ build for the app's full video integration.
 Firefox removes temporary add-ons when it restarts. Permanent store installation
 is planned; no addons.mozilla.org listing is published yet.
 
-For ZIP installation, extract `sdm-extension-firefox-v0.7.4.zip` and select its
+For ZIP installation, extract `sdm-extension-firefox-v0.7.5.zip` and select its
 `manifest.json`. Keep SDM running while connecting a newly loaded extension.
 
 ## Troubleshooting
@@ -120,13 +128,14 @@ For ZIP installation, extract `sdm-extension-firefox-v0.7.4.zip` and select its
 - **Not connected:** keep SDM running and click **Try again** in the popup.
   Use **Open SDM** when offered. If integration is disabled, enable it in
   **Settings → Browser & clipboard**.
-- **Old extension after an app update:** use **Browsers → Set up selected**,
+- **Old extension after an app update:** use **Browsers → Update extension**,
   complete any reload step, and reload video tabs.
 - **A file stays in Chrome/Edge:** check that capture is on, its file type is
   selected in SDM and its size meets the minimum. An unavailable or refused
   handover leaves the browser able to download normally.
-- **X feed video:** use the hovered clip's Supo button to choose quality and
-  estimated size. If discovery fails, use **Try again** in the page menu.
+- **X feed video:** hover the clip and wait for quality and estimated size before
+  the Supo button appears. If discovery fails, open the video context menu and
+  choose the SDM video command, then **Try again**.
 - **ZIP downloads:** use public release assets. Actions artifacts may require
   GitHub sign-in and expire.
 
@@ -200,11 +209,16 @@ Gói hiện tại yêu cầu Chrome/Chromium 116 trở lên hoặc Firefox 140 t
 
 Không phải nhập port. Nếu chưa kết nối, mở SDM và bấm **Thử lại** trong popup;
 dùng **Mở SDM** khi được hiển thị. Sau khi cập nhật app, cần làm mới tiện ích và
-tải lại tab video.
+tải lại tab video. App nhớ tiện ích đã từng kết nối, kể cả khi đóng trình duyệt.
+Vào **Trình duyệt → Cập nhật tiện ích** để làm mới bộ đi kèm app; hoàn tất Reload
+nếu browser yêu cầu. Chỉ hiện phiên bản mới sau khi tiện ích kết nối lại.
+Rê chuột lên video để tìm chất lượng và dung lượng trước khi nút Download hiện ra;
+lựa chọn chưa có thông tin sẽ không xuất hiện. Nếu nút chưa hiện, có thể mở lệnh
+video SDM trong menu chuột phải để xem lỗi và thử lại.
 
 <img src="images/extension-popup-vi.png" alt="Tiện ích SDM với trạng thái kết nối và phần nâng cao đóng mặc định" width="320">
 
-Nếu cài từ ZIP public: với Chrome/Edge dùng `sdm-extension-chromium-v0.7.4.zip`,
+Nếu cài từ ZIP public: với Chrome/Edge dùng `sdm-extension-chromium-v0.7.5.zip`,
 giải nén vào thư mục cố định, bật **Developer mode**, bấm **Load unpacked** rồi
 chọn thư mục chứa `manifest.json`. Không dùng bản `store-chromium` nếu cần đầy
 đủ nút video. Với Firefox, dùng ZIP `firefox`, vào `about:debugging`, bấm

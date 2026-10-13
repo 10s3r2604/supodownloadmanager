@@ -142,6 +142,49 @@ public static class SdmBrowserWindow {
         return $null
     }
     if ($null -eq $management) { throw 'The management document is not ready.' }
+    if ($request.updating) {
+        # Reload an existing card only. Never load a second SDM copy to update.
+        if ($request.engine -eq 'chromium') {
+            $developer = Find-Control $management @('Developer mode', 'Turn on Developer mode', 'Turn off Developer mode', 'Chế độ dành cho nhà phát triển', 'Bật chế độ dành cho nhà phát triển', 'Tắt chế độ dành cho nhà phát triển') ([Windows.Automation.TogglePattern]::Pattern)
+            if ($null -ne $developer) {
+                $toggle = $developer.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
+                if ($toggle.Current.ToggleState -eq [Windows.Automation.ToggleState]::Off) { $toggle.Toggle() }
+            }
+        }
+        $stage = 'reload'
+        $reload = Wait-For {
+            $name = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Supo Download Manager')
+            $brands = @($management.FindAll([Windows.Automation.TreeScope]::Descendants, $name))
+            $matches = @()
+            foreach ($brand in $brands) {
+                $card = $brand
+                for ($level = 0; $level -lt 4 -and $null -ne $card -and $card -ne $management; $level++) {
+                    $control = Find-Control $card @('Reload', 'Reload extension', 'Tải lại', 'Tải lại tiện ích') ([Windows.Automation.InvokePattern]::Pattern)
+                    if ($null -ne $control) { $matches += $control; break }
+                    $card = [Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($card)
+                }
+            }
+            $matches = @($matches | Sort-Object { $_.GetRuntimeId() -join ',' } -Unique)
+            if ($matches.Count -eq 1) { return $matches[0] }
+            return $null
+        }
+        if ($null -eq $reload) { throw 'Reload requires confirmation.' }
+        $reload.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $stage = 'verify'
+        $updated = Wait-For {
+            $name = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Supo Download Manager')
+            $brand = $management.FindFirst([Windows.Automation.TreeScope]::Descendants, $name)
+            $version = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $request.version)
+            $card = $brand
+            for ($level = 0; $level -lt 4 -and $null -ne $card -and $card -ne $management; $level++) {
+                if ($null -ne $card.FindFirst([Windows.Automation.TreeScope]::Descendants, $version)) { return $true }
+                $card = [Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($card)
+            }
+            return $null
+        }
+        if ($updated -eq $true) { [Console]::Out.Write('loaded'); exit 0 }
+        throw 'The updated version has not been confirmed.'
+    }
     if ($request.engine -eq 'chromium') {
         $stage = 'developer'
         $menu = $null

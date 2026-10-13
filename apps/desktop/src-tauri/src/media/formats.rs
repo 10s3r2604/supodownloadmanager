@@ -64,6 +64,8 @@ struct Info {
     extractor_key: Option<String>,
     webpage_url: Option<String>,
     ext: Option<String>,
+    height: Option<u32>,
+    tbr: Option<f64>,
     filesize: Option<f64>,
     filesize_approx: Option<f64>,
     #[serde(default)]
@@ -115,8 +117,14 @@ impl Format {
 
     fn size(&self, duration: Option<f64>) -> Option<u64> {
         self.filesize
-            .or(self.filesize_approx)
-            .or_else(|| Some(self.tbr? * 1000.0 / 8.0 * duration?))
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .or(self.filesize_approx.filter(|s| s.is_finite() && *s > 0.0))
+            .or_else(|| {
+                Some(
+                    self.tbr.or(self.abr)? * 1000.0 / 8.0
+                        * duration.filter(|d| d.is_finite() && *d > 0.0)?,
+                )
+            })
             .filter(|s| s.is_finite() && *s > 0.0)
             .map(|s| s as u64)
     }
@@ -204,8 +212,21 @@ fn options(info: &Info) -> Vec<MediaOption> {
     let formats: Vec<&Format> = info.formats.iter().filter(|f| !f.junk()).collect();
     if formats.is_empty() {
         // A single file without a format list.
-        let size = info.filesize.or(info.filesize_approx).map(|s| s as u64);
-        return vec![best(info.ext.as_deref().unwrap_or("mp4"), size, None)];
+        let size = info
+            .filesize
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .or(info.filesize_approx.filter(|s| s.is_finite() && *s > 0.0))
+            .or_else(|| {
+                Some(
+                    info.tbr.filter(|rate| rate.is_finite() && *rate > 0.0)? * 1000.0 / 8.0
+                        * duration.filter(|d| d.is_finite() && *d > 0.0)?,
+                )
+            })
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .map(|s| s as u64);
+        let mut option = best(info.ext.as_deref().unwrap_or("mp4"), size, None);
+        option.height = info.height.filter(|height| *height > 0);
+        return vec![option];
     }
 
     let audios: Vec<&Format> = formats.iter().copied().filter(|f| f.audio_only()).collect();
@@ -458,6 +479,15 @@ mod tests {
         assert_eq!(hd.id, "v720");
         assert_eq!(hd.size, Some(5_000_000 + 320_000));
         assert_eq!(hd.merge.as_deref(), Some("mp4"));
+    }
+
+    #[test]
+    fn plain_file_metadata_keeps_its_measured_height_and_estimates_size() {
+        let info = parse(r#"{"title":"Direct video","ext":"mp4","height":1080,"duration":20,"tbr":2048,"filesize":0}"#).unwrap();
+        assert_eq!(info.options[0].height, Some(1080));
+        assert_eq!(info.options[0].size, Some(5_120_000));
+        let invalid = parse(r#"{"ext":"mp4","duration":-20,"tbr":-2048,"filesize":0}"#).unwrap();
+        assert_eq!(invalid.options[0].size, None);
     }
 
     #[test]

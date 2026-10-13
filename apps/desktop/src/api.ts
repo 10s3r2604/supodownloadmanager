@@ -205,10 +205,15 @@ export interface Browser {
   executable: string;
   extensionsPage: string;
   connected: boolean;
+  extensionSeen: boolean;
+  extensionVersion: string | null;
+  availableExtensionVersion: string | null;
+  extensionUpdateAvailable: boolean;
 }
 
 export interface InstallInfo {
   method: "store" | "manual" | "automatic";
+  updating?: boolean;
   browser: string;
   engine: Engine;
   extensionDir: string;
@@ -366,6 +371,7 @@ export interface Api {
   pickTorrentFile(): Promise<string | null>;
   listBrowsers(): Promise<Browser[]>;
   installExtension(id: string): Promise<InstallInfo>;
+  updateExtension(id: string): Promise<InstallInfo>;
   completeBrowserSetup(): Promise<Settings>;
   openExtensionFolder(engine: Engine): Promise<void>;
   appInfo(): Promise<AppInfo>;
@@ -461,6 +467,7 @@ const tauriApi: Api = {
   pickTorrentFile: () => invoke("pick_torrent_file"),
   listBrowsers: () => invoke("list_browsers"),
   installExtension: (id) => invoke("install_extension", { id }),
+  updateExtension: (id) => invoke("update_extension", { id }),
   completeBrowserSetup: () => invoke("complete_browser_setup"),
   openExtensionFolder: (engine) => invoke("open_extension_folder", { engine }),
   appInfo: () => invoke("app_info"),

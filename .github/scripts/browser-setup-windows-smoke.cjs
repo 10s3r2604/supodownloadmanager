@@ -27,9 +27,10 @@ copyBundle(path.resolve('extension/dist/chromium'), directory);
 const request = {executable, directory, page:`${browser}://extensions`, engine:'chromium',
   version:JSON.parse(fs.readFileSync(path.join(directory,'manifest.json'),'utf8')).version};
 let connected = false;
+let connectedVersion = null;
 const server = http.createServer((req,res) => {
   if (req.url === '/api/ping' && req.headers['x-sdm-client'] === 'extension'
-    && req.headers['x-sdm-browser'] === browser) connected = true;
+    && req.headers['x-sdm-browser'] === browser) { connected = true; connectedVersion = req.headers['x-sdm-extension-version']; }
   res.setHeader('Content-Type','application/json');
   res.end(JSON.stringify({enabled:true, version:'browser-setup-fixture'}));
 });
@@ -85,5 +86,19 @@ async function automation(script) {
       assert(connected,'The extension must really connect after automatic loading');
     }
     console.log(JSON.stringify({method:result.stdout,connected}));
+    if (browser === 'chrome') {
+      // Refresh the same unpacked identity through the product's Reload flow.
+      const manifestFile=path.join(directory,'manifest.json');
+      const manifest=JSON.parse(fs.readFileSync(manifestFile,'utf8'));
+      const parts=manifest.version.split('.').map(Number);parts[parts.length-1]+=1;
+      manifest.version=parts.join('.');fs.writeFileSync(manifestFile,JSON.stringify(manifest));
+      request.version=manifest.version;request.updating=true;connected=false;
+      const reloaded=await automation(instrumented);console.log(JSON.stringify(reloaded));
+      assert.equal(reloaded.stdout,'loaded','Updating must reload the existing extension through normal Chrome controls');
+      const deadline=Date.now()+15000;
+      while ((!connected || connectedVersion!==manifest.version) && Date.now()<deadline) await sleep(200);
+      assert.equal(connectedVersion,manifest.version,'The reloaded worker must report the new manifest version');
+      console.log(JSON.stringify({existingExtensionUpdated:true,version:connectedVersion}));
+    }
   } finally { await new Promise(resolve=>server.close(resolve)); }
 })().catch(error=>{console.error(error);process.exitCode=1});

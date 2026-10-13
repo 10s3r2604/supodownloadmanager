@@ -5,6 +5,7 @@
 
 const DEFAULT_PORT = 17360;
 const NATIVE_HOST = "com.supodownloadmanager.bridge";
+const EXTENSION_VERSION = chrome.runtime.getManifest?.().version;
 let connectionTransport = "none";
 let connectionFailure = null;
 let nativeAvailable = false;
@@ -111,6 +112,7 @@ async function nativeMessage(message, timeout) {
 }
 
 async function callApp(path, body, timeout = 2500, extraHeaders = {}) {
+  extraHeaders = {...(EXTENSION_VERSION ? {"X-SDM-Extension-Version": EXTENSION_VERSION} : {}), ...extraHeaders};
   // A confirmed older app stays on its supported transport. In particular,
   // an old executable left in a host registration cannot receive a POST twice.
   if (path !== "/api/ping" && connectionTransport === "compatibility" && lastPing.status && !lastPing.status.nativeMessaging) {

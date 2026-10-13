@@ -1,8 +1,8 @@
 # Product guidelines
 
 These choices were approved by the repository owner. Use them when developing
-SDM or updating its GitHub presentation. Current implementation: **SDM 0.7.4**
-and browser extension **0.6.5**. [Changelog](../CHANGELOG.md) records shipped changes;
+SDM or updating its GitHub presentation. Current implementation: **SDM 0.7.5**
+and browser extension **0.6.6**. [Changelog](../CHANGELOG.md) records shipped changes;
 [Roadmap](ROADMAP.md) records work still to do.
 
 ## Identity and interface
@@ -28,7 +28,12 @@ and browser extension **0.6.5**. [Changelog](../CHANGELOG.md) records shipped ch
   loading on Windows. Chrome automatic loading is verified; other browsers
   retain clear guided confirmation when needed. Do not rewrite browser profiles
   or enterprise policies to force installation.
+- Remember observed extension versions separately from live connection. Offer
+  **Update extension** for the app-bundled version, reload the existing copy and
+  confirm the reported version before showing completion. Preserve newer versions.
 - Use the Supo logo and the short caption **Download** on the video button.
+  Resolve usable quality and a positive estimated size before revealing it; omit
+  unresolved placeholder choices.
   Quality, format and estimated size belong in the page menu. Resolve the
   selected X post/clip from the feed rather than forwarding its Home timeline.
 - Browser captures open a small separate window with **Download now / Download
