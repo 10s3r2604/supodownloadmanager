@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.3
+
+- Size toolbar buttons to their labels so Vietnamese “Chạy hàng đợi” stays
+  inside its button in light and dark themes. Compact windows use more readable
+  labels, and the toolbar can scroll when the available width is insufficient.
+
 ## 0.7.2
 
 - First-run browser setup detects installed browsers and lets users select several.
