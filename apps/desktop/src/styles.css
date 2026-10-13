@@ -1889,3 +1889,8 @@ input[type="checkbox"] {
 .skin-preview.minimal.dark i b {
   background: #35d799;
 }
+
+.browser-connection-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.browser-connection-status p { margin: 0; }
+.connection-diagnostics { border-top: 1px solid var(--border); padding-top: 12px; }
+.connection-diagnostics summary { cursor: pointer; color: var(--muted); margin-bottom: 12px; }

@@ -8,6 +8,8 @@ mod clipboard;
 mod commands;
 mod manager;
 mod media;
+mod native_connection;
+mod native_registration;
 mod power;
 mod queue;
 mod settings;
@@ -59,6 +61,7 @@ pub struct AppState {
     pub bridge: Arc<Bridge>,
     pub bridge_port: u16,
     pub bridge_error: Mutex<Option<String>>,
+    pub(crate) native_connection: Arc<native_connection::Connection>,
     pub data_dir: PathBuf,
     /// Serializes durable settings and this user's OS startup registration.
     pub(crate) startup: startup::StartupSettings,
@@ -99,6 +102,10 @@ pub(crate) struct AddPrompt {
     file_size: Option<u64>,
     directory: Option<PathBuf>,
     headers: Vec<(String, String)>,
+}
+
+pub fn native_mode() -> Option<i32> {
+    native_connection::run_mode()
 }
 
 pub fn run() {
@@ -194,6 +201,7 @@ pub fn run() {
             commands::complete_browser_setup,
             commands::open_extension_folder,
             commands::app_info,
+            commands::retry_browser_connection,
             updates::get_update_state,
             updates::check_for_updates,
             updates::install_update,
@@ -264,6 +272,7 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         app: app.clone(),
         manager: manager.clone(),
     });
+    let native_connection = native_connection::Connection::new(data_dir.clone(), bridge.clone());
     let pending_torrents = torrent_sources(
         std::env::args().skip(1),
         &std::env::current_dir().unwrap_or_default(),
@@ -275,6 +284,7 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         bridge: bridge.clone(),
         bridge_port: settings.bridge_port,
         bridge_error: Mutex::new(None),
+        native_connection: native_connection.clone(),
         data_dir,
         startup: startup::StartupSettings::default(),
         tools: tools.clone(),
@@ -303,6 +313,10 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         show_main_window(app);
     }
     updates::start(app.clone(), manager.clone());
+    native_connection.start();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = native_connection.register(None);
+    });
 
     // Sites change all the time; keep our copy of yt-dlp fresh.
     let update_manager = manager.clone();
@@ -543,6 +557,15 @@ struct AppBridge {
 }
 
 impl Handler for AppBridge {
+    fn native_client(&self, id: &str) {
+        self.app
+            .state::<AppState>()
+            .native_connection
+            .register_client(id);
+    }
+    fn native_ready(&self) -> bool {
+        self.app.state::<AppState>().native_connection.ready()
+    }
     fn config(&self) -> BridgeConfig {
         let settings = self.manager.settings();
         BridgeConfig {

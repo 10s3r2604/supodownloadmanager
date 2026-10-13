@@ -520,6 +520,7 @@ pub struct AppInfo {
     version: &'static str,
     bridge_port: u16,
     bridge_error: Option<String>,
+    connection_error: Option<String>,
 }
 
 #[tauri::command]
@@ -528,7 +529,18 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
         version: env!("CARGO_PKG_VERSION"),
         bridge_port: state.bridge_port,
         bridge_error: state.bridge_error.lock().ok().and_then(|e| e.clone()),
+        connection_error: state.native_connection.error(),
     }
+}
+
+#[tauri::command]
+pub async fn retry_browser_connection(state: State<'_, AppState>) -> Result<()> {
+    let connection = state.native_connection.clone();
+    connection.start();
+    tauri::async_runtime::spawn_blocking(move || connection.register(None))
+        .await
+        .map_err(text_error)?
+        .map_err(text_error)
 }
 
 #[cfg(test)]

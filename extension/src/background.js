@@ -1,10 +1,13 @@
 // Supo Download Manager browser extension.
 //
-// Hands downloads over to the SDM desktop app, which listens on
-// http://127.0.0.1:<port>. When the app is not running, the browser keeps
-// downloading as usual.
+// Native Messaging connects to the desktop without a user-configured port.
+// Older desktop builds retain their loopback bridge during migration.
 
 const DEFAULT_PORT = 17360;
+const NATIVE_HOST = "com.supodownloadmanager.bridge";
+let connectionTransport = "none";
+let connectionFailure = null;
+let nativeAvailable = false;
 const PING_CACHE_MS = 5000;
 // Adding a video can read the page again or fetch ffmpeg first.
 const MEDIA_ADD_TIMEOUT_MS = 180_000;
@@ -79,19 +82,68 @@ async function isBrave() {
   }
 }
 
+class ConnectionError extends Error {
+  constructor(code, unavailable = false) {
+    super(chrome.i18n.getMessage(code === "appNotRunning" ? "statusOffline" : "statusConnectionError"));
+    this.code = code;
+    this.unavailable = unavailable;
+  }
+}
+
+async function nativeMessage(message, timeout) {
+  if (typeof chrome.runtime.sendNativeMessage !== "function") throw new ConnectionError("notConfigured", true);
+  let timer;
+  try {
+    const result = await Promise.race([
+      chrome.runtime.sendNativeMessage(NATIVE_HOST, message),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new ConnectionError("timeout")), timeout); }),
+    ]);
+    nativeAvailable = true;
+    if (result?.error) throw new ConnectionError(result.error, result.error === "notConfigured");
+    return result;
+  } catch (error) {
+    if (error instanceof ConnectionError) throw error;
+    // Only failures before host dispatch permit the compatibility request.
+    // An uncertain reply/timeout must never submit the same download twice.
+    const missing = /native messaging host.*not found|host.*is not registered|access.*host.*forbidden|no such native application/i.test(error?.message || "");
+    throw new ConnectionError(missing ? "notConfigured" : "connectionError", missing);
+  } finally { clearTimeout(timer); }
+}
+
 async function callApp(path, body, timeout = 2500, extraHeaders = {}) {
+  // A confirmed older app stays on its supported transport. In particular,
+  // an old executable left in a host registration cannot receive a POST twice.
+  if (path !== "/api/ping" && connectionTransport === "compatibility" && lastPing.status && !lastPing.status.nativeMessaging) {
+    return callCompatibility(path, body, timeout, extraHeaders);
+  }
+  try {
+    const result = await nativeMessage({action:"request", path, browser:await browserId(), origin:(chrome.runtime.getURL?.("") || "").replace(/\/$/, ""), body:body ?? null, headers:extraHeaders, timeoutMs:timeout}, timeout);
+    if (!Number.isInteger(result?.status) || typeof result.body !== "string") throw new ConnectionError("connectionError");
+    connectionTransport = "native"; connectionFailure = null;
+    return {ok:result.status >= 200 && result.status < 300, status:result.status, json:async()=>JSON.parse(result.body), text:async()=>result.body};
+  } catch (error) {
+    connectionFailure = error.code || "connectionError";
+    if (!error.unavailable && path !== "/api/ping") throw error;
+  }
+  return callCompatibility(path, body, timeout, extraHeaders);
+}
+
+async function callCompatibility(path, body, timeout, extraHeaders) {
   const { port } = await prefs();
-  return fetch(`http://127.0.0.1:${port}${path}`, {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: body ? "POST" : "GET",
     headers: {
       "Content-Type": "application/json",
       "X-SDM-Client": "extension",
       "X-SDM-Browser": await browserId(),
+      "X-SDM-Extension-ID": chrome.runtime.id,
       ...extraHeaders,
     },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(timeout),
   });
+  connectionTransport = "compatibility"; connectionFailure = null;
+  return response;
 }
 
 /** Asks the app whether it is running. Returns its status or `null`. */
@@ -484,6 +536,16 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 ping(true);
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  const popupUrl = chrome.runtime.getURL?.("popup.html");
+  const extensionPage = !sender.tab || (typeof popupUrl === "string" && sender.url === popupUrl);
+  if (message?.type === "connection-status" && extensionPage) {
+    ping(true).then(status=>reply({status, transport:status ? connectionTransport : "none", error:connectionFailure, canLaunch:nativeAvailable}));
+    return true;
+  }
+  if (message?.type === "open-app" && extensionPage) {
+    nativeMessage({action:"launch"}, 5000).then(result=>reply({ok:result?.launched === true})).catch(()=>reply({ok:false}));
+    return true;
+  }
   if (message?.type === "status") {
     ping(true).then(reply);
     return true; // reply asynchronously

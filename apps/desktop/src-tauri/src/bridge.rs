@@ -101,6 +101,10 @@ pub struct BridgeConfig {
 
 /// What the app does with requests from the extension.
 pub trait Handler: Send + Sync + 'static {
+    fn native_client(&self, _id: &str) {}
+    fn native_ready(&self) -> bool {
+        false
+    }
     fn config(&self) -> BridgeConfig;
     fn download(&self, download: BrowserDownload);
     /// A video on a web page, to download with yt-dlp.
@@ -146,6 +150,7 @@ pub struct Bridge {
 #[serde(rename_all = "camelCase")]
 struct Ping {
     app: &'static str,
+    native_messaging: bool,
     version: &'static str,
     /// The app downloads videos from web pages (`/api/media`).
     media: bool,
@@ -236,8 +241,23 @@ async fn ping(State(bridge): State<Arc<Bridge>>, headers: HeaderMap) -> Response
         return StatusCode::FORBIDDEN.into_response();
     }
     bridge.remember(&headers);
+    if let Some(id) = headers
+        .get("x-sdm-extension-id")
+        .and_then(|value| value.to_str().ok())
+    {
+        let expected = format!("chrome-extension://{id}");
+        let origin_matches = headers.get(header::ORIGIN).is_none_or(|origin| {
+            origin
+                .to_str()
+                .is_ok_and(|origin| origin.trim_end_matches('/') == expected)
+        });
+        if crate::native_registration::valid_id(id) && origin_matches {
+            bridge.handler.native_client(id);
+        }
+    }
     Json(Ping {
         app: "sdm",
+        native_messaging: bridge.handler.native_ready(),
         version: env!("CARGO_PKG_VERSION"),
         media: true,
         media_probe_jobs: true,
@@ -382,6 +402,18 @@ fn probe_client_key(
         .get(header::ORIGIN)
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default();
+    let origin = origin.trim_end_matches('/');
+    let owner_id = owner.split(':').next().unwrap_or_default();
+    let stable_origin;
+    let origin = if crate::native_registration::valid_id(owner_id) {
+        stable_origin = format!("chrome-extension://{owner_id}");
+        if !origin.is_empty() && origin != stable_origin {
+            return Err((StatusCode::BAD_REQUEST, "video probe origin mismatch"));
+        }
+        stable_origin.as_str()
+    } else {
+        origin
+    };
     let browser = headers
         .get(BROWSER_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -600,6 +632,37 @@ async fn links(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn browser_probe_identity_survives_transport_changes_and_rejects_a_different_origin() {
+        let bridge = Bridge::new(Recorder {
+            enabled: true,
+            ..Default::default()
+        });
+        let id = "abcdefghijklmnopabcdefghijklmnop";
+        let mut headers = HeaderMap::new();
+        headers.insert(CLIENT_HEADER, "extension".parse().unwrap());
+        headers.insert(BROWSER_HEADER, "chrome".parse().unwrap());
+        headers.insert(
+            "x-sdm-probe-owner",
+            format!("{id}:12:0:document-a").parse().unwrap(),
+        );
+        let native = probe_client_key(&bridge, &headers, "stable-client").unwrap();
+        headers.insert(
+            header::ORIGIN,
+            format!("chrome-extension://{id}/").parse().unwrap(),
+        );
+        assert_eq!(
+            probe_client_key(&bridge, &headers, "stable-client").unwrap(),
+            native
+        );
+        headers.insert(
+            header::ORIGIN,
+            "chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba"
+                .parse()
+                .unwrap(),
+        );
+        assert!(probe_client_key(&bridge, &headers, "stable-client").is_err());
+    }
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;

@@ -9,9 +9,13 @@
       <img src="icons/48.png" alt="" width="36" height="36" />
       <div>
         <h1 data-i18n="extName"></h1>
-        <p id="status" class="status checking">…</p>
+        <p id="status" class="status checking" role="status" aria-live="polite">…</p>
       </div>
     </header>
+    <div class="connection-actions">
+      <button id="retryStatus" type="button" data-i18n="connectionRetry"></button>
+      <button id="openApp" type="button" data-i18n="connectionOpen" hidden></button>
+    </div>
 
     <label class="row">
       <span data-i18n="captureLabel"></span>
@@ -43,10 +47,16 @@
         <span data-i18n="minSize"></span>
         <input type="number" id="minSize" min="0" step="1" />
       </label>
-      <label class="row">
-        <span data-i18n="port"></span>
-        <input type="number" id="port" min="1024" max="65535" />
-      </label>
+      <details id="diagnostics">
+        <summary data-i18n="connectionDiagnostics"></summary>
+        <p id="transport" class="hint"></p>
+        <p id="connectionError" class="hint error" hidden></p>
+        <label class="row">
+          <span data-i18n="port"></span>
+          <input type="number" id="port" min="1024" max="65535" />
+        </label>
+        <p class="hint" data-i18n="portHint"></p>
+      </details>
     </details>
 
     <script src="popup.js"></script>

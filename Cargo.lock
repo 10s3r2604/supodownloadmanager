@@ -4796,7 +4796,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sdm-cli"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -4809,7 +4809,7 @@ dependencies = [
 
 [[package]]
 name = "sdm-core"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "axum",
  "futures-util",
@@ -4827,11 +4827,12 @@ dependencies = [
 
 [[package]]
 name = "sdm-desktop"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "dirs 6.0.0",
  "embed-resource",
  "flate2",
  "libc",
@@ -4840,6 +4841,7 @@ dependencies = [
  "sdm-core",
  "serde",
  "serde_json",
+ "sha2",
  "sys-locale",
  "tauri",
  "tauri-build",

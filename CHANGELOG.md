@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.4
+
+- Browser extension 0.6.5 uses Native Messaging with the desktop's private local
+  pipe/socket, so no browser connection port needs configuring. Existing extension
+  IDs, preferences and older HTTP clients remain supported during updates.
+- Show connection status, Try again and Open SDM in the extension. Move compatibility
+  port controls into connection diagnostics in both the app and extension.
+- Register the host per user, refresh it at startup and remove Windows registration
+  on uninstall. Native requests preserve cookies, referrer and media job ownership;
+  uncertain replies never resubmit a download over the compatibility connection.
+
 ## 0.7.3
 
 - Size toolbar buttons to their labels so Vietnamese “Chạy hàng đợi” stays

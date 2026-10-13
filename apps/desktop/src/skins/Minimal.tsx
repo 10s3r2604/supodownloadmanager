@@ -75,7 +75,7 @@ export function MinimalView(p: ViewProps & { dark: boolean }) {
         {tool("playAll", t("startQueue"), () => p.onStartQueue(currentQueue?.id ?? MAIN_QUEUE), false, false, undefined, `${t("startQueue")}: ${queueName(currentQueue ?? p.queues[0], t)}`)}
         {tool("clock", t("scheduler"), p.onScheduler)}
         {tool("settings", t("settings"), p.onSettings)}
-        {tool("globe", t("browsers"), p.onBrowsers, false, false, p.info?.bridgeError ? "warning" : "ok", p.info?.bridgeError ?? undefined)}
+        {tool("globe", t("browsers"), p.onBrowsers, false, false, p.info?.connectionError ? "warning" : "ok", p.info?.connectionError ? t("browserConnectionError") : undefined)}
         <label className="idm-search"><Icon name="search" size={13} /><input type="search" aria-label={t("search")} placeholder={t("search")} value={p.query} onChange={(event) => p.setQuery(event.target.value)} /></label>
       </header>
       <div className="idm-workspace">

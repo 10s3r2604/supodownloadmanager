@@ -26,7 +26,7 @@ export function NeonView(p: ViewProps) {
   const selection = p.downloads.filter((d) => p.selected.includes(d.id));
   const detail = selection.length === 1 ? selection[0] : null;
   const max = niceMax(Math.max(0, ...p.history.total));
-  const bridgeOk = p.info ? !p.info.bridgeError : true;
+  const bridgeOk = p.info ? !p.info.connectionError : true;
 
   return (
     <div className="neon">
@@ -51,7 +51,7 @@ export function NeonView(p: ViewProps) {
         <span className="neon-rail-space" />
         <RailButton
           icon="globe"
-          label={p.info?.bridgeError ? t("bridgeError", { error: p.info.bridgeError }) : t("browsers")}
+          label={p.info?.connectionError ? t("browserConnectionError") : t("browsers")}
           dot={bridgeOk ? "ok" : "bad"}
           onClick={p.onBrowsers}
         />

@@ -13,7 +13,7 @@ import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.6.4";
+const VERSION = "0.6.5";
 const root = dirname(fileURLToPath(import.meta.url));
 
 const icons = { 16: "icons/16.png", 32: "icons/32.png", 48: "icons/48.png", 128: "icons/128.png" };
@@ -24,7 +24,7 @@ const base = {
   default_locale: "en",
   version: VERSION,
   icons,
-  permissions: ["downloads", "contextMenus", "cookies", "storage", "alarms"],
+  permissions: ["downloads", "contextMenus", "cookies", "storage", "alarms", "nativeMessaging"],
   host_permissions: ["<all_urls>"],
   action: { default_popup: "popup.html", default_title: "__MSG_extName__", default_icon: icons },
   web_accessible_resources: [{ resources: ["icons/48.png"], matches: ["http://*/*", "https://*/*"] }],

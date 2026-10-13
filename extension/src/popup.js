@@ -8,12 +8,19 @@ for (const element of document.querySelectorAll("[data-i18n]")) {
   element.textContent = message(element.dataset.i18n);
 }
 
+let statusRequest = 0;
 async function showStatus() {
-  const status = await chrome.runtime.sendMessage({ type: "status" }).catch(() => null);
+  const request = ++statusRequest;
+  $("retryStatus").disabled = true;
+  $("status").textContent = message("connectionChecking");
+  const connection = await chrome.runtime.sendMessage({ type: "connection-status" }).catch(() => null);
+  if (request !== statusRequest) return;
+  $("retryStatus").disabled = false;
+  const status = connection?.status;
   const line = $("status");
   line.classList.remove("checking", "ok", "off");
   if (!status) {
-    line.textContent = message("statusOffline");
+    line.textContent = message(connection?.error === "appNotRunning" || connection?.error === "notConfigured" ? "statusOffline" : "statusConnectionError");
     line.classList.add("off");
   } else if (!status.enabled) {
     line.textContent = message("statusDisabled");
@@ -22,7 +29,27 @@ async function showStatus() {
     line.textContent = `${message("statusConnected")} · v${status.version}`;
     line.classList.add("ok");
   }
+  $("openApp").hidden = Boolean(status) || !connection?.canLaunch;
+  $("transport").textContent = message(connection?.transport === "native" ? "connectionNative" : connection?.transport === "compatibility" ? "connectionCompatibility" : "connectionUnavailable");
+  $("connectionError").hidden = !connection?.error;
+  $("connectionError").textContent = connection?.error || "";
 }
+
+$("retryStatus").addEventListener("click", () => void showStatus());
+$("openApp").addEventListener("click", async () => {
+  $("openApp").disabled = true;
+  try {
+    const answer = await chrome.runtime.sendMessage({type:"open-app"});
+    if (answer?.ok) {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await showStatus();
+        if ($("status").classList.contains("ok")) break;
+      }
+    } else await showStatus();
+  } catch { await showStatus(); }
+  finally { $("openApp").disabled = false; }
+});
 
 async function showPermission() {
   const granted = await chrome.permissions.contains(ALL_SITES).catch(() => true);

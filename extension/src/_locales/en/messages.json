@@ -39,7 +39,7 @@
     "message": "Only take files larger than (MB)"
   },
   "port": {
-    "message": "SDM port"
+    "message": "Compatibility port"
   },
   "menuVideo": {
     "message": "Download the video on this page with SDM"
@@ -120,5 +120,32 @@
   },
   "videoPostNotFound": {
     "message": "This video’s post link is not available yet. Try again after the post finishes loading."
+  },
+  "portHint": {
+    "message": "Only older SDM versions use this setting. New versions connect automatically."
+  },
+  "statusConnectionError": {
+    "message": "Connection needs attention. Try again or set up the extension in SDM."
+  },
+  "connectionRetry": {
+    "message": "Try again"
+  },
+  "connectionOpen": {
+    "message": "Open SDM"
+  },
+  "connectionDiagnostics": {
+    "message": "Connection diagnostics"
+  },
+  "connectionChecking": {
+    "message": "Checking connection…"
+  },
+  "connectionNative": {
+    "message": "Native Messaging · automatic connection"
+  },
+  "connectionCompatibility": {
+    "message": "Compatibility connection · older SDM"
+  },
+  "connectionUnavailable": {
+    "message": "Not connected"
   }
 }
