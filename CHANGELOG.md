@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.7.2
+
+- First-run browser setup detects installed browsers and lets users select several.
+  Windows attempts loading through the selected browser's normal controls;
+  a browser that requires confirmation keeps clear manual steps. Connection
+  status comes from the extension, and older installations keep their setup.
+- Prepare extension updates before replacing existing files and keep newer
+  unpacked versions. Browser setup runs off the native UI thread.
+- Ordinary main commits skip already published versions without failing the
+  release workflow; new versions retain exact-CI/signature/checksum gates.
 
 - Browser extension 0.6.4 uses a compact Supo logo + **Download** button on
   videos. The caption stays short during handoff; quality, estimated size

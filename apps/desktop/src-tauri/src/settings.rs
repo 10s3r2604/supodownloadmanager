@@ -53,6 +53,10 @@ pub struct Settings {
     pub clipboard_monitor: bool,
     /// Accept downloads from the browser extension.
     pub browser_integration: bool,
+    /// A missing field belongs to an existing installation; new defaults
+    /// offer setup once, without interrupting users upgrading older settings.
+    #[serde(default = "browser_setup_already_seen")]
+    pub browser_setup_completed: bool,
     /// Show the "add download" dialog for downloads from the browser.
     pub confirm_browser_downloads: bool,
     /// Port of the local bridge for the browser extension.
@@ -90,6 +94,7 @@ impl Default for Settings {
             notifications: true,
             clipboard_monitor: true,
             browser_integration: true,
+            browser_setup_completed: false,
             confirm_browser_downloads: true,
             bridge_port: DEFAULT_BRIDGE_PORT,
             capture_extensions: default_capture_extensions(),
@@ -98,6 +103,10 @@ impl Default for Settings {
             torrent_port: 0,
         }
     }
+}
+
+fn browser_setup_already_seen() -> bool {
+    true
 }
 
 impl Settings {
@@ -278,10 +287,25 @@ mod tests {
         assert_eq!(settings.connections, 4);
         assert_eq!(settings.max_parallel, 3);
         assert!(settings.browser_integration);
+        assert!(settings.browser_setup_completed);
         assert_eq!(settings.skin, "minimal");
         assert_eq!(settings.theme, "dark");
         assert!(!settings.start_with_windows);
         assert!(settings.auto_update);
+    }
+
+    #[test]
+    fn browser_setup_is_only_pending_for_a_new_installation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let fresh = Settings::load(&path).unwrap().0;
+        assert!(!fresh.browser_setup_completed);
+        fresh.save(&path).unwrap();
+        assert!(!Settings::load(&path).unwrap().0.browser_setup_completed);
+        let mut completed = fresh;
+        completed.browser_setup_completed = true;
+        completed.save(&path).unwrap();
+        assert!(Settings::load(&path).unwrap().0.browser_setup_completed);
     }
 
     #[test]

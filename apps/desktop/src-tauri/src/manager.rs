@@ -2376,6 +2376,18 @@ echo "SDMF $home/$name"
         assert_eq!(done.category, Category::Video);
         assert_eq!(done.size, Some(DATA.len() as u64));
         assert_eq!(std::fs::read(&expected).unwrap(), DATA);
+        // The public state is updated before the callback runs outside the
+        // manager lock. Wait for that callback, then assert the exact events.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if fixture.notices.lock().unwrap().len() >= 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("The completion notification did not arrive");
         assert_eq!(
             fixture.notices.lock().unwrap().as_slice(),
             [

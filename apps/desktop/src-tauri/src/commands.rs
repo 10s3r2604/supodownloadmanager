@@ -468,7 +468,7 @@ pub fn list_browsers(state: State<'_, AppState>) -> Vec<BrowserStatus> {
 }
 
 #[tauri::command]
-pub fn install_extension(
+pub async fn install_extension(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
@@ -481,7 +481,21 @@ pub fn install_extension(
         .path()
         .resolve("extension", BaseDirectory::Resource)
         .map_err(text_error)?;
-    browsers::install(&browser, &bundled, &state.data_dir).map_err(text_error)
+    let data_dir = state.data_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || browsers::install(&browser, &bundled, &data_dir))
+        .await
+        .map_err(text_error)?
+        .map_err(text_error)
+}
+
+#[tauri::command]
+pub async fn complete_browser_setup(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Settings> {
+    let mut settings = state.manager.settings();
+    settings.browser_setup_completed = true;
+    save_settings(app, state, settings).await
 }
 
 /// Opens the folder that holds the unpacked extension.

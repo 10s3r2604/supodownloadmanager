@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { type AppInfo, type Browser, type InstallInfo, api } from "../api";
+import { type AppInfo, type Browser, type InstallInfo, type Settings, api } from "../api";
 import { copyText, errorText, useI18n } from "../context";
 import { Icon } from "../icons";
 import { Dialog } from "./Dialog";
@@ -9,13 +9,23 @@ interface Props {
   info: AppInfo | null;
   onClose: () => void;
   onError: (message: string) => void;
+  firstRun?: boolean;
+  onSetupCompleted: (settings: Settings) => void;
 }
 
-export function BrowsersDialog({ info, onClose, onError }: Props) {
+export function BrowsersDialog({ info, onClose, onError, firstRun = false, onSetupCompleted }: Props) {
   const { t } = useI18n();
   const [browsers, setBrowsers] = useState<Browser[] | null>(null);
-  const [installed, setInstalled] = useState<InstallInfo | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [results, setResults] = useState<Record<string, InstallInfo>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [active, setActive] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [inspected, setInspected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const cancel = useRef(false);
+  const working = useRef(false);
+  const installed = inspected ? results[inspected] : null;
 
   useEffect(() => {
     let alive = true;
@@ -32,13 +42,42 @@ export function BrowsersDialog({ info, onClose, onError }: Props) {
     };
   }, [onError]);
 
-  async function install(id: string) {
-    try {
-      setCopied(false);
-      setInstalled(await api.installExtension(id));
-    } catch (error) {
-      onError(errorText(error));
+  async function install(ids: string[]) {
+    if (working.current) return;
+    working.current = true;
+    cancel.current = false;
+    setBusy(true);
+    setCopied(false);
+    for (const id of ids) {
+      if (cancel.current) break;
+      setActive(id);
+      setErrors((before) => { const next = { ...before }; delete next[id]; return next; });
+      try {
+        const result = await api.installExtension(id);
+        setResults((before) => ({ ...before, [id]: result }));
+        setInspected(id);
+      } catch (error) {
+        setErrors((before) => ({ ...before, [id]: errorText(error) }));
+      }
     }
+    setActive(null);
+    working.current = false;
+    setBusy(false);
+  }
+
+  async function finish() {
+    if (working.current) { cancel.current = true; return; }
+    if (firstRun) {
+      setBusy(true);
+      working.current = true;
+      try { onSetupCompleted(await api.completeBrowserSetup()); }
+      catch (error) { onError(errorText(error)); working.current = false; setBusy(false); return; }
+    }
+    onClose();
+  }
+
+  function toggle(id: string) {
+    setSelected((before) => before.includes(id) ? before.filter((value) => value !== id) : [...before, id]);
   }
 
   async function copyPath(path: string) {
@@ -48,16 +87,28 @@ export function BrowsersDialog({ info, onClose, onError }: Props) {
 
   return (
     <Dialog
-      title={t("browsersTitle")}
-      onClose={onClose}
+      title={t(firstRun ? "browserSetupTitle" : "browsersTitle")}
+      onClose={() => void finish()}
       wide
       footer={
-        <button type="button" className="button" onClick={onClose}>
-          {t("close")}
-        </button>
+        <>
+          <button type="button" className="button" onClick={() => void finish()}>
+            {t(busy ? "browserSetupStop" : firstRun && Object.keys(results).length === 0 ? "browserSetupLater" : "close")}
+          </button>
+          <button type="button" className="button primary" disabled={busy || selected.length === 0} onClick={() => void install(selected)}>
+            {t("browserSetupSelected", { count: selected.length })}
+          </button>
+        </>
       }
     >
-      <p className="intro">{t("browsersIntro")}</p>
+      <p className="intro">{t(firstRun ? "browserSetupIntro" : "browsersIntro")}</p>
+      {browsers === null && <p role="status" className="muted">{t("browserSetupDetecting")}</p>}
+      {browsers && browsers.length > 1 && (
+        <label className="browser-select-all">
+          <input type="checkbox" disabled={busy} checked={selected.length === browsers.length} onChange={(event) => setSelected(event.target.checked ? browsers.map((browser) => browser.id) : [])} />
+          {t("browserSetupSelectAll")}
+        </label>
+      )}
       {info?.bridgeError && (
         <p className="hint warning">
           <Icon name="alert" size={14} /> {t("bridgeError", { error: info.bridgeError })}
@@ -68,27 +119,29 @@ export function BrowsersDialog({ info, onClose, onError }: Props) {
       <ul className="browser-list">
         {browsers?.map((browser) => (
           <li key={browser.id} className="browser">
+            <input type="checkbox" aria-label={t("browserSetupChoose", { browser: browser.name })} disabled={busy} checked={selected.includes(browser.id)} onChange={() => toggle(browser.id)} />
             <span className={`browser-badge ${browser.id}`} aria-hidden="true">
               {browser.name.slice(0, 1)}
             </span>
             <div className="browser-name">
               <strong>{browser.name}</strong>
               <span className={browser.connected ? "status-ok" : "muted"}>
-                {browser.connected ? (
+                {active === browser.id ? t("browserSetupWorking") : errors[browser.id] ? errors[browser.id] : browser.connected ? (
                   <>
                     <Icon name="check" size={13} /> {t("connected")}
                   </>
                 ) : (
-                  t("notConnected")
+                  results[browser.id] ? t(results[browser.id].method === "automatic" ? "browserSetupLoaded" : "browserSetupConfirm") : t("notConnected")
                 )}
               </span>
             </div>
             <button
               type="button"
               className={browser.connected ? "button" : "button primary"}
-              onClick={() => install(browser.id)}
+              disabled={busy}
+              onClick={() => results[browser.id] ? setInspected(browser.id) : void install([browser.id])}
             >
-              {browser.connected ? t("reinstall") : t("install")}
+              {results[browser.id] ? t("browserSetupSteps") : browser.connected ? t("reinstall") : t("install")}
             </button>
           </li>
         ))}
@@ -96,7 +149,10 @@ export function BrowsersDialog({ info, onClose, onError }: Props) {
 
       {installed && (
         <section className="steps" aria-live="polite">
-          {installed.method === "store" ? (
+          <strong>{installed.browser}</strong>
+          {installed.method === "automatic" ? (
+            <p>{t("browserSetupAutomatic", { browser: installed.browser })}</p>
+          ) : installed.method === "store" ? (
             <p>{t("storeSteps", { browser: installed.browser })}</p>
           ) : (
             <>
@@ -121,9 +177,9 @@ export function BrowsersDialog({ info, onClose, onError }: Props) {
                   </>
                 )}
               </ol>
-              {installed.engine === "firefox" && <p className="muted">{t("firefoxNote")}</p>}
             </>
           )}
+          {installed.engine === "firefox" && <p className="muted">{t("firefoxNote")}</p>}
         </section>
       )}
     </Dialog>

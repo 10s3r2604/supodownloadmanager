@@ -35,19 +35,21 @@ with English and Vietnamese interfaces. It is free software under
 [GPL-3.0-or-later](LICENSE), with no subscription, device limit, accounts or ads.
 
 **Release status:** use [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
-for stable installers. The screenshots and features below document 0.7.0. If the
-latest published release is older, use it for stable installations and treat
-0.7.0 CI artifacts as review builds until that version is published.
+for stable installers. Version 0.7.2 adds first-run browser setup and includes
+extension 0.6.4. CI packages remain review builds until a stable release is published.
 
 ## Features
 
-**Compact desktop and updates (0.7.0)**
+**Compact desktop, browser setup and updates**
 - An IDM-style toolbar, categories, queues and download table in an 880 × 560
   default window. Browser captures use a separate 480 × 320 confirmation window.
+- On first launch, select the browsers SDM detects. Windows attempts extension
+  setup through the browser's normal controls and shows any remaining confirmation.
+  Automatic loading is validated in Chrome; other browsers may need guided steps.
 - Optional startup in the Windows tray; off by default in **Settings → General**.
 - Signed stable updates on Windows, with background download, manual checks and
-  installation after work stops. Installed 0.7.0 builds can update to 0.7.1 from
-  **Settings → Updates → Check now**; older Windows builds need the 0.7.1 installer once. Repository signing
+  installation after work stops. Installed 0.7.0 or newer builds can update to 0.7.2 from
+  **Settings → Updates → Check now**; older Windows builds need the latest installer once. Repository signing
   setup and release behavior are described in [AUTO_UPDATES.md](docs/AUTO_UPDATES.md).
 
 **Faster downloads**

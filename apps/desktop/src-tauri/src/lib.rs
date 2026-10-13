@@ -191,6 +191,7 @@ pub fn run() {
             commands::pick_folder,
             commands::list_browsers,
             commands::install_extension,
+            commands::complete_browser_setup,
             commands::open_extension_folder,
             commands::app_info,
             updates::get_update_state,
