@@ -78,6 +78,9 @@ async function automation(script) {
         } catch {}
       }`],{timeout:30_000});
     console.log('Browser accessibility control types, classes and value counts:',diagnosis.stdout.trim());
+    // Match the app's open_in call after the test browser is initialized.
+    spawn(executable,[request.page],{stdio:'ignore'}).unref();
+    await sleep(500);
     const source=fs.readFileSync('apps/desktop/src-tauri/src/browser_install.ps1','utf8');
     // The only instrumentation reports exceptions from this isolated fixture;
     // browser interaction and the success/fallback result are the product code.
