@@ -53,32 +53,18 @@ async function automation(script) {
   try {
     // Suppress only the test image's first-use welcome page. The product opens
     // the management URL with no extra browser launch flags.
-    spawn(executable,['--no-first-run','--no-default-browser-check','--disable-features=msEdgeFirstRunExperience',request.page],{stdio:'ignore'}).unref();
+    spawn(executable,['--no-first-run','--no-default-browser-check','--start-maximized','--disable-features=msEdgeFirstRunExperience',request.page],{stdio:'ignore'}).unref();
     await sleep(2000);
-    const diagnosis = await run(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',`
+    await run(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',`
       ${providerInitialization}
-      $children=[Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)
-      foreach($element in $children) {
-        try {
-          if((Get-Process -Id $element.Current.ProcessId).ProcessName -eq '${browser==='chrome'?'chrome':'msedge'}') {
-            $element.Current.Name
-            $element.Current.ControlType.ProgrammaticName
-            $element.Current.ClassName
-            $element.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Document))|ForEach-Object {$_.Current.Name}
-            foreach($edit in $element.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty,$true))) {
-              $provider=$null
-              if($edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern,[ref]$provider)) {
-                @{'type'=$edit.Current.ControlType.ProgrammaticName;'name'=$edit.Current.Name;'value'=$provider.Current.Value}|ConvertTo-Json -Compress
-              }
-              $provider=$null
-              if($edit.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern,[ref]$provider)) {
-                @{'name'=$edit.Current.Name;'text'=$provider.DocumentRange.GetText(-1)}|ConvertTo-Json -Compress
-              }
-            }
-          }
-        } catch {}
-      }`],{timeout:30_000});
-    console.log('Browser accessibility control types, classes and value counts:',diagnosis.stdout.trim());
+      $clock=[Diagnostics.Stopwatch]::StartNew()
+      while($clock.Elapsed.TotalSeconds -lt 10) {
+        foreach($element in [Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)) {
+          try {if((Get-Process -Id $element.Current.ProcessId).ProcessName -eq '${browser==='chrome'?'chrome':'msedge'}') {exit 0}} catch {}
+        }
+        Start-Sleep -Milliseconds 250
+      }
+      exit 1`],{timeout:30_000});
     // Match the app's open_in call after the test browser is initialized.
     spawn(executable,[request.page],{stdio:'ignore'}).unref();
     await sleep(500);
@@ -106,13 +92,15 @@ async function automation(script) {
                 $text=$null
                 if($element.Current.Name -eq 'Extensions' -and $element.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern,[ref]$text)) {@{'documentText'=$text.DocumentRange.GetText(2000)}|ConvertTo-Json -Compress}
               }
-              if($element.Current.Name -match 'Developer|Load unpacked|Address|Folder|Select|Cancel' -or $element.Current.ControlType -in @([Windows.Automation.ControlType]::Edit,[Windows.Automation.ControlType]::ComboBox)) {
+              if($element.Current.ControlType -eq [Windows.Automation.ControlType]::Button -or $element.Current.Name -match 'Developer|Load unpacked|Address|Folder|Select|Cancel' -or $element.Current.ControlType -in @([Windows.Automation.ControlType]::Edit,[Windows.Automation.ControlType]::ComboBox)) {
                 @{'name'=$element.Current.Name;'id'=$element.Current.AutomationId;'class'=$element.Current.ClassName;'type'=$element.Current.ControlType.ProgrammaticName;'enabled'=$element.Current.IsEnabled;'patterns'=@($element.GetSupportedPatterns()|ForEach-Object {$_.ProgrammaticName})}|ConvertTo-Json -Compress
               }
             }
           } catch {}
         }`],{timeout:30_000});
       console.log('Remaining native controls:',controls.stdout);
+      const policy=await run(powershell,['-NoProfile','-Command',"foreach($key in @('HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge','HKCU:\\SOFTWARE\\Policies\\Microsoft\\Edge')) {Get-ItemProperty -Path $key -Name ExtensionDeveloperModeSettings,DeveloperToolsAvailability -ErrorAction SilentlyContinue|Select-Object ExtensionDeveloperModeSettings,DeveloperToolsAvailability|ConvertTo-Json -Compress}"],{timeout:10_000});
+      console.log('Explicit Edge developer policies:',policy.stdout.trim());
     }
     if(result.stdout==='loaded') {
       const deadline=Date.now()+15_000;
