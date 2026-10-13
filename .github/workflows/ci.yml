@@ -221,6 +221,7 @@ jobs:
         if: runner.os == 'Windows' && success()
         shell: pwsh
         run: |
+          $env:SDM_SMOKE_NODE_MODULES = Join-Path (Join-Path $env:RUNNER_TEMP "sdm-progress-test") "node_modules"
           node .github/scripts/native-connection-windows-smoke.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload native browser connection checks
