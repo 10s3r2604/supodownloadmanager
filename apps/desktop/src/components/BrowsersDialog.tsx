@@ -32,7 +32,17 @@ export function BrowsersDialog({ info, onClose, onError, firstRun = false, onSet
     const load = () =>
       api
         .listBrowsers()
-        .then((list) => alive && setBrowsers(list))
+        .then((list) => {
+          if (!alive) return;
+          setBrowsers(list);
+          setResults((previous) => {
+            const next = { ...previous };
+            for (const browser of list) {
+              if (next[browser.id]?.updating && browser.connected && browser.extensionVersion && !browser.extensionUpdateAvailable) delete next[browser.id];
+            }
+            return next;
+          });
+        })
         .catch((error) => onError(errorText(error)));
     load();
     const timer = setInterval(load, 3000);
@@ -53,7 +63,10 @@ export function BrowsersDialog({ info, onClose, onError, firstRun = false, onSet
       setActive(id);
       setErrors((before) => { const next = { ...before }; delete next[id]; return next; });
       try {
-        const result = await api.installExtension(id);
+        const browser = browsers?.find((browser) => browser.id === id);
+        const result = browser?.extensionSeen || browser?.connected
+          ? await api.updateExtension(id)
+          : await api.installExtension(id);
         setResults((before) => ({ ...before, [id]: result }));
         setInspected(id);
       } catch (error) {
@@ -129,20 +142,20 @@ export function BrowsersDialog({ info, onClose, onError, firstRun = false, onSet
               <span className={browser.connected ? "status-ok" : "muted"}>
                 {active === browser.id ? t("browserSetupWorking") : errors[browser.id] ? errors[browser.id] : browser.connected ? (
                   <>
-                    <Icon name="check" size={13} /> {t("connected")}
+                    <Icon name="check" size={13} /> {t("connected")}{browser.extensionVersion ? ` · v${browser.extensionVersion}` : ""}
                   </>
                 ) : (
-                  results[browser.id] ? t(results[browser.id].method === "automatic" ? "browserSetupLoaded" : "browserSetupConfirm") : t("notConnected")
+                  results[browser.id] ? t(results[browser.id].method === "automatic" ? "browserSetupLoaded" : "browserSetupConfirm") : t(browser.extensionSeen ? "browserExtensionPreviouslySeen" : "notConnected")
                 )}
               </span>
             </div>
             <button
               type="button"
               className={browser.connected ? "button" : "button primary"}
-              disabled={busy}
+              disabled={busy || Boolean(browser.extensionSeen && !browser.extensionUpdateAvailable && !results[browser.id])}
               onClick={() => results[browser.id] ? setInspected(browser.id) : void install([browser.id])}
             >
-              {results[browser.id] ? t("browserSetupSteps") : browser.connected ? t("reinstall") : t("install")}
+              {results[browser.id] ? t(results[browser.id].updating ? "browserExtensionSteps" : "browserSetupSteps") : browser.extensionSeen || browser.connected ? t(browser.extensionUpdateAvailable ? "browserExtensionUpdate" : "browserExtensionCurrent") : t("install")}
             </button>
           </li>
         ))}
@@ -151,11 +164,14 @@ export function BrowsersDialog({ info, onClose, onError, firstRun = false, onSet
       {installed && (
         <section className="steps" aria-live="polite">
           <strong>{installed.browser}</strong>
-          {installed.method === "automatic" ? (
+          {installed.updating && <p>{t(installed.method === "automatic" ? "browserExtensionReloaded" : "browserExtensionReload", { browser: installed.browser })}</p>}
+          {installed.method === "automatic" && !installed.updating ? (
             <p>{t("browserSetupAutomatic", { browser: installed.browser })}</p>
           ) : installed.method === "store" ? (
             <p>{t("storeSteps", { browser: installed.browser })}</p>
-          ) : (
+          ) : installed.updating && installed.method !== "automatic" ? (
+            <PathBox path={installed.extensionDir} copied={copied} onCopy={copyPath} engine={installed.engine} />
+          ) : installed.updating ? null : (
             <>
               <p>{t("manualIntro", { browser: installed.browser })}</p>
               <ol>

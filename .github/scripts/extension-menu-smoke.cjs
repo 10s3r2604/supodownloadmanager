@@ -228,7 +228,7 @@ function fixture(content) {
       const node = await nodeWhere((n, a) => a.class === 'menu' && !('hidden' in a));
       return node ? textOf(node) : '';
     }
-    async function hover(index) {
+    async function hover(index, ready = true) {
       const video = page.locator('video').nth(index);
       await video.scrollIntoViewIfNeeded();
       const box = await video.boundingBox();
@@ -237,13 +237,26 @@ function fixture(content) {
         // document_idle may register the listener after the first synthetic
         // mousemove. Keep moving inside the player until the button appears.
         await page.mouse.move(box.x + 80 + (move++ % 2), box.y + 60);
-        return nodeWhere((n, a) => a.class === 'trigger');
+        return nodeWhere((n, a) => a.class === 'trigger' && (!ready || !('hidden' in a)));
       }, 'The video button did not appear');
     }
     async function open(index) {
       await hover(index);
       await clickNode((n, a) => a.class === 'trigger');
       await until(async () => (await menuText()).includes('1080p60'), 'Quality menu did not load');
+    }
+    async function manualMenu(index) {
+      await hover(index, false);
+      await page.locator('video').nth(index).click({ button: 'right' });
+      await page.keyboard.press('Escape');
+      const popup=await context.newPage();
+      try {
+        await popup.goto(`chrome-extension://${installed.id}/popup.html`);
+        await popup.evaluate(async()=>{
+          const [tab]=await chrome.tabs.query({url:'https://x.com/home'});
+          await chrome.tabs.sendMessage(tab.id,{type:'video-open-menu'},{frameId:0});
+        });
+      } finally { await popup.close(); }
     }
     const adds = () => requests.filter(r => r.path === '/api/media/add');
     const probes = () => requests.filter(r => ['/api/media/probe', '/api/media/probe/start'].includes(r.path));
@@ -252,7 +265,7 @@ function fixture(content) {
 
     await open(0);
     const labels = await menuText();
-    assert(labels.includes('~10 MB') && labels.includes('~6 MB') && labels.includes('Size unknown'));
+    assert(labels.includes('~10 MB') && labels.includes('~6 MB') && !labels.includes('Size unknown'));
     assert(labels.includes('H.264') && labels.includes('AAC') && labels.includes('MP4'));
     assert(!labels.includes('More options in SDM'));
     assert.equal(adds().length, 0, 'Opening qualities must not create a download');
@@ -273,8 +286,9 @@ function fixture(content) {
     await page.keyboard.press('Escape');
 
     failProbe = true;
-    await hover(0);
-    await clickNode((n, a) => a.class === 'trigger');
+    await hover(0, false);
+    await until(()=>nodeWhere((n,a)=>a.class==='trigger' && ('hidden' in a)), 'Failed discovery must keep Download hidden');
+    await manualMenu(0);
     await until(async () => (await menuText()).includes('Fixture video needs a login'), 'Discovery failure was not visible');
     failProbe = false;
     await clickNode((n, a) => a.class === 'row more');
@@ -317,8 +331,9 @@ function fixture(content) {
     await page.reload();
     const slowStart = Date.now();
     const beforeSlow = probes().length;
-    await hover(0);
-    await clickNode((n, a) => a.class === 'trigger');
+    await hover(0, false);
+    assert(await nodeWhere((n,a)=>a.class==='trigger' && ('hidden' in a)), 'Download must stay hidden during slow discovery');
+    await manualMenu(0);
     const slowProbe = await until(() => probes().slice(beforeSlow).find(r => r.body.source?.pageUrl.endsWith('/status/333')), 'Slow probe did not start');
     const slowClientId = slowProbe.body.clientId;
     await until(() => statuses(slowClientId).length >= 2, 'Slow discovery did not use short status polls');
@@ -356,6 +371,7 @@ function fixture(content) {
     await newContext.detach();
     worker = context.serviceWorkers().find(w => w.url() === oldTarget.url) || worker;
     await until(async () => (await menuText()).includes('1080p60'), 'The 35-second discovery did not finish after the worker restart', 45_000);
+    assert(await nodeWhere((n,a)=>a.class==='trigger' && !('hidden' in a)), 'Completed metadata must reveal Download');
     assert(Date.now() - slowStart >= 35_000, 'Discovery must cross the previous long-fetch lifetime.');
     assert(statuses(slowClientId).length >= 20, 'The long discovery must use repeated independent status requests.');
     assert.equal(adds().length, 2, 'Discovery must not start a download.');
@@ -366,8 +382,7 @@ function fixture(content) {
     html = fixture('<article><a href="/cancel/status/444"><time>Cancelled post</time></a><video></video></article>');
     await page.reload();
     const beforeCancel = probes().length;
-    await hover(0);
-    await clickNode((n, a) => a.class === 'trigger');
+    await manualMenu(0);
     const cancelledProbe = await until(() => probes().slice(beforeCancel).find(r => r.body.source?.pageUrl.endsWith('/status/444')), 'Cancellable probe did not start');
     await until(() => statuses(cancelledProbe.body.clientId).length >= 1, 'Cancellable discovery was not pending');
     await page.keyboard.press('Escape');
@@ -387,8 +402,7 @@ function fixture(content) {
     html = fixture('<div data-testid="cellInnerDiv"><video></video></div><article><a href="/unrelated/status/999"><time>Another post</time></a></article>');
     await page.reload();
     const before = probes().length;
-    await hover(0);
-    await clickNode((n, a) => a.class === 'trigger');
+    await manualMenu(0);
     await until(async () => (await menuText()).includes('post link is not available'), 'Unresolved post did not stay in the extension');
     assert.equal(probes().length, before, 'An unresolved feed must not reach yt-dlp');
     report.push({ name: 'unresolved-post-stays-inline', passed: true });

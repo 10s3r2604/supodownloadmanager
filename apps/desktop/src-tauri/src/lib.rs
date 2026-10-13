@@ -6,6 +6,7 @@ mod browsers;
 mod category;
 mod clipboard;
 mod commands;
+mod extension_clients;
 mod manager;
 mod media;
 mod native_connection;
@@ -59,6 +60,7 @@ const POWER_DELAY: u64 = 60;
 pub struct AppState {
     pub manager: Arc<Manager>,
     pub bridge: Arc<Bridge>,
+    pub(crate) extension_clients: Arc<extension_clients::Clients>,
     pub bridge_port: u16,
     pub bridge_error: Mutex<Option<String>>,
     pub(crate) native_connection: Arc<native_connection::Connection>,
@@ -198,6 +200,7 @@ pub fn run() {
             commands::pick_folder,
             commands::list_browsers,
             commands::install_extension,
+            commands::update_extension,
             commands::complete_browser_setup,
             commands::open_extension_folder,
             commands::app_info,
@@ -268,9 +271,12 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
         tauri::async_runtime::handle().inner().clone(),
         Box::new(move |notice| notify(&notify_app, notice)),
     )?;
+    let extension_clients =
+        extension_clients::Clients::load(data_dir.join("browser-extensions.json"));
     let bridge = Bridge::new(AppBridge {
         app: app.clone(),
         manager: manager.clone(),
+        extension_clients: extension_clients.clone(),
     });
     let native_connection = native_connection::Connection::new(data_dir.clone(), bridge.clone());
     let pending_torrents = torrent_sources(
@@ -282,6 +288,7 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
     app.manage(AppState {
         manager: manager.clone(),
         bridge: bridge.clone(),
+        extension_clients,
         bridge_port: settings.bridge_port,
         bridge_error: Mutex::new(None),
         native_connection: native_connection.clone(),
@@ -554,9 +561,13 @@ async fn watch_clipboard(app: AppHandle) {
 struct AppBridge {
     app: AppHandle,
     manager: Arc<Manager>,
+    extension_clients: Arc<extension_clients::Clients>,
 }
 
 impl Handler for AppBridge {
+    fn extension_seen(&self, browser: &str, version: Option<&str>) {
+        self.extension_clients.observe(browser, version);
+    }
     fn native_client(&self, id: &str) {
         self.app
             .state::<AppState>()

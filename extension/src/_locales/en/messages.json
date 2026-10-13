@@ -147,5 +147,8 @@
   },
   "connectionUnavailable": {
     "message": "Not connected"
+  },
+  "videoMetadataUnavailable": {
+    "message": "Quality and size are not available for this video yet. Try again or open its original page."
   }
 }

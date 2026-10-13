@@ -147,5 +147,8 @@
   },
   "connectionUnavailable": {
     "message": "Chưa kết nối"
+  },
+  "videoMetadataUnavailable": {
+    "message": "Chưa tìm được chất lượng và dung lượng cho video này. Thử lại hoặc mở trang gốc của video."
   }
 }

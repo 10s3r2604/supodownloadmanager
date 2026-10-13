@@ -38,8 +38,8 @@ const settings: Settings = {
 
 const updatePhase = new URLSearchParams(location.search).get("update") as UpdateState["phase"] | null;
 const updateState: UpdateState = {
-  phase: updatePhase ?? "idle", supported: true, currentVersion: "0.7.4",
-  version: updatePhase && ["ready", "waiting", "downloading"].includes(updatePhase) ? "0.7.5" : undefined,
+  phase: updatePhase ?? "idle", supported: true, currentVersion: "0.7.5",
+  version: updatePhase && ["ready", "waiting", "downloading"].includes(updatePhase) ? "0.7.6" : undefined,
   downloaded: updatePhase === "downloading" ? 24 * MB : 0,
   total: updatePhase === "downloading" ? 101 * MB : undefined,
   error: updatePhase === "error" ? "network" : undefined,
@@ -217,11 +217,15 @@ function segmentsFor(d: Download) {
 
 setInterval(simulate, 500);
 
+function extensionStatus(version: string | null) {
+  if (!settings.browserSetupCompleted) version = null;
+  return { extensionSeen: version !== null, extensionVersion: version, availableExtensionVersion: "0.6.6", extensionUpdateAvailable: version !== null && version !== "0.6.6" };
+}
 const browsers: Browser[] = [
-  { id: "chrome", name: "Google Chrome", engine: "chromium", executable: "/usr/bin/google-chrome", extensionsPage: "chrome://extensions", connected: true },
-  { id: "coccoc", name: "Cốc Cốc", engine: "chromium", executable: "/usr/bin/coccoc-browser", extensionsPage: "chrome://extensions", connected: false },
-  { id: "edge", name: "Microsoft Edge", engine: "chromium", executable: "/usr/bin/microsoft-edge", extensionsPage: "edge://extensions", connected: false },
-  { id: "firefox", name: "Firefox", engine: "firefox", executable: "/usr/bin/firefox", extensionsPage: "about:debugging#/runtime/this-firefox", connected: false },
+  { id: "chrome", name: "Google Chrome", engine: "chromium", executable: "/usr/bin/google-chrome", extensionsPage: "chrome://extensions", connected: settings.browserSetupCompleted, ...extensionStatus("0.6.5") },
+  { id: "coccoc", name: "Cốc Cốc", engine: "chromium", executable: "/usr/bin/coccoc-browser", extensionsPage: "chrome://extensions", connected: false, ...extensionStatus(null) },
+  { id: "edge", name: "Microsoft Edge", engine: "chromium", executable: "/usr/bin/microsoft-edge", extensionsPage: "edge://extensions", connected: false, ...extensionStatus("0.6.6") },
+  { id: "firefox", name: "Firefox", engine: "firefox", executable: "/usr/bin/firefox", extensionsPage: "about:debugging#/runtime/this-firefox", connected: false, ...extensionStatus(null) },
 ];
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -481,9 +485,12 @@ export const mockApi: Api = {
     settings.browserSetupCompleted = true;
     return clone(settings);
   },
+  async updateExtension(id) {
+    return { ...await mockApi.installExtension(id), updating: true };
+  },
   async openExtensionFolder() {},
   async appInfo() {
-    return { version: "0.7.4", bridgePort: 17360, bridgeError: null, connectionError: null };
+    return { version: "0.7.5", bridgePort: 17360, bridgeError: null, connectionError: null };
   },
   async retryBrowserConnection() {},
   async onAddPrompt(handler) {

@@ -8,6 +8,14 @@ use std::time::{Duration, Instant};
 use super::Browser;
 
 pub(super) fn load(browser: &Browser, directory: &std::path::Path) -> Result<(), &'static str> {
+    run(browser, directory, false)
+}
+
+pub(super) fn reload(browser: &Browser, directory: &std::path::Path) -> Result<(), &'static str> {
+    run(browser, directory, true)
+}
+
+fn run(browser: &Browser, directory: &std::path::Path, updating: bool) -> Result<(), &'static str> {
     let Some(system) = std::env::var_os("SystemRoot") else {
         return Err("unavailable");
     };
@@ -18,6 +26,7 @@ pub(super) fn load(browser: &Browser, directory: &std::path::Path) -> Result<(),
         "page": browser.extensions_page,
         "engine": browser.engine,
         "directory": directory,
+        "updating": updating,
         "version": super::extension_version(directory)
             .unwrap_or_default()
             .iter().map(u32::to_string).collect::<Vec<_>>().join("."),
@@ -61,6 +70,7 @@ pub(super) fn load(browser: &Browser, directory: &std::path::Path) -> Result<(),
                         b"manual:picker" => Err("picker"),
                         b"manual:confirm" => Err("confirm"),
                         b"manual:verify" => Err("verify"),
+                        b"manual:reload" => Err("reload"),
                         _ => Err("unavailable"),
                     },
                     _ => Err("unavailable"),

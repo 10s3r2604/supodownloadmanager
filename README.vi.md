@@ -21,7 +21,7 @@ Không tài khoản, phí thuê bao, giới hạn số máy hay quảng cáo.
 ## Tải và cài đặt
 
 Lấy bộ cài và ZIP tiện ích tại [bản phát hành ổn định mới nhất](https://github.com/10s3r2604/supodownloadmanager/releases/latest).
-**Bản ổn định hiện tại: SDM 0.7.4**, đi kèm tiện ích trình duyệt **0.6.5**.
+**Bản ổn định hiện tại: SDM 0.7.5**, đi kèm tiện ích trình duyệt **0.6.6**.
 
 | Máy của bạn | File cần chọn |
 | --- | --- |
@@ -45,8 +45,9 @@ Bản Windows cũ hơn cần cài bộ mới thủ công một lần. Linux/macO
 thông thường; chưa bật cài cập nhật tự động trên hai hệ điều hành này.
 
 Sau khi cập nhật SDM, làm mới tiện ích đã cài bằng
-**Trình duyệt → tick các browser đang dùng → Thiết lập đã chọn**, rồi tải lại
-những tab video đang mở. Tiện ích cũ vẫn hoạt động trong lúc bạn hoàn tất thiết lập.
+**Trình duyệt → Cập nhật tiện ích**, hoàn tất Reload nếu browser yêu cầu, rồi tải lại
+những tab video đang mở. SDM nhớ tiện ích đã nhận diện ngay cả khi đóng trình duyệt.
+Tiện ích cũ vẫn hoạt động trong lúc bạn hoàn tất thiết lập.
 
 ## Thiết lập trình duyệt
 
@@ -55,10 +56,10 @@ những tab video đang mở. Tiện ích cũ vẫn hoạt động trong lúc b�
    thông thường của browser. Đã kiểm tra nạp tự động trên Chrome; nếu browser
    yêu cầu xác nhận, làm theo các bước còn lại được hiển thị.
 3. Chờ **Đã kết nối**, rồi thử tải file hoặc rê chuột lên video và bấm
-   nút **logo Supo + Download**.
+   nút **logo Supo + Download** khi đã có chất lượng và dung lượng ước tính.
 
 Mở lại phần này bằng nút **Trình duyệt** bất cứ lúc nào. Tiện ích tự kết nối với
-SDM 0.7.4, hiện trạng thái và nút **Thử lại / Mở SDM** khi cần. Không phải nhập
+SDM 0.7.5, hiện trạng thái và nút **Thử lại / Mở SDM** khi cần. Không phải nhập
 port để kết nối; mục chẩn đoán nằm trong phần nâng cao.
 
 Hỗ trợ Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi và Firefox. Chưa có listing
