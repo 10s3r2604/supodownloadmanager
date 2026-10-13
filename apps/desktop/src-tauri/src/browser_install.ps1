@@ -8,8 +8,9 @@ try {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
-    Add-Type 'using System; using System.Runtime.InteropServices; public static class SdmBrowserWindow { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }'
+    Add-Type 'using System; using System.Runtime.InteropServices; public static class SdmBrowserWindow { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr key, IntPtr flags); }'
     $script:stage = 'locate-window'
+    $script:navigated = $false
     function Wait-For($action) {
         while ($clock.Elapsed.TotalSeconds -lt 18) {
             $value = & $action
@@ -54,6 +55,7 @@ try {
                     [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty, $true),
                     [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::IsTextPatternAvailableProperty, $true))
                 $edits = $root.FindAll([Windows.Automation.TreeScope]::Descendants, $addressTypes)
+                $nativeAddress = $null
                 foreach ($edit in $edits) {
                     # Page inputs can impersonate a URL; only the browser's
                     # address control outside document content is trusted.
@@ -69,8 +71,32 @@ try {
                     $address = $null
                     if ($edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$provider)) { $address = $provider.Current.Value }
                     elseif ($edit.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$provider)) { $address = $provider.DocumentRange.GetText(-1) }
-                    if ($null -ne $address -and $address.Trim().TrimEnd('/') -eq $request.page.TrimEnd('/')) {
+                    if (-not $edit.Current.HasKeyboardFocus -and $null -ne $address -and $address.Trim().TrimEnd('/') -eq $request.page.TrimEnd('/')) {
                         return @{root=$root; pid=$process.Id}
+                    }
+                    if ($edit.Current.ControlType -eq [Windows.Automation.ControlType]::Edit -and
+                        $edit.Current.Name -in @('Address and search bar', 'Thanh địa chỉ và tìm kiếm')) {
+                        $nativeAddress = $edit
+                    }
+                }
+                if ($request.engine -eq 'chromium' -and -not $script:navigated -and $null -ne $nativeAddress) {
+                    # A fresh browser can ignore a management URL passed at
+                    # startup. Navigate once through its native address field.
+                    # Send Enter to this verified browser window only, after
+                    # checking the field's focus; never use global keystrokes.
+                    $script:navigated = $true
+                    $script:stage = 'navigate'
+                    $nativeAddress.SetFocus()
+                    $focused = [Windows.Automation.AutomationElement]::FocusedElement
+                    $handle = [IntPtr]::new($root.Current.NativeWindowHandle)
+                    if ([SdmBrowserWindow]::GetForegroundWindow() -eq $handle -and
+                        ($focused.GetRuntimeId() -join ',') -eq ($nativeAddress.GetRuntimeId() -join ',')) {
+                        $value = $nativeAddress.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+                        if (-not $value.Current.IsReadOnly) {
+                            $value.SetValue($request.page)
+                            [SdmBrowserWindow]::PostMessage($handle, 0x100, [IntPtr]::new(13), [IntPtr]::new(0x001C0001)) | Out-Null
+                            [SdmBrowserWindow]::PostMessage($handle, 0x101, [IntPtr]::new(13), [IntPtr]::new(0xC01C0001)) | Out-Null
+                        }
                     }
                 }
             } catch { }
