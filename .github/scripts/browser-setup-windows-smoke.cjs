@@ -86,7 +86,7 @@ async function automation(script) {
     // The only instrumentation reports exceptions from this isolated fixture;
     // browser interaction and the success/fallback result are the product code.
     const instrumented=source
-      .replaceAll('} catch { }','} catch { [Console]::Error.WriteLine($_.Exception.GetType().Name + ": " + $_.Exception.Message) }')
+      .replaceAll('} catch { }','} catch { [Console]::Error.WriteLine($_.Exception.GetBaseException().ToString()) }')
       .replace(/(\$(?:script:)?stage = '[^']+')/g, '$1; [Console]::Error.WriteLine($script:stage)');
     const result=await automation(instrumented);
     console.log(JSON.stringify(result));

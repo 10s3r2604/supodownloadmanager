@@ -18,6 +18,7 @@ public static class SdmBrowserWindow {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr key, IntPtr flags);
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint kind);
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     public static void InitializeAutomation() {
         var proxy = typeof(System.Windows.Automation.AutomationElement).Assembly.GetName();
         proxy.Name = "UIAutomationClientsideProviders";
