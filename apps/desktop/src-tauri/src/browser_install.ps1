@@ -8,7 +8,7 @@ try {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
-    Add-Type 'using System; using System.Runtime.InteropServices; public static class SdmBrowserWindow { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr key, IntPtr flags); }'
+    Add-Type 'using System; using System.Runtime.InteropServices; public static class SdmBrowserWindow { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr key, IntPtr flags); [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint kind); public static bool IsOwnedBy(IntPtr window, IntPtr owner) { for (int i = 0; i < 8; i++) { window = GetWindow(window, 4); if (window == IntPtr.Zero) return false; if (window == owner) return true; } return false; } }'
     $script:stage = 'locate-window'
     $script:navigated = $false
     function Wait-For($action) {
@@ -106,7 +106,7 @@ try {
     $root = $window.root
     if ($request.engine -eq 'chromium') {
         $stage = 'developer'
-        $developer = Find-Control $root @('Developer mode', 'Chế độ dành cho nhà phát triển') ([Windows.Automation.TogglePattern]::Pattern)
+        $developer = Wait-For { Find-Control $root @('Developer mode', 'Chế độ dành cho nhà phát triển') ([Windows.Automation.TogglePattern]::Pattern) }
         if ($null -eq $developer) { throw 'Developer mode requires confirmation.' }
         $toggle = $developer.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
         if ($toggle.Current.ToggleState -eq [Windows.Automation.ToggleState]::Off) { $toggle.Toggle() }
@@ -121,11 +121,18 @@ try {
     if ($null -eq $load) { throw 'Loading requires confirmation.' }
     $load.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
     $stage = 'picker'
-    $dialogCondition = [Windows.Automation.AndCondition]::new(
-        [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$window.pid),
-        [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ClassNameProperty, '#32770'))
+    $dialogCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ClassNameProperty, '#32770')
+    function Get-OwnedDialogs {
+        # Windows can expose the picker as an owned child of the browser, or
+        # through its shell host. Verify native ownership, not the UIA PID.
+        $candidates = @([Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children, $dialogCondition)) +
+            @($root.FindAll([Windows.Automation.TreeScope]::Descendants, $dialogCondition))
+        return ,@($candidates | Where-Object {
+            [SdmBrowserWindow]::IsOwnedBy([IntPtr]::new($_.Current.NativeWindowHandle), [IntPtr]::new($root.Current.NativeWindowHandle))
+        } | Sort-Object { $_.GetRuntimeId() -join ',' } -Unique)
+    }
     $dialog = Wait-For {
-        $dialogs = [Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children, $dialogCondition)
+        $dialogs = Get-OwnedDialogs
         if ($dialogs.Count -eq 1) { return $dialogs[0] }
         return $null
     }
@@ -144,7 +151,7 @@ try {
     $confirm.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
     $stage = 'verify'
     $loaded = Wait-For {
-        $dialogs = [Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children, $dialogCondition)
+        $dialogs = Get-OwnedDialogs
         if ($dialogs.Count -ne 0) { return $null }
         $name = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Supo Download Manager')
         $brand = $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $name)
