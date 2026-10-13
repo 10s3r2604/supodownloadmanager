@@ -66,11 +66,12 @@
   display: flex;
   align-items: stretch;
   flex: none;
-  height: 64px;
+  min-height: 64px;
   gap: 3px;
   padding: 6px 9px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
+  overflow-x: auto;
 }
 .idm-tool {
   display: flex;
@@ -78,15 +79,16 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  flex: 0 1 68px;
-  min-width: 52px;
-  padding: 3px 4px;
+  /* Keep localized labels inside the clickable button. */
+  flex: 0 0 auto;
+  min-width: 68px;
+  padding: 3px 6px;
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  line-height: 1.1;
+  line-height: 1.25;
   font-size: 12px;
 }
 .idm-tool > span {
@@ -591,10 +593,9 @@
     gap: 1px;
   }
   .idm-tool {
-    flex-basis: 55px;
-    min-width: 49px;
-    padding: 3px 2px;
-    font-size: 9px;
+    min-width: 55px;
+    padding: 3px 4px;
+    font-size: 11px;
   }
   .idm-tool-divider {
     margin: 5px 4px;
@@ -613,9 +614,6 @@
   }
 }
 @media (max-width: 590px) {
-  .idm-toolbar {
-    overflow-x: auto;
-  }
   .idm-search {
     flex: none;
   }

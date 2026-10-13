@@ -35,8 +35,9 @@ with English and Vietnamese interfaces. It is free software under
 [GPL-3.0-or-later](LICENSE), with no subscription, device limit, accounts or ads.
 
 **Release status:** use [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
-for stable installers. Version 0.7.2 adds first-run browser setup and includes
-extension 0.6.4. CI packages remain review builds until a stable release is published.
+for stable installers. Version 0.7.3 fixes compact toolbar labels, retains first-run
+browser setup and includes extension 0.6.4. CI packages remain review builds until
+a stable release is published.
 
 ## Features
 
@@ -48,7 +49,7 @@ extension 0.6.4. CI packages remain review builds until a stable release is publ
   Automatic loading is validated in Chrome; other browsers may need guided steps.
 - Optional startup in the Windows tray; off by default in **Settings → General**.
 - Signed stable updates on Windows, with background download, manual checks and
-  installation after work stops. Installed 0.7.0 or newer builds can update to 0.7.2 from
+  installation after work stops. Installed 0.7.0 or newer builds can update to 0.7.3 from
   **Settings → Updates → Check now**; older Windows builds need the latest installer once. Repository signing
   setup and release behavior are described in [AUTO_UPDATES.md](docs/AUTO_UPDATES.md).
 
