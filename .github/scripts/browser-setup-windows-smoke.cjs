@@ -94,7 +94,7 @@ async function automation(script) {
                 $text=$null
                 if($element.Current.Name -eq 'Extensions' -and $element.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern,[ref]$text)) {@{'documentText'=$text.DocumentRange.GetText(2000)}|ConvertTo-Json -Compress}
               }
-              if($element.Current.ControlType -eq [Windows.Automation.ControlType]::Button -or $element.Current.Name -match 'Developer|Load unpacked|Address|Folder|Select|Cancel' -or $element.Current.ControlType -in @([Windows.Automation.ControlType]::Edit,[Windows.Automation.ControlType]::ComboBox)) {
+              if($element.Current.ControlType -eq [Windows.Automation.ControlType]::Button -or $element.Current.Name -match 'Developer|My extensions|Load unpacked|Address|Folder|Select|Cancel' -or $element.Current.ControlType -in @([Windows.Automation.ControlType]::Edit,[Windows.Automation.ControlType]::ComboBox)) {
                 @{'name'=$element.Current.Name;'id'=$element.Current.AutomationId;'class'=$element.Current.ClassName;'type'=$element.Current.ControlType.ProgrammaticName;'enabled'=$element.Current.IsEnabled;'patterns'=@($element.GetSupportedPatterns()|ForEach-Object {$_.ProgrammaticName})}|ConvertTo-Json -Compress
               }
             }

@@ -156,6 +156,11 @@ public static class SdmBrowserWindow {
         if ($null -eq $developer) { throw 'Developer mode requires confirmation.' }
         $toggle = $developer.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
         if ($toggle.Current.ToggleState -eq [Windows.Automation.ToggleState]::Off) { $toggle.Toggle() }
+        $enabled = Wait-For {
+            if ($toggle.Current.ToggleState -eq [Windows.Automation.ToggleState]::On) { return $true }
+            return $null
+        }
+        if ($enabled -ne $true) { throw 'Developer mode was not enabled.' }
         # Return from Edge's sidebar to the list containing Load unpacked.
         if ($null -ne $menu) {
             $listNames = @('My extensions', 'Tiện ích mở rộng của tôi', 'Tiện ích của tôi')
