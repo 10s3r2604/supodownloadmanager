@@ -9,12 +9,31 @@ try {
     $script:stage = 'provider'
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
-    # PowerShell is not linked to WPF. Explicitly register the matching Windows
-    # client-side providers so classic picker controls expose their patterns.
-    $proxy = [Windows.Automation.AutomationElement].Assembly.GetName()
-    $proxy.Name = 'UIAutomationClientsideProviders'
-    [Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($proxy)
-    Add-Type 'using System; using System.Runtime.InteropServices; public static class SdmBrowserWindow { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr key, IntPtr flags); [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint kind); public static bool IsOwnedBy(IntPtr window, IntPtr owner) { for (int i = 0; i < 8; i++) { window = GetWindow(window, 4); if (window == IntPtr.Zero) return false; if (window == owner) return true; } return false; } }'
+    # A compiled caller lets WPF resolve its built-in provider assembly without
+    # encountering PowerShell's dynamic stack frames.
+    Add-Type -ReferencedAssemblies ([Windows.Automation.AutomationElement].Assembly.Location) -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class SdmBrowserWindow {
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr key, IntPtr flags);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint kind);
+    public static void InitializeAutomation() {
+        var proxy = typeof(System.Windows.Automation.AutomationElement).Assembly.GetName();
+        proxy.Name = "UIAutomationClientsideProviders";
+        System.Windows.Automation.ClientSettings.RegisterClientSideProviderAssembly(proxy);
+    }
+    public static bool IsOwnedBy(IntPtr window, IntPtr owner) {
+        for (int i = 0; i < 8; i++) {
+            window = GetWindow(window, 4);
+            if (window == IntPtr.Zero) return false;
+            if (window == owner) return true;
+        }
+        return false;
+    }
+}
+'@
+    [SdmBrowserWindow]::InitializeAutomation()
     $script:stage = 'locate-window'
     $script:navigated = $false
     function Wait-For($action) {

@@ -34,6 +34,8 @@ const server = http.createServer((req,res) => {
   res.end(JSON.stringify({enabled:true, version:'browser-setup-fixture'}));
 });
 const powershell = path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
+const productScript=fs.readFileSync('apps/desktop/src-tauri/src/browser_install.ps1','utf8');
+const providerInitialization=productScript.slice(productScript.indexOf('Add-Type -AssemblyName UIAutomationClient'), productScript.indexOf("$script:stage = 'locate-window'"));
 async function automation(script) {
   return new Promise((resolve,reject) => {
     const child = spawn(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',script],{windowsHide:true});
@@ -54,11 +56,7 @@ async function automation(script) {
     spawn(executable,['--no-first-run','--no-default-browser-check','--disable-features=msEdgeFirstRunExperience',request.page],{stdio:'ignore'}).unref();
     await sleep(2000);
     const diagnosis = await run(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',`
-      Add-Type -AssemblyName UIAutomationClient
-      Add-Type -AssemblyName UIAutomationTypes
-        $proxy=[Windows.Automation.AutomationElement].Assembly.GetName()
-        $proxy.Name='UIAutomationClientsideProviders'
-        [Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($proxy)
+      ${providerInitialization}
       $children=[Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)
       foreach($element in $children) {
         try {
@@ -84,7 +82,7 @@ async function automation(script) {
     // Match the app's open_in call after the test browser is initialized.
     spawn(executable,[request.page],{stdio:'ignore'}).unref();
     await sleep(500);
-    const source=fs.readFileSync('apps/desktop/src-tauri/src/browser_install.ps1','utf8');
+    const source=productScript;
     // The only instrumentation reports exceptions from this isolated fixture;
     // browser interaction and the success/fallback result are the product code.
     const instrumented=source
@@ -95,11 +93,7 @@ async function automation(script) {
     assert.equal(result.code,0);
     if(result.stdout!=='loaded') {
       const controls=await run(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',`
-        Add-Type -AssemblyName UIAutomationClient
-        Add-Type -AssemblyName UIAutomationTypes
-        $proxy=[Windows.Automation.AutomationElement].Assembly.GetName()
-        $proxy.Name='UIAutomationClientsideProviders'
-        [Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($proxy)
+        ${providerInitialization}
         $roots=[Windows.Automation.AutomationElement]::RootElement.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)
         foreach($window in $roots) {
           try {
