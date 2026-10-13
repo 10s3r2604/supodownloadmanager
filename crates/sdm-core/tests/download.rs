@@ -35,6 +35,112 @@ struct Server {
     if_ranges: std::sync::Mutex<Vec<String>>,
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn idle_ticks_keep_the_checkpoint_and_pause_persists_new_bytes() {
+    const CHUNK: usize = 256 * 1024;
+    const TOTAL: usize = CHUNK * 3;
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+    let receiver = Arc::new(std::sync::Mutex::new(Some(receiver)));
+    let app = Router::new().route(
+        "/stall.bin",
+        get(move |headers: HeaderMap| {
+            let receiver = receiver.clone();
+            async move {
+                let probe = headers
+                    .get(header::RANGE)
+                    .and_then(|value| value.to_str().ok())
+                    == Some("bytes=0-0");
+                let response = Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header(header::ACCEPT_RANGES, "bytes")
+                    .header(header::ETAG, "\"stall-v1\"");
+                if probe {
+                    return response
+                        .header(header::CONTENT_LENGTH, 1)
+                        .header(header::CONTENT_RANGE, format!("bytes 0-0/{TOTAL}"))
+                        .body(Body::from(vec![1]))
+                        .unwrap();
+                }
+                let receiver = receiver.lock().unwrap().take().unwrap();
+                let stream = futures_util::stream::unfold(receiver, |mut receiver| async move {
+                    receiver
+                        .recv()
+                        .await
+                        .map(|chunk| (Ok::<_, std::io::Error>(chunk), receiver))
+                });
+                response
+                    .header(header::CONTENT_LENGTH, TOTAL)
+                    .header(
+                        header::CONTENT_RANGE,
+                        format!("bytes 0-{}/{TOTAL}", TOTAL - 1),
+                    )
+                    .body(Body::from_stream(stream))
+                    .unwrap()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/stall.bin", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("stall.bin");
+    let files = sdm_core::PartialFiles::new(&target, None);
+    let handle = downloader().start(
+        DownloadRequest::new(url, Destination::File(target)).options(DownloadOptions {
+            connections: 1,
+            ..DownloadOptions::default()
+        }),
+    );
+    sender.send(Bytes::from(vec![1; CHUNK])).unwrap();
+    let saved_bytes = || async {
+        let state: serde_json::Value =
+            serde_json::from_slice(&tokio::fs::read(&files.state).await.ok()?).ok()?;
+        Some(
+            state["segments"]
+                .as_array()?
+                .iter()
+                .map(|segment| {
+                    segment["pos"].as_u64().unwrap() - segment["start"].as_u64().unwrap()
+                })
+                .sum::<u64>(),
+        )
+    };
+    tokio::time::timeout(Duration::from_secs(12), async {
+        while saved_bytes().await != Some(CHUNK as u64) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let modified = std::fs::metadata(&files.state).unwrap().modified().unwrap();
+    tokio::time::sleep(Duration::from_millis(4600)).await;
+    assert_eq!(
+        std::fs::metadata(&files.state).unwrap().modified().unwrap(),
+        modified,
+        "An unchanged ranged transfer must not rewrite or flush its checkpoint"
+    );
+    sender.send(Bytes::from(vec![2; CHUNK])).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while handle.progress().downloaded != (CHUNK * 2) as u64 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    handle.pause();
+    assert!(matches!(
+        handle.wait().await.unwrap(),
+        Outcome::Paused {
+            resumable: true,
+            ..
+        }
+    ));
+    assert_eq!(saved_bytes().await, Some((CHUNK * 2) as u64));
+    let data = std::fs::read(&files.data).unwrap();
+    assert!(data[..CHUNK].iter().all(|byte| *byte == 1));
+    assert!(data[CHUNK..CHUNK * 2].iter().all(|byte| *byte == 2));
+}
+
 async fn start_server(data: Vec<u8>, failures: usize) -> (String, Arc<Server>) {
     let server = Arc::new(Server {
         data,

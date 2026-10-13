@@ -110,18 +110,20 @@ public static class SdmBrowserWindow {
                     # startup. Navigate once through its native address field.
                     # Send Enter to this verified browser window only, after
                     # checking the field's focus; never use global keystrokes.
-                    $script:navigated = $true
                     $script:stage = 'navigate'
                     $nativeAddress.SetFocus()
+                    Start-Sleep -Milliseconds 50
                     $focused = [Windows.Automation.AutomationElement]::FocusedElement
                     $handle = [IntPtr]::new($root.Current.NativeWindowHandle)
                     if ([SdmBrowserWindow]::GetForegroundWindow() -eq $handle -and
+                        $null -ne $focused -and
                         ($focused.GetRuntimeId() -join ',') -eq ($nativeAddress.GetRuntimeId() -join ',')) {
                         $value = $nativeAddress.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
                         if (-not $value.Current.IsReadOnly) {
                             $value.SetValue($request.page)
                             [SdmBrowserWindow]::PostMessage($handle, 0x100, [IntPtr]::new(13), [IntPtr]::new(0x001C0001)) | Out-Null
                             [SdmBrowserWindow]::PostMessage($handle, 0x101, [IntPtr]::new(13), [IntPtr]::new(0xC01C0001)) | Out-Null
+                            $script:navigated = $true
                         }
                     }
                 }
@@ -130,7 +132,7 @@ public static class SdmBrowserWindow {
     }
     if ($null -eq $window) { throw 'The extensions page is not available through accessibility.' }
     $root = $window.root
-    $stage = 'page'
+    $script:stage = 'page'
     $management = Wait-For {
         $documents = $root.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Document))
         foreach ($document in $documents) {
@@ -151,7 +153,7 @@ public static class SdmBrowserWindow {
                 if ($toggle.Current.ToggleState -eq [Windows.Automation.ToggleState]::Off) { $toggle.Toggle() }
             }
         }
-        $stage = 'reload'
+        $script:stage = 'reload'
         $reload = Wait-For {
             $name = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Supo Download Manager')
             $brands = @($management.FindAll([Windows.Automation.TreeScope]::Descendants, $name))
@@ -170,7 +172,7 @@ public static class SdmBrowserWindow {
         }
         if ($null -eq $reload) { throw 'Reload requires confirmation.' }
         $reload.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
-        $stage = 'verify'
+        $script:stage = 'verify'
         $updated = Wait-For {
             $name = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Supo Download Manager')
             $brand = $management.FindFirst([Windows.Automation.TreeScope]::Descendants, $name)
@@ -186,7 +188,7 @@ public static class SdmBrowserWindow {
         throw 'The updated version has not been confirmed.'
     }
     if ($request.engine -eq 'chromium') {
-        $stage = 'developer'
+        $script:stage = 'developer'
         $menu = $null
         $developerNames = @('Developer mode', 'Turn on Developer mode', 'Turn off Developer mode', 'Chế độ dành cho nhà phát triển', 'Bật chế độ dành cho nhà phát triển', 'Tắt chế độ dành cho nhà phát triển')
         $developer = Find-Control $management $developerNames ([Windows.Automation.TogglePattern]::Pattern)
@@ -214,17 +216,17 @@ public static class SdmBrowserWindow {
                 if ($null -ne $list) { $list.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select() }
             }
         }
-        $stage = 'load'
+        $script:stage = 'load'
         $load = Wait-For { Find-Control $management @('Load unpacked', 'Tải tiện ích đã giải nén', 'Tải phần mở rộng đã giải nén') ([Windows.Automation.InvokePattern]::Pattern) }
         $path = $request.directory
     } else {
-        $stage = 'load'
+        $script:stage = 'load'
         $load = Wait-For { Find-Control $management @('Load Temporary Add-on…', 'Load Temporary Add-on...', 'Tải tiện ích tạm thời…') ([Windows.Automation.InvokePattern]::Pattern) }
         $path = Join-Path $request.directory 'manifest.json'
     }
     if ($null -eq $load) { throw 'Loading requires confirmation.' }
     $load.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
-    $stage = 'picker'
+    $script:stage = 'picker'
     $dialogCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ClassNameProperty, '#32770')
     function Get-OwnedDialogs {
         # Windows can expose the picker as an owned child of the browser, or
@@ -256,11 +258,11 @@ public static class SdmBrowserWindow {
         if ($null -eq $field -or -not $field.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$provider)) { throw 'No writable file-picker field.' }
     }
     $provider.SetValue($path)
-    $stage = 'confirm'
+    $script:stage = 'confirm'
     $confirm = $dialog.FindFirst([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, '1'))
     if ($null -eq $confirm -or -not $confirm.Current.IsEnabled) { throw 'The browser requires confirmation.' }
     $confirm.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
-    $stage = 'verify'
+    $script:stage = 'verify'
     $loaded = Wait-For {
         $dialogs = Get-OwnedDialogs
         if ($dialogs.Count -ne 0) { return $null }
@@ -278,4 +280,4 @@ public static class SdmBrowserWindow {
     }
     if ($loaded -eq $true) { [Console]::Out.Write('loaded'); exit 0 }
 } catch { }
-[Console]::Out.Write("manual:$stage")
+[Console]::Out.Write("manual:$($script:stage)")

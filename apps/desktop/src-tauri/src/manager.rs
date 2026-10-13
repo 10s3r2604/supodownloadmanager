@@ -218,6 +218,8 @@ pub struct Manager {
 
 struct Inner {
     records: Vec<Record>,
+    /// In-memory lookup only; the persisted list keeps its original order.
+    record_positions: HashMap<u64, usize>,
     active: HashMap<u64, Active>,
     /// Legacy file moves in progress; removal waits for the move to finish.
     migrating: HashMap<u64, Option<bool>>,
@@ -361,6 +363,11 @@ impl Manager {
             .collect();
         let manager = Arc::new(Self {
             inner: Mutex::new(Inner {
+                record_positions: records
+                    .iter()
+                    .enumerate()
+                    .map(|(index, record)| (record.id, index))
+                    .collect(),
                 records,
                 active: HashMap::new(),
                 migrating: recovering.iter().map(|r| (r.id, None)).collect(),
@@ -522,7 +529,35 @@ impl Manager {
 
     /// One download with live progress.
     pub fn get(&self, id: u64) -> Option<DownloadView> {
-        self.list().into_iter().find(|d| d.id == id)
+        let mut inner = self.lock();
+        let index = *inner.record_positions.get(&id)?;
+        let progress = inner
+            .active
+            .get(&id)
+            .map(|active| active.control.progress());
+        if let Some(progress) = &progress
+            && inner.records[index].apply(progress)
+        {
+            inner.dirty = true;
+        }
+        let record = &inner.records[index];
+        let active = inner.active.get(&id);
+        let torrent = match (active, &record.torrent) {
+            (Some(active), _) => active.control.torrent(),
+            (None, Some(spec)) if record.state == State::Completed => {
+                self.torrents.seeding(&spec.info_hash)
+            }
+            _ => None,
+        };
+        let live = Live {
+            progress: progress.as_ref(),
+            stopping: active.is_some_and(|active| active.stopping)
+                || inner.migrating.get(&id).is_some_and(Option::is_some)
+                || inner.cleanup_remove.contains_key(&id),
+            running_for: active.map_or(Duration::ZERO, |active| active.since.elapsed()),
+            torrent,
+        };
+        Some(view(record, &live))
     }
 
     /// Where a download is (or will be) saved.
@@ -569,7 +604,7 @@ impl Manager {
             let path = inner.free_path(&directory, &file_name);
             let id = inner.allocate_id()?;
             let temp_dir = Some(inner.settings.temp_dir.clone());
-            inner.records.push(Record {
+            inner.push_record(Record {
                 id,
                 url,
                 headers: request.headers,
@@ -634,7 +669,7 @@ impl Manager {
                 let id = match inner.allocate_id() {
                     Ok(id) => id,
                     Err(error) => {
-                        inner.records.truncate(rollback.0);
+                        inner.truncate_records(rollback.0);
                         inner.next_id = rollback.1;
                         inner.dirty = rollback.2;
                         return Err(error);
@@ -646,7 +681,7 @@ impl Manager {
                     headers.push((name, value));
                 }
                 let temp_dir = Some(inner.settings.temp_dir.clone());
-                inner.records.push(Record {
+                inner.push_record(Record {
                     id,
                     url,
                     headers,
@@ -795,7 +830,7 @@ impl Manager {
             let path = inner.free_path(&directory, &file_name);
             let id = inner.allocate_id()?;
             let temp_dir = Some(inner.settings.temp_dir.clone());
-            inner.records.push(Record {
+            inner.push_record(Record {
                 id,
                 url: page.to_string(),
                 headers: Vec::new(),
@@ -905,7 +940,7 @@ impl Manager {
                 (folder.clone(), folder)
             };
             let id = inner.allocate_id()?;
-            inner.records.push(Record {
+            inner.push_record(Record {
                 id,
                 url: link,
                 headers: Vec::new(),
@@ -1611,7 +1646,7 @@ impl Manager {
 
     /// Deletes what is left of a download that leaves the list.
     fn remove_record(&self, inner: &mut Inner, index: usize, delete_file: bool) -> bool {
-        let record = inner.records.remove(index);
+        let record = inner.remove_record(index);
         match store::save_json(&self.store, &inner.records) {
             Ok(()) => {
                 inner.dirty = false;
@@ -1625,7 +1660,7 @@ impl Manager {
                 record.error = Some(format!(
                     "Could not remove the download; its files were kept: {error}"
                 ));
-                inner.records.insert(index, record);
+                inner.insert_record(index, record);
                 inner.dirty = true;
                 false
             }
@@ -1661,7 +1696,7 @@ impl Manager {
                 Ok(())
             }
             Err(error) => {
-                inner.records.truncate(rollback.0);
+                inner.truncate_records(rollback.0);
                 inner.next_id = rollback.1;
                 inner.dirty = rollback.2;
                 Err(format!(
@@ -1683,6 +1718,37 @@ impl Manager {
 }
 
 impl Inner {
+    // Keep structural edits and the ID index together, including save rollbacks.
+    fn push_record(&mut self, record: Record) {
+        self.record_positions.insert(record.id, self.records.len());
+        self.records.push(record);
+    }
+
+    fn truncate_records(&mut self, len: usize) {
+        for record in self.records.iter().skip(len) {
+            self.record_positions.remove(&record.id);
+        }
+        self.records.truncate(len);
+    }
+
+    fn remove_record(&mut self, index: usize) -> Record {
+        let record = self.records.remove(index);
+        self.record_positions.remove(&record.id);
+        self.reindex_from(index);
+        record
+    }
+
+    fn insert_record(&mut self, index: usize, record: Record) {
+        self.records.insert(index, record);
+        self.reindex_from(index);
+    }
+
+    fn reindex_from(&mut self, start: usize) {
+        for (index, record) in self.records.iter().enumerate().skip(start) {
+            self.record_positions.insert(record.id, index);
+        }
+    }
+
     fn allocate_id(&mut self) -> Result<u64, String> {
         if self.update_prepared {
             return Err("An update is being installed; please try again after SDM restarts".into());
@@ -2325,6 +2391,154 @@ echo "SDMF $home/$name"
         assert!(folder.join("beach.mp4").exists());
         manager.shutdown().await;
         seeder.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn get_syncs_only_the_requested_download_and_keeps_live_fields() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        const CHUNK: usize = 256 * 1024;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        if socket.read_exact(&mut byte).await.is_err() {
+                            return;
+                        }
+                        request.extend_from_slice(&byte);
+                    }
+                    let header = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        CHUNK * 2
+                    );
+                    if socket.write_all(header.as_bytes()).await.is_err() {
+                        return;
+                    }
+                    if socket.write_all(&vec![7; CHUNK]).await.is_err() {
+                        return;
+                    }
+                    // Hold the response until the client closes it, so both
+                    // controls have stable live bytes while polling one row.
+                    let _ = socket.read(&mut [0]).await;
+                });
+            }
+        });
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let mut handles = Vec::new();
+        let mut ids = Vec::new();
+        for name in ["selected.bin", "other.bin"] {
+            let url = format!("{base}/{name}");
+            let id = manager.add(request(url.clone(), false)).await.unwrap();
+            let path = manager.get(id).unwrap().path;
+            let handle = manager
+                .lock()
+                .downloader
+                .start(DownloadRequest::new(url, Destination::File(path)));
+            ids.push(id);
+            handles.push(handle);
+        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while handles
+                .iter()
+                .any(|handle| handle.progress().downloaded < CHUNK as u64)
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        {
+            let mut inner = manager.lock();
+            for (id, handle) in ids.iter().zip(&handles) {
+                inner.active.insert(
+                    *id,
+                    Active {
+                        control: Job::File(handle.control()),
+                        since: Instant::now() - Duration::from_secs(2),
+                        stopping: *id == ids[0],
+                        remove: None,
+                    },
+                );
+                inner
+                    .records
+                    .iter_mut()
+                    .find(|record| record.id == *id)
+                    .unwrap()
+                    .state = State::Downloading;
+            }
+            inner.dirty = false;
+        }
+        assert!(manager.get(u64::MAX).is_none());
+        let selected = manager.get(ids[0]).unwrap();
+        assert_eq!(selected.downloaded, CHUNK as u64);
+        assert_eq!(selected.size, Some((CHUNK * 2) as u64));
+        assert_eq!(selected.state, State::Downloading);
+        assert_eq!(selected.connections, 1);
+        assert_eq!(selected.segments, handles[0].progress().segments);
+        assert!(selected.stopping);
+        assert!(selected.elapsed >= 2000);
+        assert!(!selected.media && !selected.torrent && !selected.processing);
+        {
+            let inner = manager.lock();
+            assert!(inner.dirty);
+            assert_eq!(
+                inner.records[1].downloaded, 0,
+                "Polling one row must not sync another row"
+            );
+        }
+        for handle in handles {
+            handle.pause();
+            handle.wait().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn id_lookup_keeps_order_across_removal_rollback_and_restart() {
+        let fixture = Fixture::new();
+        let manager = fixture.manager();
+        let mut ids = Vec::new();
+        for name in ["first.bin", "middle.bin", "last.bin"] {
+            ids.push(
+                manager
+                    .add(request(format!("https://example.test/{name}"), false))
+                    .await
+                    .unwrap(),
+            );
+        }
+        let backup = with_suffix(&manager.store, ".bak");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        manager.remove(&[ids[1]], false);
+        assert!(manager.get(ids[1]).unwrap().error.is_some());
+        assert_eq!(manager.get(ids[2]).unwrap().file_name, "last.bin");
+        assert_eq!(
+            manager
+                .list()
+                .iter()
+                .map(|record| record.id)
+                .collect::<Vec<_>>(),
+            ids
+        );
+        std::fs::remove_dir(&backup).unwrap();
+        manager.remove(&[ids[1]], false);
+        assert!(manager.get(ids[1]).is_none());
+        assert_eq!(manager.get(ids[2]).unwrap().file_name, "last.bin");
+        let restarted = fixture.manager();
+        assert!(restarted.get(ids[1]).is_none());
+        assert_eq!(restarted.get(ids[2]).unwrap().file_name, "last.bin");
+        assert_eq!(
+            restarted
+                .list()
+                .iter()
+                .map(|record| record.id)
+                .collect::<Vec<_>>(),
+            vec![ids[0], ids[2]]
+        );
     }
 
     fn request(url: String, start: bool) -> AddRequest {

@@ -37,7 +37,7 @@ const server = http.createServer((req,res) => {
 const powershell = path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
 const productScript=fs.readFileSync('apps/desktop/src-tauri/src/browser_install.ps1','utf8');
 const providerInitialization=productScript.slice(productScript.indexOf('Add-Type -AssemblyName UIAutomationClient'), productScript.indexOf("$script:stage = 'locate-window'"));
-async function automation(script) {
+async function automation(script, input = request) {
   return new Promise((resolve,reject) => {
     const child = spawn(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',script],{windowsHide:true});
     let stdout='',stderr='';
@@ -47,7 +47,7 @@ async function automation(script) {
     const timeout=setTimeout(()=>{timedOut=true;child.kill();resolve({code:0,stdout:'manual:timeout',stderr,timeout:true})},30_000);
     child.on('error',error=>{clearTimeout(timeout);reject(error)});
     child.on('close',code=>{clearTimeout(timeout);if(!timedOut) resolve({code,stdout,stderr})});
-    child.stdin.end(JSON.stringify(request));
+    child.stdin.end(JSON.stringify(input));
   });
 }
 (async()=>{
@@ -100,5 +100,9 @@ async function automation(script) {
       assert.equal(connectedVersion,manifest.version,'The reloaded worker must report the new manifest version');
       console.log(JSON.stringify({existingExtensionUpdated:true,version:connectedVersion}));
     }
+    const missing=await automation(productScript, {...request, executable:path.join(directory,'missing-browser.exe')});
+    assert.equal(missing.code,0);
+    assert.equal(missing.stdout,'manual:locate-window','An early setup failure must retain its diagnostic stage');
+    console.log(JSON.stringify({missingBrowserStage:'locate-window'}));
   } finally { await new Promise(resolve=>server.close(resolve)); }
 })().catch(error=>{console.error(error);process.exitCode=1});
