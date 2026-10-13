@@ -156,8 +156,16 @@ public static class SdmBrowserWindow {
         if ($null -eq $developer) { throw 'Developer mode requires confirmation.' }
         $toggle = $developer.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
         if ($toggle.Current.ToggleState -eq [Windows.Automation.ToggleState]::Off) { $toggle.Toggle() }
-        # The Edge sidebar overlays the list and its Load unpacked button.
-        if ($null -ne $menu) { $menu.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke() }
+        # Return from Edge's sidebar to the list containing Load unpacked.
+        if ($null -ne $menu) {
+            $listNames = @('My extensions', 'Tiện ích mở rộng của tôi', 'Tiện ích của tôi')
+            $list = Find-Control $management $listNames ([Windows.Automation.InvokePattern]::Pattern)
+            if ($null -ne $list) { $list.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke() }
+            else {
+                $list = Find-Control $management $listNames ([Windows.Automation.SelectionItemPattern]::Pattern)
+                if ($null -ne $list) { $list.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select() }
+            }
+        }
         $stage = 'load'
         $load = Wait-For { Find-Control $management @('Load unpacked', 'Tải tiện ích đã giải nén', 'Tải phần mở rộng đã giải nén') ([Windows.Automation.InvokePattern]::Pattern) }
         $path = $request.directory
