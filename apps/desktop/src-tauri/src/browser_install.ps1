@@ -38,7 +38,7 @@ public static class SdmBrowserWindow {
     $script:stage = 'locate-window'
     $script:navigated = $false
     function Wait-For($action) {
-        while ($clock.Elapsed.TotalSeconds -lt 18) {
+        while ($clock.Elapsed.TotalSeconds -lt 22) {
             $value = & $action
             if ($null -ne $value) { return $value }
             Start-Sleep -Milliseconds 250
@@ -144,6 +144,7 @@ public static class SdmBrowserWindow {
     if ($null -eq $management) { throw 'The management document is not ready.' }
     if ($request.engine -eq 'chromium') {
         $stage = 'developer'
+        $menu = $null
         $developerNames = @('Developer mode', 'Turn on Developer mode', 'Turn off Developer mode', 'Chế độ dành cho nhà phát triển', 'Bật chế độ dành cho nhà phát triển', 'Tắt chế độ dành cho nhà phát triển')
         $developer = Find-Control $management $developerNames ([Windows.Automation.TogglePattern]::Pattern)
         if ($null -eq $developer) {
@@ -155,6 +156,8 @@ public static class SdmBrowserWindow {
         if ($null -eq $developer) { throw 'Developer mode requires confirmation.' }
         $toggle = $developer.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
         if ($toggle.Current.ToggleState -eq [Windows.Automation.ToggleState]::Off) { $toggle.Toggle() }
+        # The Edge sidebar overlays the list and its Load unpacked button.
+        if ($null -ne $menu) { $menu.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke() }
         $stage = 'load'
         $load = Wait-For { Find-Control $management @('Load unpacked', 'Tải tiện ích đã giải nén', 'Tải phần mở rộng đã giải nén') ([Windows.Automation.InvokePattern]::Pattern) }
         $path = $request.directory

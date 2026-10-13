@@ -42,7 +42,7 @@ pub(super) fn load(browser: &Browser, directory: &std::path::Path) -> Result<(),
         let _ = child.wait();
         return Err("unavailable");
     }
-    let deadline = Instant::now() + Duration::from_secs(24);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         match child.try_wait() {
             Ok(Some(_)) => {

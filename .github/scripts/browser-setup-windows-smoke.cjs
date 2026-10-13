@@ -43,7 +43,7 @@ async function automation(script) {
     child.stdout.on('data',chunk => {stdout+=chunk});
     child.stderr.on('data',chunk => {stderr+=chunk});
     let timedOut=false;
-    const timeout=setTimeout(()=>{timedOut=true;child.kill();resolve({code:0,stdout:'manual:timeout',stderr,timeout:true})},24_000);
+    const timeout=setTimeout(()=>{timedOut=true;child.kill();resolve({code:0,stdout:'manual:timeout',stderr,timeout:true})},30_000);
     child.on('error',error=>{clearTimeout(timeout);reject(error)});
     child.on('close',code=>{clearTimeout(timeout);if(!timedOut) resolve({code,stdout,stderr})});
     child.stdin.end(JSON.stringify(request));
