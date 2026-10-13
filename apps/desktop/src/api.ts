@@ -129,6 +129,7 @@ export interface Settings {
   notifications: boolean;
   clipboardMonitor: boolean;
   browserIntegration: boolean;
+  browserSetupCompleted: boolean;
   confirmBrowserDownloads: boolean;
   bridgePort: number;
   captureExtensions: string[];
@@ -207,7 +208,7 @@ export interface Browser {
 }
 
 export interface InstallInfo {
-  method: "store" | "manual";
+  method: "store" | "manual" | "automatic";
   browser: string;
   engine: Engine;
   extensionDir: string;
@@ -363,6 +364,7 @@ export interface Api {
   pickTorrentFile(): Promise<string | null>;
   listBrowsers(): Promise<Browser[]>;
   installExtension(id: string): Promise<InstallInfo>;
+  completeBrowserSetup(): Promise<Settings>;
   openExtensionFolder(engine: Engine): Promise<void>;
   appInfo(): Promise<AppInfo>;
   onAddPrompt(handler: (prompt: AddPrompt) => void): Promise<UnlistenFn>;
@@ -456,6 +458,7 @@ const tauriApi: Api = {
   pickTorrentFile: () => invoke("pick_torrent_file"),
   listBrowsers: () => invoke("list_browsers"),
   installExtension: (id) => invoke("install_extension", { id }),
+  completeBrowserSetup: () => invoke("complete_browser_setup"),
   openExtensionFolder: (engine) => invoke("open_extension_folder", { engine }),
   appInfo: () => invoke("app_info"),
   onAddPrompt: (handler) => listen<AddPrompt>("sdm:add-prompt", (e) => handler(e.payload)),

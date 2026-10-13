@@ -13,6 +13,12 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
+static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(windows)]
+#[path = "browser_automation.rs"]
+mod automation;
+
 /// Chrome Web Store page of the extension, once it is published. Works for
 /// every Chromium based browser.
 const CHROME_WEB_STORE_URL: Option<&str> = None;
@@ -162,8 +168,8 @@ pub struct Browser {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallInfo {
-    /// `store` when the store page was opened, `manual` when the user has to
-    /// load the extension folder.
+    /// `automatic` only after the browser's UI confirms loading; `store`
+    /// and `manual` still require the user's confirmation in that browser.
     pub method: &'static str,
     pub browser: String,
     pub engine: Engine,
@@ -173,11 +179,66 @@ pub struct InstallInfo {
 
 /// Browsers installed on this computer.
 pub fn detect() -> Vec<Browser> {
-    detect_with(
+    let installed = detect_with(
         std::env::consts::OS,
         &|name| std::env::var_os(name),
         &|path| path.is_file(),
-    )
+    );
+    #[cfg(windows)]
+    return with_registered(installed, &registered_path, &|path| path.is_file());
+    #[cfg(not(windows))]
+    installed
+}
+
+#[cfg(windows)]
+fn registered_path(id: &str) -> Option<PathBuf> {
+    let executable = match id {
+        "chrome" => "chrome.exe",
+        "edge" => "msedge.exe",
+        "firefox" => "firefox.exe",
+        "brave" => "brave.exe",
+        "opera" => "opera.exe",
+        "vivaldi" => "vivaldi.exe",
+        "chromium" => "chromium.exe",
+        "coccoc" => "browser.exe",
+        _ => return None,
+    };
+    let key = format!(r"Software\Microsoft\Windows\CurrentVersion\App Paths\{executable}");
+    for root in [
+        windows_registry::CURRENT_USER,
+        windows_registry::LOCAL_MACHINE,
+    ] {
+        if let Ok(value) = root.open(&key).and_then(|entry| entry.get_string("")) {
+            let path = PathBuf::from(value.trim_matches('"'));
+            if path.is_file() && (id != "coccoc" || value.to_lowercase().contains("coccoc")) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(any(windows, test))]
+fn with_registered(
+    mut installed: Vec<Browser>,
+    lookup: &dyn Fn(&str) -> Option<PathBuf>,
+    exists: &dyn Fn(&Path) -> bool,
+) -> Vec<Browser> {
+    for known in KNOWN {
+        if installed.iter().any(|browser| browser.id == known.id) {
+            continue;
+        }
+        if let Some(executable) = lookup(known.id).filter(|path| exists(path)) {
+            installed.push(Browser {
+                id: known.id.into(),
+                name: known.name.into(),
+                engine: known.engine,
+                executable,
+                extensions_page: known.extensions_page.into(),
+            });
+        }
+    }
+    installed
 }
 
 fn detect_with(
@@ -244,6 +305,9 @@ fn find_in_path(
 /// Opens the store page, or prepares the extension folder and opens the
 /// browser's extension page.
 pub fn install(browser: &Browser, bundled: &Path, data_dir: &Path) -> io::Result<InstallInfo> {
+    let _install = INSTALL_LOCK
+        .lock()
+        .map_err(|_| io::Error::other("Another browser setup failed"))?;
     let folder = browser.engine.extension_folder();
     let extension_dir = data_dir.join("extension").join(folder);
     let store = match browser.engine {
@@ -256,11 +320,18 @@ pub fn install(browser: &Browser, bundled: &Path, data_dir: &Path) -> io::Result
             "store"
         }
         None => {
-            if extension_dir.exists() {
-                std::fs::remove_dir_all(&extension_dir)?;
-            }
-            copy_dir(&bundled.join(folder), &extension_dir)?;
+            prepare_extension(&bundled.join(folder), &extension_dir)?;
             open_in(browser, &browser.extensions_page)?;
+            #[cfg(windows)]
+            if automation::load(browser, &extension_dir) {
+                return Ok(InstallInfo {
+                    method: "automatic",
+                    browser: browser.name.clone(),
+                    engine: browser.engine,
+                    extension_dir,
+                    extensions_page: browser.extensions_page.clone(),
+                });
+            }
             "manual"
         }
     };
@@ -271,6 +342,71 @@ pub fn install(browser: &Browser, bundled: &Path, data_dir: &Path) -> io::Result
         extension_dir,
         extensions_page: browser.extensions_page.clone(),
     })
+}
+
+fn extension_version(directory: &Path) -> io::Result<Vec<u32>> {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("manifest.json"))?)?;
+    let version = manifest["version"]
+        .as_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing extension version"))?;
+    version
+        .split('.')
+        .map(|part| {
+            part.parse()
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        })
+        .collect()
+}
+
+/// Prepare completely before replacing an installed bundle; never downgrade
+/// a newer unpacked version that the user has installed separately.
+fn prepare_extension(source: &Path, target: &Path) -> io::Result<()> {
+    let version = extension_version(source)?;
+    if target
+        .symlink_metadata()
+        .is_ok_and(|entry| entry.file_type().is_symlink())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "The extension folder cannot be a symlink",
+        ));
+    }
+    if extension_version(target).is_ok_and(|installed| installed > version) {
+        return Ok(());
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid extension folder"))?;
+    std::fs::create_dir_all(parent)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let stage = parent.join(format!(".setup-{}-{nonce}", std::process::id()));
+    let previous = parent.join(format!(".previous-{}-{nonce}", std::process::id()));
+    let result = (|| {
+        copy_dir(source, &stage)?;
+        extension_version(&stage)?;
+        let existed = target.exists();
+        if existed {
+            std::fs::rename(target, &previous)?;
+        }
+        if let Err(error) = std::fs::rename(&stage, target) {
+            if existed {
+                std::fs::rename(&previous, target)?;
+            }
+            return Err(error);
+        }
+        Ok(())
+    })();
+    if stage.exists() {
+        let _ = std::fs::remove_dir_all(&stage);
+    }
+    if result.is_ok() && previous.exists() {
+        let _ = std::fs::remove_dir_all(&previous);
+    }
+    result
 }
 
 /// Starts the browser with a URL. A running browser opens it in a new tab.
@@ -291,7 +427,14 @@ fn copy_dir(from: &Path, to: &Path) -> io::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Unexpected symlink in the extension bundle",
+            ));
+        }
+        if kind.is_dir() {
             copy_dir(&entry.path(), &target)?;
         } else {
             std::fs::copy(entry.path(), target)?;
@@ -305,6 +448,108 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+
+    fn bundle(path: &Path, version: &str, content: &str) {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::write(
+            path.join("manifest.json"),
+            format!(r#"{{"version":"{version}"}}"#),
+        )
+        .unwrap();
+        std::fs::write(path.join("background.js"), content).unwrap();
+    }
+
+    #[test]
+    fn extension_setup_publishes_a_complete_bundle_and_preserves_newer_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("bundle");
+        let target = dir.path().join("data/extension/chromium");
+        bundle(&source, "0.6.4", "bundled");
+        prepare_extension(&source, &target).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(target.join("background.js")).unwrap(),
+            "bundled"
+        );
+        bundle(&source, "0.6.5", "updated");
+        prepare_extension(&source, &target).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(target.join("background.js")).unwrap(),
+            "updated"
+        );
+        bundle(&source, "0.6.4", "old");
+        prepare_extension(&source, &target).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(target.join("background.js")).unwrap(),
+            "updated"
+        );
+        assert_eq!(
+            std::fs::read_dir(target.parent().unwrap()).unwrap().count(),
+            1
+        );
+    }
+
+    #[test]
+    fn invalid_bundle_keeps_the_installed_extension_usable() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("bundle");
+        let target = dir.path().join("data/chromium");
+        bundle(&target, "0.6.4", "working");
+        bundle(&source, "broken", "bad");
+        assert!(prepare_extension(&source, &target).is_err());
+        assert_eq!(
+            std::fs::read_to_string(target.join("background.js")).unwrap(),
+            "working"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn partial_copy_failure_keeps_the_installed_extension_and_cleans_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("bundle");
+        let target = dir.path().join("data/chromium");
+        bundle(&target, "0.6.4", "working");
+        bundle(&source, "0.6.5", "new");
+        std::os::unix::fs::symlink("missing", source.join("unsupported-link")).unwrap();
+        assert!(prepare_extension(&source, &target).is_err());
+        assert_eq!(
+            std::fs::read_to_string(target.join("background.js")).unwrap(),
+            "working"
+        );
+        assert_eq!(
+            std::fs::read_dir(target.parent().unwrap()).unwrap().count(),
+            1
+        );
+    }
+
+    #[test]
+    fn registered_custom_browser_paths_are_found_without_duplicates() {
+        let env = env(&[("ProgramFiles", r"C:\Program Files")]);
+        let exists = |path: &Path| {
+            path == Path::new(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+                || path == Path::new(r"D:\Apps\Firefox\firefox.exe")
+        };
+        let installed = detect_with("windows", &env, &exists);
+        let installed = with_registered(
+            installed,
+            &|id| match id {
+                "chrome" => Some(PathBuf::from(
+                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                )),
+                "firefox" => Some(PathBuf::from(r"D:\Apps\Firefox\firefox.exe")),
+                "edge" => Some(PathBuf::from(r"D:\Missing\msedge.exe")),
+                _ => None,
+            },
+            &exists,
+        );
+        assert_eq!(
+            installed
+                .iter()
+                .map(|browser| browser.id.as_str())
+                .collect::<Vec<_>>(),
+            ["chrome", "firefox"]
+        );
+    }
 
     fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
         let vars: HashMap<String, String> = vars

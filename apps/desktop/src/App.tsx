@@ -39,7 +39,7 @@ type DialogState =
   | { kind: "media"; source: MediaSource }
   | { kind: "torrent"; source: TorrentSource }
   | { kind: "settings" }
-  | { kind: "browsers" }
+  | { kind: "browsers"; firstRun?: boolean }
   | { kind: "scheduler" }
   | { kind: "batch"; page?: LinksPrompt }
   | { kind: "address"; id: number }
@@ -152,6 +152,12 @@ export default function App() {
   }, [toast, t]);
 
   // Show browser downloads one after another.
+  useEffect(() => {
+    if (settings && !settings.browserSetupCompleted && !dialog && prompts.length === 0) {
+      setDialog({ kind: "browsers", firstRun: true });
+    }
+  }, [settings, dialog, prompts.length]);
+
   useEffect(() => {
     if (!dialog && prompts.length > 0 && settings) {
       const next = prompts[0];
@@ -383,7 +389,9 @@ export default function App() {
           onError={showError}
         />
       )}
-      {dialog?.kind === "browsers" && <BrowsersDialog info={info} onClose={closeDialog} onError={showError} />}
+      {dialog?.kind === "browsers" && (
+        <BrowsersDialog info={info} firstRun={dialog.firstRun} onClose={closeDialog} onError={showError} onSetupCompleted={setSettings} />
+      )}
       {dialog?.kind === "scheduler" && settings && (
         <SchedulerDialog
           queues={queues}

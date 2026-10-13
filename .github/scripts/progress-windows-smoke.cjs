@@ -25,6 +25,7 @@ const fixtureSettings = {
   completeDialog:true, clipboardMonitor:false, notifications:false, closeToTray:false,
   connections:1, maxParallel:1, proxy:'none', confirmBrowserDownloads:true,
   startWithWindows:false, autoUpdate:false,
+  browserSetupCompleted:false,
 };
 // A deterministic subprocess fixture writes media bytes and progress lines.
 // This tests the native media manager without relying on an external site.
@@ -349,6 +350,45 @@ const server=http.createServer((req,res)=>{
     async function prompt(pageUrl) {
       await invoke('plugin:event|emit',{event:'sdm:media-prompt',payload:{pageUrl,title:'Home / X'}});
     }
+
+    const setup=main.getByRole('dialog',{name:'Connect your browsers',exact:true});
+    await setup.waitFor();
+    const installedBrowsers=await invoke('list_browsers');
+    assert(installedBrowsers.length>0,'First-run setup should find installed browsers');
+    await setup.getByRole('checkbox',{name:`Select ${installedBrowsers[0].name}`,exact:true}).check();
+    assert(await setup.getByRole('button',{name:'Set up selected (1)',exact:true}).isEnabled());
+    await setup.screenshot({path:path.join(output,'first-run-browser-setup.png')});
+    await setup.getByRole('button',{name:'Later',exact:true}).click();
+    await setup.waitFor({state:'detached'});
+    assert.equal((await invoke('get_settings')).browserSetupCompleted,true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(data,'settings.json'),'utf8')).browserSetupCompleted,true);
+    report.push({name:'first-run-browser-detection-selection-and-persisted-dismissal',passed:true,browsers:installedBrowsers.map(b=>b.id)});
+
+    execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',
+      '$tokens=$null;$errors=$null;[Management.Automation.Language.Parser]::ParseInput([IO.File]::ReadAllText($env:SDM_BROWSER_INSTALL_SCRIPT),[ref]$tokens,[ref]$errors)|Out-Null;if($errors.Count){$errors|ForEach-Object {$_.Message};exit 1}'],
+      {env:{...process.env,SDM_BROWSER_INSTALL_SCRIPT:path.join(root,'apps/desktop/src-tauri/src/browser_install.ps1')}});
+    const edge=installedBrowsers.find(b=>b.id==='edge');
+    assert(edge,'The Windows image must include Edge for the installation check');
+    const browserSetup=bounded(main.evaluate(()=>window.__TAURI_INTERNALS__.invoke('install_extension',{id:'edge'})),
+      'Browser setup exceeded its bounded native timeout',35_000);
+    await new Promise(resolve=>setTimeout(resolve,700));
+    await invoke('list_downloads');
+    await nativeResponsive();
+    const setupResult=await browserSetup;
+    assert(['automatic','manual','store'].includes(setupResult.method));
+    assert.equal(setupResult.browser,'Microsoft Edge');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(setupResult.extensionDir,'manifest.json'),'utf8')).version,
+      JSON.parse(fs.readFileSync(path.join(root,'extension/dist/chromium/manifest.json'),'utf8')).version);
+    let connected=false;
+    if(setupResult.method==='automatic') {
+      await until(async()=>{connected=(await invoke('list_browsers')).find(b=>b.id==='edge')?.connected;return connected},
+        'An automatically loaded extension did not connect to SDM',15_000);
+    }
+    report.push({name:'selected-edge-extension-setup-real-browser',passed:true,method:setupResult.method,connected,mainResponsive:true});
+    execFileSync(process.execPath,[path.join(root,'.github/scripts/browser-onboarding-ui-smoke.cjs')],{
+      env:{...process.env,SDM_UI_BASE:'http://127.0.0.1:1420',SDM_UI_BROWSER:edge.executable,SDM_UI_OUTPUT:path.join(output,'browser-onboarding')},
+      stdio:'inherit',timeout:90_000,
+    });
 
     await main.locator('.idm-toolbar').waitFor();
     const mainDimensions=await main.evaluate(()=>({width:innerWidth,height:innerHeight,

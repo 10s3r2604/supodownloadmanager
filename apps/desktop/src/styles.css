@@ -1233,6 +1233,16 @@ textarea:focus-visible {
   background: var(--panel-2);
 }
 
+.browser-select-all { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.browser input[type="checkbox"], .browser-select-all input { width: 17px; height: 17px; flex: none; accent-color: var(--good); }
+.browser-name span { overflow-wrap: anywhere; }
+.browser > button { flex: none; }
+@media (max-width: 560px) {
+  .browser { gap: 8px; flex-wrap: wrap; }
+  .browser-name { flex-basis: calc(100% - 90px); }
+  .browser > button { margin-left: auto; }
+}
+
 .browser-badge {
   display: grid;
   place-items: center;

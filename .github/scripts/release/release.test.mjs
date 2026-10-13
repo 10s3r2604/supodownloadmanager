@@ -40,6 +40,13 @@ test("tags, manual input and previous drafts must bind to the exact version and 
   assert.equal(decision({ requestedTag: "v0.7.0", tagSha: sha, releases: [{ tag_name: "v0.7.0", draft: true, target_commitish: sha }] }).eligible, true);
 });
 
+test("an ordinary commit after publication skips the version whose tag belongs to the previous commit", () => {
+  const result = decision({ tagSha: newerSha, releases: [{ tag_name: "v0.7.0", draft: false }] });
+  assert.equal(result.eligible, false);
+  assert.equal(result.reason, "This version already has a public release");
+  assert.throws(() => decision({ tagSha: newerSha, releases: [{ tag_name: "v0.7.0", draft: true, target_commitish: sha }] }));
+});
+
 test("full successful main CI is required; fork, PR, skipped and missing jobs fail", () => {
   checkCiRun(run, jobs, repository, sha);
   for (const extra of [

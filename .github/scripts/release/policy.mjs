@@ -49,10 +49,10 @@ export function releaseDecision({ version, requestedTag, sha, mainSha, tagSha, r
   const tag = `v${version}`;
   if (requestedTag) assert.equal(requestedTag, tag, "Release tag/input must match the checked-in version");
   if (mainSha !== sha) return { eligible: false, reason: "A newer main commit superseded this build" };
-  if (tagSha) assert.equal(tagSha, sha, "The existing version tag points at a different commit");
   const matches = releases.filter((release) => release.tag_name === tag);
   assert.ok(matches.length <= 1, "Multiple releases use this version tag");
   if (matches[0] && !matches[0].draft) return { eligible: false, reason: "This version already has a public release" };
+  if (tagSha) assert.equal(tagSha, sha, "The existing version tag points at a different commit");
   if (matches[0]) assert.equal(matches[0].target_commitish, sha, "A previous draft was built from a different commit");
   for (const release of releases.filter((item) => !item.draft && !item.prerelease)) {
     if (!/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(release.tag_name)) continue;
