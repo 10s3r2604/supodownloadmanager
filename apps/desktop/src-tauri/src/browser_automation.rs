@@ -49,6 +49,7 @@ pub(super) fn load(browser: &Browser, directory: &std::path::Path) -> Result<(),
                 return match child.wait_with_output() {
                     Ok(output) if output.status.success() => match output.stdout.as_slice() {
                         b"loaded" => Ok(()),
+                        b"manual:provider" => Err("provider"),
                         b"manual:locate" => Err("locate"),
                         b"manual:locate-window" => Err("locate-window"),
                         b"manual:locate-address" => Err("locate-address"),
