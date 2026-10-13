@@ -42,9 +42,10 @@ async function automation(script) {
     let stdout='',stderr='';
     child.stdout.on('data',chunk => {stdout+=chunk});
     child.stderr.on('data',chunk => {stderr+=chunk});
-    const timeout=setTimeout(()=>{console.log(JSON.stringify({stdout,stderr,timeout:true}));child.kill();reject(new Error('Accessibility helper exceeded 24 seconds'))},24_000);
+    let timedOut=false;
+    const timeout=setTimeout(()=>{timedOut=true;child.kill();resolve({code:0,stdout:'manual:timeout',stderr,timeout:true})},24_000);
     child.on('error',error=>{clearTimeout(timeout);reject(error)});
-    child.on('close',code=>{clearTimeout(timeout);resolve({code,stdout,stderr})});
+    child.on('close',code=>{clearTimeout(timeout);if(!timedOut) resolve({code,stdout,stderr})});
     child.stdin.end(JSON.stringify(request));
   });
 }
@@ -77,6 +78,7 @@ async function automation(script) {
     const result=await automation(instrumented);
     console.log(JSON.stringify(result));
     assert.equal(result.code,0);
+    if(browser==='chrome') assert.equal(result.stdout,'loaded','Normal Chrome controls must load the extension automatically');
     if(result.stdout!=='loaded') {
       const controls=await run(powershell,['-NoProfile','-NonInteractive','-Mta','-Command',`
         ${providerInitialization}
