@@ -27,7 +27,7 @@ files and reload the extension in your browser's extension manager.
   size and save folder, then choose **Download now**, **Download later** or
   **Cancel**. The main SDM window stays in the background. Each pending link
   has its own confirmation, and closing one does not quit the app.
-- **Puts a "Download this video" button on videos.** Hover any video that is
+- **Puts a compact Supo logo + "Download" button on videos.** Hover any video that is
   at least 200 × 112 pixels and the button appears in its top right corner
   (also in full screen). Click to choose quality, format and estimated file
   size right on the page. SDM discovers formats in the background; a download
@@ -36,7 +36,7 @@ files and reload the extension in your browser's extension manager.
   stay in the page menu, and the X video context menu opens that same picker.
   The button can be turned off in the popup. SDM must be running.
 
-  <img src="images/video-button-en.png" alt="Download this video" width="416">
+  <img src="images/video-button-en.png" alt="Supo logo and Download button with video qualities" width="416">
 
 - **Opens magnet links in SDM.** A click on a magnet link shows SDM's torrent
   dialog instead of asking which program to use (when SDM is running; can be

@@ -53,7 +53,7 @@ Built with [Tauri](https://tauri.app) (Rust + web interface), so it stays small 
 - [x] "Show a dialog when done" and "Open the file when done" per download, "Don't show this dialog again"
 - [x] Video grabber: YouTube, Facebook, X, TikTok and ~1800 other sites through yt-dlp, with a quality picker
 - [x] HLS (`.m3u8`) and DASH streams, video and sound merged with ffmpeg
-- [x] "Download this video" button on videos in the browser, with the page's cookies
+- [x] Supo logo + "Download" button on videos in the browser, with the page's cookies
 - [x] yt-dlp downloaded on first use (SHA-256 checked) and kept up to date; ffmpeg.exe fetched on Windows
 - [ ] Playlists and channels
 - [ ] Subtitles

@@ -77,7 +77,7 @@ latest published release is older, use it for stable installations and treat
   links" on any web page, with the links sorted by type so you pick only what you want.
 
 **Videos from web pages**
-- Hover a video in your browser and click **Download this video**, or paste a link. Pick
+- Hover a video in your browser and click the Supo **Download** button, or paste a link. Pick
   4K, 1080p, 720p… or just the sound (M4A, MP3); video and sound are merged into one file.
 - Works on [about 1,800 sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
   through [yt-dlp](https://github.com/yt-dlp/yt-dlp), which SDM downloads, verifies and
@@ -116,7 +116,7 @@ latest published release is older, use it for stable installations and treat
     <td><img src="docs/images/sdm-capture-compact-en.png" alt="Compact download confirmation"><br><sub><b>Browser capture:</b> choose where and when to download</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/images/video-button-en.png" alt="Download this video button"><br><sub>The <b>Download this video</b> button</sub></td>
+    <td><img src="docs/images/video-button-en.png" alt="Supo logo and Download button"><br><sub>The Supo <b>Download</b> button</sub></td>
     <td><img src="docs/images/sdm-browsers-en.png" alt="Installing the browser extension"><br><sub>Installing the browser extension</sub></td>
   </tr>
 </table>
