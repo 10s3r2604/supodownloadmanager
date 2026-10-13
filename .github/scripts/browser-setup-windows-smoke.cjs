@@ -39,7 +39,7 @@ async function automation(script) {
     let stdout='',stderr='';
     child.stdout.on('data',chunk => {stdout+=chunk});
     child.stderr.on('data',chunk => {stderr+=chunk});
-    const timeout=setTimeout(()=>{child.kill();reject(new Error('Accessibility helper exceeded 24 seconds'))},24_000);
+    const timeout=setTimeout(()=>{console.log(JSON.stringify({stdout,stderr,timeout:true}));child.kill();reject(new Error('Accessibility helper exceeded 24 seconds'))},24_000);
     child.on('error',error=>{clearTimeout(timeout);reject(error)});
     child.on('close',code=>{clearTimeout(timeout);resolve({code,stdout,stderr})});
     child.stdin.end(JSON.stringify(request));
@@ -61,7 +61,12 @@ async function automation(script) {
           if((Get-Process -Id $element.Current.ProcessId).ProcessName -eq 'msedge') {
             $element.Current.ControlType.ProgrammaticName
             $element.Current.ClassName
-            $element.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty,$true)).Count
+            foreach($edit in $element.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty,$true))) {
+              $provider=$null
+              if($edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern,[ref]$provider)) {
+                @{'type'=$edit.Current.ControlType.ProgrammaticName;'name'=$edit.Current.Name;'value'=$provider.Current.Value}|ConvertTo-Json -Compress
+              }
+            }
           }
         } catch {}
       }`],{timeout:10_000});
@@ -69,7 +74,9 @@ async function automation(script) {
     const source=fs.readFileSync('apps/desktop/src-tauri/src/browser_install.ps1','utf8');
     // The only instrumentation reports exceptions from this isolated fixture;
     // browser interaction and the success/fallback result are the product code.
-    const instrumented=source.replaceAll('} catch { }','} catch { [Console]::Error.WriteLine($_.Exception.GetType().Name + ": " + $_.Exception.Message) }');
+    const instrumented=source
+      .replaceAll('} catch { }','} catch { [Console]::Error.WriteLine($_.Exception.GetType().Name + ": " + $_.Exception.Message) }')
+      .replace(/(\$(?:script:)?stage = '[^']+')/g, '$1; [Console]::Error.WriteLine($script:stage)');
     const result=await automation(instrumented);
     console.log(JSON.stringify(result));
     assert.equal(result.code,0);
