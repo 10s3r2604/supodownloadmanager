@@ -109,9 +109,10 @@ export function BrowsersDialog({ info, onClose, onError, firstRun = false, onSet
           {t("browserSetupSelectAll")}
         </label>
       )}
-      {info?.bridgeError && (
+      {info?.connectionError && (
         <p className="hint warning">
-          <Icon name="alert" size={14} /> {t("bridgeError", { error: info.bridgeError })}
+          <Icon name="alert" size={14} /> {t("browserConnectionError")}
+          <button type="button" className="button" onClick={() => void api.retryBrowserConnection().catch((error) => onError(errorText(error)))}>{t("browserConnectionRetry")}</button>
         </p>
       )}
 

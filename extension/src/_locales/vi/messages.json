@@ -39,7 +39,7 @@
     "message": "Chỉ bắt file lớn hơn (MB)"
   },
   "port": {
-    "message": "Cổng của SDM"
+    "message": "Cổng tương thích"
   },
   "menuVideo": {
     "message": "Tải video trên trang này bằng SDM"
@@ -120,5 +120,32 @@
   },
   "videoPostNotFound": {
     "message": "Chưa tìm được link bài chứa video này. Chờ bài tải xong rồi thử lại."
+  },
+  "portHint": {
+    "message": "Chỉ bản SDM cũ dùng mục này. Bản mới tự kết nối."
+  },
+  "statusConnectionError": {
+    "message": "Kết nối cần kiểm tra. Thử lại hoặc thiết lập tiện ích trong SDM."
+  },
+  "connectionRetry": {
+    "message": "Thử lại"
+  },
+  "connectionOpen": {
+    "message": "Mở SDM"
+  },
+  "connectionDiagnostics": {
+    "message": "Chẩn đoán kết nối"
+  },
+  "connectionChecking": {
+    "message": "Đang kiểm tra kết nối…"
+  },
+  "connectionNative": {
+    "message": "Native Messaging · kết nối tự động"
+  },
+  "connectionCompatibility": {
+    "message": "Kết nối tương thích · SDM cũ"
+  },
+  "connectionUnavailable": {
+    "message": "Chưa kết nối"
   }
 }

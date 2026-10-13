@@ -35,8 +35,8 @@ with English and Vietnamese interfaces. It is free software under
 [GPL-3.0-or-later](LICENSE), with no subscription, device limit, accounts or ads.
 
 **Release status:** use [Releases](https://github.com/10s3r2604/supodownloadmanager/releases/latest)
-for stable installers. Version 0.7.3 fixes compact toolbar labels, retains first-run
-browser setup and includes extension 0.6.4. CI packages remain review builds until
+for stable installers. Version 0.7.4 connects to browsers automatically with Native
+Messaging and includes extension 0.6.5. CI packages remain review builds until
 a stable release is published.
 
 ## Features
@@ -47,9 +47,11 @@ a stable release is published.
 - On first launch, select the browsers SDM detects. Windows attempts extension
   setup through the browser's normal controls and shows any remaining confirmation.
   Automatic loading is validated in Chrome; other browsers may need guided steps.
+- Browser connection works automatically, with status and retry controls.
+  Compatibility ports are kept under advanced diagnostics for older extensions.
 - Optional startup in the Windows tray; off by default in **Settings → General**.
 - Signed stable updates on Windows, with background download, manual checks and
-  installation after work stops. Installed 0.7.0 or newer builds can update to 0.7.3 from
+  installation after work stops. Installed 0.7.0 or newer builds can update to 0.7.4 from
   **Settings → Updates → Check now**; older Windows builds need the latest installer once. Repository signing
   setup and release behavior are described in [AUTO_UPDATES.md](docs/AUTO_UPDATES.md).
 

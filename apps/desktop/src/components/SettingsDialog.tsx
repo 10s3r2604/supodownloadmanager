@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { type ProgressStyle, SEED_FOREVER, type Settings, type Skin, api } from "../api";
+import { type AppInfo, type ProgressStyle, SEED_FOREVER, type Settings, type Skin, api } from "../api";
 import { errorText, useI18n } from "../context";
 import type { TextKey } from "../i18n";
 import { Icon } from "../icons";
@@ -53,6 +53,30 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [updatesSupported, setUpdatesSupported] = useState<boolean | null>(null);
+  const [browserInfo, setBrowserInfo] = useState<AppInfo | null>(null);
+  const [browserConnected, setBrowserConnected] = useState(false);
+  const [checkingConnection, setCheckingConnection] = useState(false);
+  const [connectionFailed, setConnectionFailed] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    if (tab !== "browser") return;
+    setCheckingConnection(true);
+    Promise.all([api.appInfo(), api.listBrowsers()]).then(([info, browsers]) => {
+      if (live) { setBrowserInfo(info); setBrowserConnected(browsers.some((browser) => browser.connected)); setConnectionFailed(false); }
+    }).catch(() => { if (live) setConnectionFailed(true); }).finally(() => { if (live) setCheckingConnection(false); });
+    return () => { live = false; };
+  }, [tab]);
+
+  async function retryConnection() {
+    setCheckingConnection(true);
+    try {
+      await api.retryBrowserConnection();
+      const [info, browsers] = await Promise.all([api.appInfo(), api.listBrowsers()]);
+      setBrowserInfo(info); setBrowserConnected(browsers.some((browser) => browser.connected)); setConnectionFailed(false);
+    } catch { setConnectionFailed(true); }
+    finally { setCheckingConnection(false); }
+  }
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
@@ -338,6 +362,8 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
                 onChange={(e) => set("uploadLimit", number(e.target.value, 0, 10_000_000) * 1024)}
               />
             </label>
+            <details className="connection-diagnostics">
+              <summary>{t("connectionDiagnostics")}</summary>
             <label className="field">
               <span>{t("torrentPortLabel")}</span>
               <input
@@ -348,8 +374,9 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
                 onChange={(e) => set("torrentPort", number(e.target.value, 0, 65535))}
               />
             </label>
+            <small className="muted">{t("torrentPortHint")}</small>
+            </details>
           </div>
-          <small className="muted">{t("torrentPortHint")}</small>
           <MagnetHandler onError={onError} />
           <small className="muted">{t("torrentRights")}</small>
         </div>
@@ -374,6 +401,14 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
             <textarea rows={3} value={types} spellCheck={false} onChange={(e) => setTypes(e.target.value)} />
             <small className="muted">{t("captureTypesHint")}</small>
           </label>
+          <div className="browser-connection-status">
+            <p role="status">{t(checkingConnection ? "browserConnectionChecking" : connectionFailed || browserInfo?.connectionError ? "browserConnectionError" : browserConnected ? "browserConnectionConnected" : "browserConnectionWaiting")}</p>
+            <button type="button" className="button" disabled={checkingConnection} onClick={() => void retryConnection()}><Icon name="retry" size={14} />{t("browserConnectionRetry")}</button>
+          </div>
+          <details className="connection-diagnostics">
+            <summary>{t("connectionDiagnostics")}</summary>
+            {browserInfo?.connectionError && <p className="hint warning">{browserInfo.connectionError}</p>}
+            {browserInfo?.bridgeError && <p className="hint warning">{browserInfo.bridgeError}</p>}
           <label className="field narrow">
             <span>{t("port")}</span>
             <input
@@ -385,6 +420,7 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
             />
             <small className="muted">{t("portHint")}</small>
           </label>
+          </details>
         </div>
       )}
     </Dialog>

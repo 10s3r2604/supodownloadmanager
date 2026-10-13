@@ -217,6 +217,19 @@ jobs:
           '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Path $testConfig -Encoding utf8
           npm run tauri build -- --bundles nsis --config $testConfig
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test release Native Messaging in Chrome and Edge
+        if: runner.os == 'Windows' && success()
+        shell: pwsh
+        run: |
+          node .github/scripts/native-connection-windows-smoke.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload native browser connection checks
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-browser-connection-smoke
+          path: native-connection-smoke/
+          if-no-files-found: ignore
       - name: Upload the Windows test installer
         if: runner.os == 'Windows' && success()
         uses: actions/upload-artifact@v4

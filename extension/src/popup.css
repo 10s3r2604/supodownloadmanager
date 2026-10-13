@@ -42,6 +42,14 @@ header {
   align-items: center;
   margin-bottom: 14px;
 }
+.connection-actions {
+  display: flex;
+  gap: 8px;
+  margin: -5px 0 10px;
+}
+[hidden] { display: none !important; }
+#diagnostics { margin-top: 10px; }
+#diagnostics .hint { margin-top: 8px; overflow-wrap: anywhere; }
 
 h1 {
   margin: 0;

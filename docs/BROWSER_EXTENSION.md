@@ -4,7 +4,8 @@ The SDM extension hands downloads from your browser over to the SDM desktop
 app. It works in Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi, Chromium and
 Firefox.
 
-Extension 0.6.4 works with SDM 0.6.1 or newer. Desktop 0.7.2 adds first-run
+Extension 0.6.5 connects automatically through Native Messaging with SDM 0.7.4
+or newer and retains compatibility with SDM 0.6.1 or newer. Desktop 0.7.2 adds first-run
 setup: select the detected browsers and choose **Set up selected**. Windows
 attempts to load the unpacked extension using the selected browser's normal
 controls. If the browser requires confirmation, SDM shows the remaining steps.
@@ -57,8 +58,9 @@ and reloading video tabs. SDM preserves a separately installed newer version.
 - **Falls back gracefully.** When SDM is not running, the browser downloads as
   usual. When SDM refuses a link, the extension gives it back to the browser.
 
-The popup shows whether SDM is running and lets you turn capturing and the
-video button off, set a minimum file size and change the port.
+The popup shows connection status, **Try again** and, when available, **Open SDM**.
+You can turn capturing and the video button off or set a minimum file size.
+Port settings are reserved for older versions under **Advanced → Connection diagnostics**.
 
 ## Installing
 
@@ -98,8 +100,18 @@ available on addons.mozilla.org.
 
 ## How the extension talks to SDM
 
-SDM runs a small HTTP server on `127.0.0.1:17360` (configurable). It only
-accepts requests that:
+Current versions use the browser's Native Messaging API. SDM registers its host
+for the current user. The host connects to a private named pipe on Windows or a
+user-owned Unix socket on macOS/Linux, and forwards only the supported download,
+quality-selection and status requests. The extension needs no TCP port setting.
+Windows installers register the host even when SDM is not launched immediately;
+app startup also refreshes registration. Uninstallation removes the Windows host
+registration, and updates preserve it. Existing unpacked IDs and preferences stay
+unchanged; a ZIP loaded from another location registers its ID through the
+compatibility handshake automatically while SDM is running.
+
+Older extensions and desktop builds retain the HTTP bridge on `127.0.0.1:17360`
+(configurable only in connection diagnostics). It only accepts requests that:
 
 - carry the `X-SDM-Client` header, which a web page could only send after a
   CORS preflight that SDM never approves, and

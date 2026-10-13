@@ -332,6 +332,7 @@ export interface AppInfo {
   version: string;
   bridgePort: number;
   bridgeError: string | null;
+  connectionError: string | null;
 }
 
 export interface Api {
@@ -368,6 +369,7 @@ export interface Api {
   completeBrowserSetup(): Promise<Settings>;
   openExtensionFolder(engine: Engine): Promise<void>;
   appInfo(): Promise<AppInfo>;
+  retryBrowserConnection(): Promise<void>;
   onAddPrompt(handler: (prompt: AddPrompt) => void): Promise<UnlistenFn>;
   onClipboardLink(handler: (url: string) => void): Promise<UnlistenFn>;
   mediaTools(): Promise<ToolStatus>;
@@ -462,6 +464,7 @@ const tauriApi: Api = {
   completeBrowserSetup: () => invoke("complete_browser_setup"),
   openExtensionFolder: (engine) => invoke("open_extension_folder", { engine }),
   appInfo: () => invoke("app_info"),
+  retryBrowserConnection: () => invoke("retry_browser_connection"),
   onAddPrompt: (handler) => listen<AddPrompt>("sdm:add-prompt", (e) => handler(e.payload)),
   onClipboardLink: (handler) => listen<string>("sdm:clipboard-link", (e) => handler(e.payload)),
   mediaTools: () => invoke("media_tools"),
