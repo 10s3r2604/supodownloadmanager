@@ -16,7 +16,7 @@ or build them with `node extension/build.mjs` (see `extension/dist/`).
 > **Why a separate "store" build for Chrome and Edge?** The Chrome Web Store rejects
 > extensions that download YouTube videos ("facilitating download of YouTube videos" is
 > one of its listed reasons for rejection). The store build therefore keeps the
-> "Download this video" button and menu away from YouTube; the SDM app itself can still
+> "Download" button and menu away from YouTube; the SDM app itself can still
 > download YouTube links pasted into it. The Firefox build and the build shipped with
 > the app are unchanged. Never mention YouTube in the Chrome or Edge listing.
 
@@ -56,7 +56,7 @@ macOS and Linux. This extension connects your browser to the SDM app.
   connections at once and can pause and resume at any time, even after a restart.
 • Downloads that need a login keep working: the extension passes the page's cookies,
   referer and user agent to SDM on your computer.
-• Videos from web pages: hover a video and click "Download this video", then pick the
+• Videos from web pages: hover a video and click "Download", then pick the
   quality and estimated size in the browser menu.
 • Magnet links: click a magnet link and SDM shows what is inside the torrent so you can
   pick the files.
@@ -83,7 +83,7 @@ Windows, macOS và Linux. Extension này kết nối trình duyệt với ứng 
   tạm dừng và tải tiếp bất cứ lúc nào, kể cả sau khi tắt máy.
 • Link cần đăng nhập vẫn tải được: extension gửi cookie, trang nguồn và user agent cho
   SDM trên máy bạn.
-• Tải video trên trang web: rê chuột lên video, bấm "Tải video này" rồi chọn chất lượng
+• Tải video trên trang web: rê chuột lên video, bấm "Download" rồi chọn chất lượng
   và dung lượng ước tính trong menu của trình duyệt.
 • Link magnet: bấm vào link magnet, SDM hiện nội dung torrent để bạn chọn tệp muốn tải.
 • Chuột phải vào link, ảnh, âm thanh và chọn "Tải bằng SDM".
@@ -112,7 +112,7 @@ the Supo Download Manager desktop app installed on the same computer.
 | `storage` | Keeps the extension's own settings (switches, port, minimum size). |
 | `alarms` | Checks once a minute whether the SDM app is running, to show its status. |
 | Host permission `<all_urls>` | Downloads and videos can come from any website, and cookies must be readable for any download address. The extension also talks to the app at http://127.0.0.1. |
-| Content scripts on all sites | Show the "Download this video" button when the pointer is over a video, and open magnet links in SDM. They read nothing else from the page. |
+| Content scripts on all sites | Show the "Download" button when the pointer is over a video, and open magnet links in SDM. They read nothing else from the page. |
 
 **Remote code:** No. All code is in the package; nothing is downloaded or evaluated.
 
@@ -141,7 +141,7 @@ To test:
    downloading it.
 4. Right-click a link: "Download link with SDM".
 5. Open a page with an HTML5 video (e.g. https://test-videos.co.uk/bigbuckbunny/mp4-h264)
-   and hover the video: a "Download this video" button appears.
+   and hover the video: a "Download" button appears.
 6. Click a magnet link (e.g. on https://webtorrent.io/free-torrents): SDM shows the files
    of the torrent.
 All communication is with http://127.0.0.1:17360 only.

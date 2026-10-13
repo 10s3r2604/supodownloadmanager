@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Browser extension 0.6.4 uses a compact Supo logo + **Download** button on
+  videos. The caption stays short during handoff; quality, estimated size
+  and progress remain available in the menu.
+
 ## 0.7.1
 
 - Publish the signed stable update feed for installed 0.7.0 review builds.

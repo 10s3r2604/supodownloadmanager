@@ -45,7 +45,7 @@
     "message": "Tải video trên trang này bằng SDM"
   },
   "videoButton": {
-    "message": "Tải video này"
+    "message": "Download"
   },
   "videoSending": {
     "message": "Đang gửi tới SDM…"
@@ -57,7 +57,7 @@
     "message": "Không lấy được chất lượng video."
   },
   "videoButtonLabel": {
-    "message": "Hiện nút “Tải video này” trên video"
+    "message": "Hiện nút Supo “Download” trên video"
   },
   "magnetsLabel": {
     "message": "Mở link magnet bằng SDM"

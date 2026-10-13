@@ -45,7 +45,7 @@
     "message": "Download the video on this page with SDM"
   },
   "videoButton": {
-    "message": "Download this video"
+    "message": "Download"
   },
   "videoSending": {
     "message": "Sending to SDM…"
@@ -57,7 +57,7 @@
     "message": "Could not get the video qualities."
   },
   "videoButtonLabel": {
-    "message": "Show a “Download this video” button on videos"
+    "message": "Show the Supo “Download” button on videos"
   },
   "magnetsLabel": {
     "message": "Open magnet links with SDM"

@@ -106,6 +106,7 @@ function content({ respond, crypto: cryptoAPI } = {}) {
     chrome: {
       i18n: { getMessage: key => key },
       runtime: {
+        getURL: path => `chrome-extension://sdm-test/${path}`,
         onMessage: { addListener() {} },
         async sendMessage(message) {
           messages.push(JSON.parse(JSON.stringify(message)));

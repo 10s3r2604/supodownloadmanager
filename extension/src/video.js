@@ -95,14 +95,14 @@ function sdmVideoSource(video, pageUrl, title) {
         :host { color-scheme: dark; }
         button { box-sizing: border-box; font: 600 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; cursor: pointer; }
         .trigger {
-          display: inline-flex; align-items: center; gap: 7px; height: 32px; max-width: 100%; padding: 0 13px 0 9px;
-          border: 1px solid rgb(255 255 255 / .16); border-radius: 9px; background: rgb(10 14 19 / .94); color: #eef3f8;
-          box-shadow: 0 6px 20px rgb(0 0 0 / .35); white-space: nowrap;
+          display: inline-flex; align-items: center; gap: 6px; height: 28px; max-width: 100%; padding: 0 9px 0 6px;
+          border: 1px solid rgb(255 255 255 / .16); border-radius: 7px; background: rgb(10 14 19 / .94); color: #eef3f8;
+          box-shadow: 0 2px 8px rgb(0 0 0 / .25); white-space: nowrap;
         }
         .trigger span { overflow: hidden; text-overflow: ellipsis; }
         .trigger:hover, .trigger.done { background: #12b886; border-color: #2ee59d; color: #04130d; }
         .trigger.fail { background: #b42318; border-color: #f04438; color: #fff; }
-        svg { width: 18px; height: 18px; flex: none; }
+        .logo { width: 18px; height: 18px; flex: none; }
         .menu {
           box-sizing: border-box; position: absolute; right: 0; top: 40px; width: min(340px, calc(100vw - 12px));
           overflow-y: auto; padding: 5px; border: 1px solid #35404d; border-radius: 10px; background: #0e151e;
@@ -126,7 +126,7 @@ function sdmVideoSource(video, pageUrl, title) {
         @media (prefers-reduced-motion: reduce) { .loading::before { animation: none; } }
       </style>
       <button class="trigger" type="button" aria-haspopup="menu" aria-expanded="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+        <img class="logo" src="${chrome.runtime.getURL("icons/48.png")}" width="18" height="18" alt="">
         <span></span>
       </button>
       <div class="menu" role="menu" hidden></div>`;
@@ -135,6 +135,7 @@ function sdmVideoSource(video, pageUrl, title) {
     menu = root.querySelector(".menu");
     menu.setAttribute("aria-label", text("videoQualities"));
     label.textContent = text("videoButton");
+    feedback("menuVideo");
     button.addEventListener("click", openMenu);
     host.addEventListener("mouseenter", () => clearTimeout(hideTimer));
     host.addEventListener("mouseleave", scheduleHide);
@@ -283,6 +284,14 @@ function sdmVideoSource(video, pageUrl, title) {
     clearTimeout(resetTimer);
     button.className = "trigger";
     label.textContent = text("videoButton");
+    feedback("menuVideo");
+  }
+
+  // Keep the compact caption stable; detailed progress stays in the menu
+  // and is also available through the tooltip and accessible name.
+  function feedback(key) {
+    button.title = text(key);
+    button.setAttribute("aria-label", `${text("videoButton")} · ${text(key)}`);
   }
 
   function status(message, kind = "") {
@@ -406,7 +415,7 @@ function sdmVideoSource(video, pageUrl, title) {
   async function download(option) {
     const token = ++request;
     for (const row of menu.querySelectorAll("button")) row.disabled = true;
-    label.textContent = text("videoSending");
+    feedback("videoSending");
     const result = await chrome.runtime.sendMessage({ type: "video-add", ...menuSource, option }).catch(() => null);
     if (!menuOpen || token !== request) return;
     if (!result?.ok) {
@@ -418,7 +427,7 @@ function sdmVideoSource(video, pageUrl, title) {
       return;
     }
     button.className = "trigger done";
-    label.textContent = text("videoDownloading");
+    feedback("videoDownloading");
     status(text("videoDownloading"));
     clearTimeout(resetTimer);
     resetTimer = setTimeout(() => { closeMenu(); reset(); hide(); }, 1500);
@@ -427,10 +436,10 @@ function sdmVideoSource(video, pageUrl, title) {
   async function sendToApp() {
     const selected = menuSource;
     closeMenu();
-    label.textContent = text("videoSending");
+    feedback("videoSending");
     const result = await chrome.runtime.sendMessage({ type: "video", ...selected }).catch(() => null);
     button.className = `trigger ${result?.ok ? "done" : "fail"}`;
-    label.textContent = result?.ok ? text("videoSent") : text("videoFailed");
+    feedback(result?.ok ? "videoSent" : "videoFailed");
     clearTimeout(resetTimer);
     resetTimer = setTimeout(reset, 3000);
   }
