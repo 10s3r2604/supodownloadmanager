@@ -101,12 +101,12 @@ module.exports = async function verifyFileDrag({invoke, pages, processId, file, 
         } finally { fs.renameSync(moved, file.path); }
       }
       report.push({name:`native-file-drag-${style}`,copyVerified:true,sourcePreserved:true});
-      await Promise.all([current.waitForEvent('close'),current.getByRole('button',{name:'Close',exact:true}).click()]);
+      await Promise.all([current.waitForEvent('close'),current.locator('.pw-controls').getByRole('button',{name:'Close',exact:true}).click()]);
       current = null;
     }
     await assert.rejects(invoke('drag_download', {id:Number.MAX_SAFE_INTEGER}), /unknown download/);
   } finally {
-    if (current && !current.isClosed()) await current.getByRole('button',{name:'Close',exact:true}).click().catch(() => {});
+    if (current && !current.isClosed()) await current.locator('.pw-controls').getByRole('button',{name:'Close',exact:true}).click().catch(() => {});
     receiver.kill();
     await invoke('save_settings', {settings});
   }
