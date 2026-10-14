@@ -124,6 +124,9 @@
 .pw-file-drag.big { gap: 2px; align-content: center; }
 .pw-file-ext { font-size: 9px; font-weight: 700; line-height: 1; }
 .pw-drag-hint { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.pw-file-meta { display: flex; gap: 8px; align-items: center; }
+.pw-file-meta > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-drag-caption { flex: none; margin-left: auto; font-size: 11px; }
 .pw-action-error { margin: 0; padding: 8px 18px; color: var(--danger); font-size: 12px; }
 
 .pw-name {

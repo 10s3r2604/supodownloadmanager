@@ -29,13 +29,15 @@ module.exports = async function verifyFileDrag({invoke, pages, processId, file, 
       current = await until(() => pages().find(page => page.url().endsWith(`#progress/${file.id}`)), 'Completion window was not created');
       const icon = current.getByRole('button', {name:'Drag file out',exact:true});
       await icon.waitFor({timeout:10_000});
-      await current.evaluate(() => {
-        const original = window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__);
+      await current.evaluate(async () => {
+        // Tauri's IPC internals are read-only. Observe the app API while still
+        // calling its real native implementation and awaiting its actual reply.
+        const {api} = await import('/src/api.ts');
+        const original = api.dragDownload.bind(api);
         window.fileDragSmoke = {calls:0,settled:0,errors:0};
-        window.__TAURI_INTERNALS__.invoke = async (command, ...args) => {
-          if (command !== 'drag_download') return original(command, ...args);
+        api.dragDownload = async (...args) => {
           window.fileDragSmoke.calls++;
-          try { return await original(command, ...args); }
+          try { return await original(...args); }
           catch (error) { window.fileDragSmoke.errors++; throw error; }
           finally { window.fileDragSmoke.settled++; }
         };

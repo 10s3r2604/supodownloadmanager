@@ -79,8 +79,9 @@ export function GraphView(p: PwProps) {
           <div className="pw-name" title={d.fileName} data-tauri-drag-region>
             {d.fileName}
           </div>
-          <div className="pw-host" data-tauri-drag-region>
-            {done ? t("pwDragHint") : hostOf(d.url)}
+          <div className={`pw-host${done ? " pw-file-meta" : ""}`} data-tauri-drag-region>
+            <span data-tauri-drag-region>{hostOf(d.url)}</span>
+            {done && <span className="pw-drag-caption">{t("pwDragFile")}</span>}
           </div>
         </div>
         <WindowControls onClose={p.act.close} />
