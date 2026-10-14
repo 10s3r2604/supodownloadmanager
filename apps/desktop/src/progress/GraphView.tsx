@@ -9,6 +9,7 @@ import { Icon, categoryIcon } from "../icons";
 import { hostOf } from "../model";
 import {
   DontShowAgain,
+  FileDragIcon,
   type PwProps,
   SegmentBar,
   SpeedChart,
@@ -69,15 +70,18 @@ export function GraphView(p: PwProps) {
   return (
     <div className={`pw-graph ${phase}`}>
       <header className="pg-head" data-tauri-drag-region>
-        <span className={`pw-tile${done ? " good" : ""}`} data-tauri-drag-region>
-          <Icon name={categoryIcon[d.category]} size={17} />
-        </span>
+        {done ? <FileDragIcon {...p} /> : (
+          <span className="pw-tile" data-tauri-drag-region>
+            <Icon name={categoryIcon[d.category]} size={17} />
+          </span>
+        )}
         <div className="pg-title" data-tauri-drag-region>
           <div className="pw-name" title={d.fileName} data-tauri-drag-region>
             {d.fileName}
           </div>
-          <div className="pw-host" data-tauri-drag-region>
-            {hostOf(d.url)}
+          <div className={`pw-host${done ? " pw-file-meta" : ""}`} data-tauri-drag-region>
+            <span data-tauri-drag-region>{hostOf(d.url)}</span>
+            {done && <span className="pw-drag-caption">{t("pwDragFile")}</span>}
           </div>
         </div>
         <WindowControls onClose={p.act.close} />

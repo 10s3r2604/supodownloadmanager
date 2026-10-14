@@ -66,7 +66,9 @@ async function automation(script, input = request) {
         }
         Start-Sleep -Milliseconds 250
       }
-      exit 1`],{timeout:30_000});
+      // Cold PowerShell/UIA initialization can exceed 30 seconds on the hosted
+      // image. The browser-ready loop above still has its own 10-second limit.
+      exit 1`],{timeout:60_000});
     // Match the app's open_in call after the test browser is initialized.
     spawn(executable,[request.page],{stdio:'ignore'}).unref();
     await sleep(500);

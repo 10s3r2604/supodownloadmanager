@@ -361,6 +361,8 @@ export interface Api {
   pauseAll(): Promise<void>;
   resumeAll(): Promise<void>;
   open(id: number): Promise<void>;
+  /** Native drag completion: true when dropped, false when cancelled. */
+  dragDownload(id: number): Promise<boolean>;
   showInFolder(id: number): Promise<void>;
   getUpdateState(): Promise<UpdateState>;
   checkForUpdates(): Promise<UpdateState>;
@@ -457,6 +459,7 @@ const tauriApi: Api = {
   pauseAll: () => invoke("pause_all"),
   resumeAll: () => invoke("resume_all"),
   open: (id) => invoke("open_download", { id }),
+  dragDownload: (id) => invoke("drag_download", { id }),
   showInFolder: (id) => invoke("show_in_folder", { id }),
   getUpdateState: () => invoke("get_update_state"),
   checkForUpdates: () => invoke("check_for_updates"),

@@ -1,9 +1,11 @@
 // Pieces shared by the progress window styles.
 
+import { useRef } from "react";
+
 import { type Download, type WhenDone, api } from "../api";
 import { useI18n } from "../context";
 import { formatBytes, formatHuman, formatSpeed, percent } from "../format";
-import { Icon } from "../icons";
+import { Icon, categoryIcon } from "../icons";
 
 /** What the progress window is showing. */
 export interface PwProps {
@@ -26,9 +28,49 @@ export interface PwProps {
     /** Stops the download and closes the window. */
     cancel: () => void;
     open: () => void;
+    drag: () => void;
     folder: () => void;
     close: () => void;
   };
+}
+
+/** Start a native file drag after movement, so a simple click does nothing. */
+export function FileDragIcon({ d, act, big = false }: Pick<PwProps, "d" | "act"> & { big?: boolean }) {
+  const { t } = useI18n();
+  const origin = useRef<{ x: number; y: number; pointer: number } | null>(null);
+  const extension = d.fileName.includes(".") ? d.fileName.split(".").pop()?.slice(0, 5).toUpperCase() : null;
+  return (
+    <button
+      type="button"
+      className={`pw-tile good pw-file-drag${big ? " big" : ""}`}
+      data-tauri-drag-region="false"
+      aria-label={t("pwDragFile")}
+      title={`${d.fileName}\n${t("pwDragHint")}`}
+      onPointerDown={(event) => {
+        if (event.button !== 0 || d.state !== "completed") return;
+        event.preventDefault();
+        event.stopPropagation();
+        origin.current = { x: event.clientX, y: event.clientY, pointer: event.pointerId };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        const start = origin.current;
+        if (!start || start.pointer !== event.pointerId) return;
+        if (!(event.buttons & 1)) { origin.current = null; return; }
+        if (Math.hypot(event.clientX - start.x, event.clientY - start.y) < 6) return;
+        origin.current = null;
+        event.currentTarget.releasePointerCapture(event.pointerId);
+        act.drag();
+      }}
+      onPointerUp={() => { origin.current = null; }}
+      onPointerCancel={() => { origin.current = null; }}
+      onLostPointerCapture={() => { origin.current = null; }}
+      onDragStart={(event) => event.preventDefault()}
+    >
+      <Icon name={categoryIcon[d.category]} size={big ? 24 : 18} />
+      {big && extension && <span className="pw-file-ext" aria-hidden="true">{extension}</span>}
+    </button>
+  );
 }
 
 export type Phase = "connecting" | "checking" | "running" | "processing" | "stopping" | "queued" | "paused" | "failed" | "done";

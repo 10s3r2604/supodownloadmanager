@@ -108,6 +108,27 @@
   border-radius: 14px;
 }
 
+.pw-file-drag {
+  position: relative;
+  border: 1px solid transparent;
+  padding: 0;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.pw-file-drag:active { cursor: grabbing; }
+.pw-file-drag:hover { border-color: var(--good); }
+.pw-file-drag:focus-visible { outline: 2px solid var(--good); outline-offset: 3px; }
+.pw-file-drag > * { pointer-events: none; }
+.pw-file-drag.big { gap: 2px; align-content: center; }
+.pw-file-ext { font-size: 9px; font-weight: 700; line-height: 1; }
+.pw-drag-hint { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.pw-file-meta { display: flex; gap: 8px; align-items: center; }
+.pw-file-meta > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-drag-caption { flex: none; margin-left: auto; font-size: 11px; }
+.pw-action-error { margin: 0; padding: 8px 18px; color: var(--danger); font-size: 12px; }
+
 .pw-name {
   overflow: hidden;
   color: var(--strong);

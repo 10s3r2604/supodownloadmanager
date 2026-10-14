@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Drag completed files from their file icon in all three completion window
+  styles to a folder or another app. Native file drags use copy mode and reject
+  unfinished or missing downloads; English and Vietnamese hints stay compact.
 - Keep Windows browser setup diagnostics in one script scope and retry address-bar
   navigation until focus is confirmed.
 - Look up progress windows by an in-memory record ID index and sync only the

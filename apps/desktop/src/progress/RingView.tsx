@@ -6,6 +6,7 @@ import { hostOf } from "../model";
 import {
   ConnectionList,
   DontShowAgain,
+  FileDragIcon,
   type PwProps,
   Ring,
   SegmentBar,
@@ -26,7 +27,7 @@ export function RingView(p: PwProps) {
   const busy = phase === "running" || phase === "processing" || phase === "checking" || phase === "connecting" || phase === "queued";
 
   const centre = done ? (
-    <Icon name="tick" size={36} />
+    <FileDragIcon {...p} big />
   ) : phase === "failed" ? (
     <Icon name="alert" size={34} />
   ) : (
@@ -59,9 +60,12 @@ export function RingView(p: PwProps) {
             {d.fileName}
           </div>
           {done ? (
-            <div className="pw-host">
-              {[f.size, f.took, f.average && `${t("pwAverage")} ${f.average}`].filter(Boolean).join(" · ")}
-            </div>
+            <>
+              <div className="pw-host">
+                {[f.size, f.took, f.average && `${t("pwAverage")} ${f.average}`].filter(Boolean).join(" · ")}
+              </div>
+              <div className="pw-drag-hint">{t("pwDragHint")}</div>
+            </>
           ) : phase === "failed" ? (
             <div className="pw-error">{d.error ?? p.error}</div>
           ) : (

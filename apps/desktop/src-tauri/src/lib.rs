@@ -7,6 +7,7 @@ mod category;
 mod clipboard;
 mod commands;
 mod extension_clients;
+mod file_drag;
 mod manager;
 mod media;
 mod native_connection;
@@ -194,6 +195,7 @@ pub fn run() {
             commands::pause_all,
             commands::resume_all,
             commands::open_download,
+            file_drag::drag_download,
             commands::show_in_folder,
             commands::get_settings,
             commands::save_settings,

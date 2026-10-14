@@ -30,6 +30,8 @@ export function ProgressWindow({ id }: { id: number }) {
   const [speeds, setSpeeds] = useState<number[]>([]);
   const history = useRef<History>(emptyHistory());
   const content = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const cancelEscapeUntil = useRef(0);
   const { i18n } = useAppearance(settings);
   const { t } = i18n;
   const style = settings?.progressStyle ?? "graph";
@@ -112,13 +114,27 @@ export function ProgressWindow({ id }: { id: number }) {
   const finished = download?.state === "completed";
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-      else if (event.key === "Enter" && finished && !(event.target instanceof HTMLButtonElement)) {
+      if (event.key === "Escape") {
+        // Windows can queue the cancellation key for WebView2 after the native
+        // drag has ended. Consume that key and held-key repeats before closing.
+        if (dragging.current || event.repeat || performance.now() < cancelEscapeUntil.current) {
+          event.preventDefault();
+          return;
+        }
+        close();
+      } else if (event.key === "Enter" && finished && !dragging.current && !(event.target instanceof HTMLButtonElement)) {
         api.open(id).then(close, (e) => setError(errorText(e)));
       }
     };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Escape") cancelEscapeUntil.current = 0;
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, [close, finished, id]);
   const run = (action: Promise<unknown>) => action.catch((e) => setError(errorText(e)));
 
@@ -161,6 +177,16 @@ export function ProgressWindow({ id }: { id: number }) {
         resume: () => run(api.resume([download.id])),
         cancel: () => run(api.pause([download.id])).then(close),
         open: () => run(api.open(download.id)).then(close),
+        drag: async () => {
+          if (dragging.current) return;
+          dragging.current = true;
+          setError(null);
+          try {
+            if (!await api.dragDownload(download.id)) cancelEscapeUntil.current = performance.now() + 500;
+          }
+          catch { setError(t("pwDragFailed")); }
+          finally { dragging.current = false; }
+        },
         folder: () => run(api.showInFolder(download.id)),
         close,
       },
@@ -202,6 +228,7 @@ export function ProgressWindow({ id }: { id: number }) {
       <div className="pw">
         <div className="pw-content" ref={content}>
           {body}
+          {finished && error && <p className="pw-action-error" role="alert">{error}</p>}
         </div>
       </div>
     </I18nContext.Provider>

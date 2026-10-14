@@ -20,6 +20,9 @@ and browser extension **0.6.6**. [Changelog](../CHANGELOG.md) records shipped ch
 - Maintain English and Vietnamese together. Size controls for their actual
   labels, including Vietnamese, and keep confirmation actions visible when
   content scrolls.
+- Completion windows include a file icon that can be dragged to a folder or
+  another app. Native drags use copy mode so the saved download and history stay
+  available. Keep the drag hint compact and separate from window dragging.
 
 ## Browser and video flow
 
