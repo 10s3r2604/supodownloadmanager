@@ -46,6 +46,7 @@ class FileDragFixture {
     form.DragEnter += (sender, e) => {
       e.Effect = e.Data.GetDataPresent(DataFormats.FileDrop) && (e.AllowedEffect & DragDropEffects.Copy) != 0
         ? DragDropEffects.Copy : DragDropEffects.None;
+      if (e.Effect == DragDropEffects.Copy) File.WriteAllText(Path.Combine(directory, "entered"), "copy");
     };
     form.DragDrop += (sender, e) => {
       var paths = (string[])e.Data.GetData(DataFormats.FileDrop);
@@ -74,15 +75,21 @@ class FileDragFixture {
       Thread.Sleep(150);
       SetCursorPos(start.X + 14, start.Y);
       Thread.Sleep(500);
+      for (int step = 1; step <= 20; step++) {
+        SetCursorPos(start.X + (end.X - start.X) * step / 20, start.Y + (end.Y - start.Y) * step / 20);
+        Thread.Sleep(40);
+      }
+      // Escape must cancel an actual OLE drag, rather than arrive at an idle
+      // WebView if the mouse movement has not yet started native dragging.
+      string entered = Path.Combine(args[7], "entered");
+      if (args[0] != "missing") {
+        for (int attempt = 0; attempt < 50 && !File.Exists(entered); attempt++) Thread.Sleep(100);
+        if (!File.Exists(entered)) throw new Exception("Native file drag did not enter the drop target");
+      }
       if (args[0] == "cancel") {
         keybd_event(0x1b, 0, 0, UIntPtr.Zero);
         Thread.Sleep(80);
         keybd_event(0x1b, 0, 2, UIntPtr.Zero);
-      } else {
-        for (int step = 1; step <= 20; step++) {
-          SetCursorPos(start.X + (end.X - start.X) * step / 20, start.Y + (end.Y - start.Y) * step / 20);
-          Thread.Sleep(40);
-        }
       }
     } finally { mouse_event(4, 0, 0, 0, UIntPtr.Zero); }
     Thread.Sleep(200);

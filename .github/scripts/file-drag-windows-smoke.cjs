@@ -29,17 +29,31 @@ module.exports = async function verifyFileDrag({invoke, pages, processId, file, 
       current = await until(() => pages().find(page => page.url().endsWith(`#progress/${file.id}`)), 'Completion window was not created');
       const icon = current.getByRole('button', {name:'Drag file out',exact:true});
       await icon.waitFor({timeout:10_000});
+      current.on('console', message => {
+        if (message.text().startsWith('FILE_DRAG_TRACE ')) console.log(`${style}: ${message.text()}`);
+      });
       await current.evaluate(async () => {
         // Tauri's IPC internals are read-only. Observe the app API while still
         // calling its real native implementation and awaiting its actual reply.
         const {api} = await import('/src/api.ts');
         const original = api.dragDownload.bind(api);
         window.fileDragSmoke = {calls:0,settled:0,errors:0,outcomes:[]};
+        const trace = (event, extra={}) => console.log('FILE_DRAG_TRACE ' + JSON.stringify({event,time:performance.now(),...window.fileDragSmoke,...extra}));
+        for (const type of ['pointerdown','pointerup','pointercancel']) {
+          window.addEventListener(type, event => trace(type, {buttons:event.buttons}), true);
+        }
+        window.addEventListener('keydown', event => {
+          if (event.key === 'Escape') trace('escape', {repeat:event.repeat});
+        }, true);
+        const close = api.closeWindow.bind(api);
+        api.closeWindow = (...args) => { trace('close'); return close(...args); };
         api.dragDownload = async (...args) => {
           window.fileDragSmoke.calls++;
+          trace('native-start');
           try {
             const dropped = await original(...args);
             window.fileDragSmoke.outcomes.push(dropped);
+            trace('native-result', {dropped});
             return dropped;
           }
           catch (error) { window.fileDragSmoke.errors++; throw error; }
@@ -51,11 +65,12 @@ module.exports = async function verifyFileDrag({invoke, pages, processId, file, 
       assert.equal(await current.evaluate(() => window.fileDragSmoke.calls), 0);
       await current.screenshot({path:path.join(output, `file-drag-${style}.png`)});
       async function gesture(action) {
+        fs.rmSync(path.join(directory, 'entered'), {force:true});
         const box = await icon.boundingBox();
         assert(box);
         const scale = await current.evaluate(() => window.devicePixelRatio);
         await execFileAsync(exe, [action,String(processId),await current.title(),
-          String(box.x + box.width / 2),String(box.y + box.height / 2),String(scale),String(receiver.pid)],
+          String(box.x + box.width / 2),String(box.y + box.height / 2),String(scale),String(receiver.pid),directory],
         {timeout:15_000,encoding:'utf8'});
       }
       fs.rmSync(received, {force:true});
@@ -80,7 +95,7 @@ module.exports = async function verifyFileDrag({invoke, pages, processId, file, 
         const moved = `${file.path}.smoke-moved`;
         fs.renameSync(file.path, moved);
         try {
-          await gesture('drag');
+          await gesture('missing');
           await current.getByRole('alert').filter({hasText:'Could not drag the file'}).waitFor();
           assert.equal(fs.existsSync(received), false);
         } finally { fs.renameSync(moved, file.path); }
