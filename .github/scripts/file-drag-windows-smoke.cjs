@@ -34,10 +34,14 @@ module.exports = async function verifyFileDrag({invoke, pages, processId, file, 
         // calling its real native implementation and awaiting its actual reply.
         const {api} = await import('/src/api.ts');
         const original = api.dragDownload.bind(api);
-        window.fileDragSmoke = {calls:0,settled:0,errors:0};
+        window.fileDragSmoke = {calls:0,settled:0,errors:0,outcomes:[]};
         api.dragDownload = async (...args) => {
           window.fileDragSmoke.calls++;
-          try { return await original(...args); }
+          try {
+            const dropped = await original(...args);
+            window.fileDragSmoke.outcomes.push(dropped);
+            return dropped;
+          }
           catch (error) { window.fileDragSmoke.errors++; throw error; }
           finally { window.fileDragSmoke.settled++; }
         };
@@ -62,7 +66,7 @@ module.exports = async function verifyFileDrag({invoke, pages, processId, file, 
       assert.deepEqual(fs.readFileSync(path.join(directory, path.basename(file.path))), original);
       assert.deepEqual(fs.readFileSync(file.path), original, 'Dragging must preserve the source download');
       await until(() => current.evaluate(() => window.fileDragSmoke.settled === 1), 'Native drag IPC did not finish');
-      assert.deepEqual(await current.evaluate(() => window.fileDragSmoke), {calls:1,settled:1,errors:0});
+      assert.deepEqual(await current.evaluate(() => window.fileDragSmoke), {calls:1,settled:1,errors:0,outcomes:[true]});
       assert.equal((await invoke('get_download', {id:file.id})).state, 'completed');
       if (style === 'classic') {
         fs.rmSync(received, {force:true});
@@ -71,6 +75,7 @@ module.exports = async function verifyFileDrag({invoke, pages, processId, file, 
         assert.equal(fs.existsSync(received), false, 'Cancelling a drag must not deliver a file');
         assert.deepEqual(fs.readFileSync(file.path), original);
         assert.equal(await current.evaluate(() => window.fileDragSmoke.errors), 0);
+        assert.deepEqual(await current.evaluate(() => window.fileDragSmoke.outcomes), [true,false]);
         // Missing source files produce visible, recoverable feedback.
         const moved = `${file.path}.smoke-moved`;
         fs.renameSync(file.path, moved);

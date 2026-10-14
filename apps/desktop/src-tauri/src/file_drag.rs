@@ -1,6 +1,7 @@
 //! Drag completed downloads to the operating system's file manager or another app.
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use tauri::{State, WebviewWindow};
 
@@ -8,6 +9,7 @@ use crate::AppState;
 use crate::manager::State as DownloadState;
 
 type Result<T> = std::result::Result<T, String>;
+type Reply = Arc<Mutex<Option<tokio::sync::oneshot::Sender<Result<bool>>>>>;
 
 // Accept a download ID, never an arbitrary path supplied by the WebView. Resolve
 // outside the UI thread and release the manager lock before the native drag loop.
@@ -16,18 +18,35 @@ pub async fn drag_download(
     window: WebviewWindow,
     state: State<'_, AppState>,
     id: u64,
-) -> Result<()> {
+) -> Result<bool> {
     let path = available_path(state.manager.path_of(id))?;
     let (send, receive) = tokio::sync::oneshot::channel();
+    let reply = Arc::new(Mutex::new(Some(send)));
     let source = window.clone();
     window
         .run_on_main_thread(move || {
-            let _ = send.send(start_drag(&source, path));
+            let completion = reply.clone();
+            let result = start_drag(&source, path, move |dropped| {
+                finish(&completion, Ok(dropped));
+            });
+            if let Err(error) = result {
+                finish(&reply, Err(error));
+            }
         })
         .map_err(|error| error.to_string())?;
     receive
         .await
         .map_err(|_| "the drag window is no longer available".to_owned())?
+}
+
+fn finish(reply: &Reply, result: Result<bool>) {
+    if let Some(send) = reply
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take()
+    {
+        let _ = send.send(result);
+    }
 }
 
 fn available_path(entry: Option<(PathBuf, DownloadState)>) -> Result<PathBuf> {
@@ -38,7 +57,11 @@ fn available_path(entry: Option<(PathBuf, DownloadState)>) -> Result<PathBuf> {
     std::fs::canonicalize(path).map_err(|error| error.to_string())
 }
 
-fn start_drag(window: &WebviewWindow, path: PathBuf) -> Result<()> {
+fn start_drag(
+    window: &WebviewWindow,
+    path: PathBuf,
+    on_done: impl Fn(bool) + Send + 'static,
+) -> Result<()> {
     #[cfg(target_os = "linux")]
     let native = window.gtk_window().map_err(|error| error.to_string())?;
     #[cfg(not(target_os = "linux"))]
@@ -48,7 +71,7 @@ fn start_drag(window: &WebviewWindow, path: PathBuf) -> Result<()> {
         &native,
         drag::DragItem::Files(vec![path]),
         drag::Image::Raw(include_bytes!("../icons/32x32.png").to_vec()),
-        |_, _| {},
+        move |outcome, _| on_done(matches!(outcome, drag::DragResult::Dropped)),
         // Copy keeps the original download and history available. Cancelling
         // the native operation is normal, and never removes the source file.
         drag::Options {

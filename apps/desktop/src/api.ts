@@ -361,7 +361,8 @@ export interface Api {
   pauseAll(): Promise<void>;
   resumeAll(): Promise<void>;
   open(id: number): Promise<void>;
-  dragDownload(id: number): Promise<void>;
+  /** Native drag completion: true when dropped, false when cancelled. */
+  dragDownload(id: number): Promise<boolean>;
   showInFolder(id: number): Promise<void>;
   getUpdateState(): Promise<UpdateState>;
   checkForUpdates(): Promise<UpdateState>;
