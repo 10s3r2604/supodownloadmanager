@@ -30,6 +30,7 @@ export function ProgressWindow({ id }: { id: number }) {
   const [speeds, setSpeeds] = useState<number[]>([]);
   const history = useRef<History>(emptyHistory());
   const content = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
   const { i18n } = useAppearance(settings);
   const { t } = i18n;
   const style = settings?.progressStyle ?? "graph";
@@ -161,6 +162,14 @@ export function ProgressWindow({ id }: { id: number }) {
         resume: () => run(api.resume([download.id])),
         cancel: () => run(api.pause([download.id])).then(close),
         open: () => run(api.open(download.id)).then(close),
+        drag: async () => {
+          if (dragging.current) return;
+          dragging.current = true;
+          setError(null);
+          try { await api.dragDownload(download.id); }
+          catch { setError(t("pwDragFailed")); }
+          finally { dragging.current = false; }
+        },
         folder: () => run(api.showInFolder(download.id)),
         close,
       },
@@ -202,6 +211,7 @@ export function ProgressWindow({ id }: { id: number }) {
       <div className="pw">
         <div className="pw-content" ref={content}>
           {body}
+          {finished && error && <p className="pw-action-error" role="alert">{error}</p>}
         </div>
       </div>
     </I18nContext.Provider>

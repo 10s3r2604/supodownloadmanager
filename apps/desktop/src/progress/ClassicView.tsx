@@ -10,6 +10,7 @@ import { formatBytes, formatSpeed } from "../format";
 import { Icon } from "../icons";
 import {
   DontShowAgain,
+  FileDragIcon,
   type PwProps,
   SegmentBar,
   WhenDoneChecks,
@@ -172,12 +173,11 @@ function ClassicDone(p: PwProps) {
     <div className="pw-classic done">
       <TitleBar title={t("pwDone")} onClose={p.act.close} />
       <div className="pc-done" data-tauri-drag-region>
-        <span className="pw-tile big good" data-tauri-drag-region>
-          <Icon name="tick" size={26} />
-        </span>
+        <FileDragIcon {...p} big />
         <div data-tauri-drag-region>
           <div className="pc-done-title">{t("pwDone")}</div>
           <div className="pw-host">{[f.size, f.took, f.average].filter(Boolean).join(" · ")}</div>
+          <div className="pw-drag-hint">{t("pwDragHint")}</div>
         </div>
       </div>
       <dl className="pc-kv">

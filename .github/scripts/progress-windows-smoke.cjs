@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const {spawn, execFile, execFileSync} = require('node:child_process');
 const {promisify} = require('node:util');
 const {chromium} = require(path.join(process.env.SDM_SMOKE_NODE_MODULES, 'playwright-core'));
+const verifyFileDrag = require('./file-drag-windows-smoke.cjs');
 
 if (process.platform !== 'win32') throw new Error('This smoke test requires Windows/WebView2.');
 const root = process.cwd();
@@ -581,14 +582,16 @@ const server=http.createServer((req,res)=>{
     await until(async()=>((await invoke('get_download',{id:failedId}))?.state==='failed'),'Resume all did not settle');
     await closeProgress(window);
 
-    const fileId=await invoke('add_download',{request:{url:`${source}/sample.bin`,fileName:'sample.bin',directory,start:true}});
-    await progress(fileId,'5-file-download');
+    const fileId=await invoke('add_download',{request:{url:`${source}/sample.bin`,fileName:'Tải xong (1).bin',directory,start:true}});
+    const fileWindow=await progress(fileId,'5-file-download');
     const file=await until(async()=>{
       const d=await invoke('get_download',{id:fileId}); return d?.state==='completed'?d:null;
     },'The local file download did not complete');
     const sha=buffer=>crypto.createHash('sha256').update(buffer).digest('hex');
     assert.equal(sha(fs.readFileSync(file.path)),sha(bytes));
     report.push({name:'local-file-content',sha256:sha(bytes),passed:true});
+    await closeProgress(fileWindow);
+    await verifyFileDrag({invoke,pages,processId:desktop.pid,file,output,until,report});
 
     // Raising maxParallel starts a queued job from save_settings, another
     // command that must not create a WebView from the Windows UI thread.

@@ -436,6 +436,7 @@ export const mockApi: Api = {
     await this.resume(downloads.map((d) => d.id));
   },
   async open() {},
+  async dragDownload() { throw new Error("Native file dragging is available in the desktop app."); },
   async showInFolder() {},
   async getUpdateState() {
     const value = clone(updateState);
