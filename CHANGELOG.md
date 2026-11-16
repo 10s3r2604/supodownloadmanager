@@ -2,6 +2,10 @@
 
 ## 0.7.6
 
+- Write the application log to a file in the application data folder, with
+  the previous one kept, and add **Settings → General → Open log folder**.
+  A packaged Windows build has no console, so warnings and errors used to
+  be discarded exactly when they are needed. A panic is written there too.
 - Drag completed files from their file icon in all three completion window
   styles to a folder or another app. Native file drags use copy mode and reject
   unfinished or missing downloads; English and Vietnamese hints stay compact.
