@@ -302,8 +302,11 @@ impl Manager {
             store::load_json_validated::<Vec<Record>>(&store, |records| validate_records(records))?;
         let mut recovery_notice = loaded.recovery_notice("the download list");
         let mut records = loaded.value.unwrap_or_default();
+        // Only what was actually transferring stops; a record that was
+        // waiting for a free slot stays in the queue, so the queue keeps
+        // going after a restart instead of stalling until Resume all.
         for record in &mut records {
-            if matches!(record.state, State::Queued | State::Downloading) {
+            if record.state == State::Downloading {
                 record.state = State::Paused;
             }
         }
@@ -2736,6 +2739,33 @@ echo "SDMF $home/$name"
             .await
             .unwrap();
         assert_eq!(next, id + 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_queued_download_keeps_its_place_across_a_restart() {
+        let fixture = Fixture::new();
+        let base = server().await;
+        let list = fixture.dir.path().join("downloads.json");
+        let id = {
+            let manager = fixture.manager();
+            let id = manager
+                .add(request(format!("{base}/waiting.zip"), false))
+                .await
+                .unwrap();
+            manager.shutdown().await;
+            id
+        };
+
+        // The app closed while this one still waited for a free slot.
+        let mut records: Vec<Record> = store::load_json(&list).unwrap().unwrap();
+        records[0].state = State::Queued;
+        store::save_json(&list, &records).unwrap();
+
+        // It carries on by itself instead of stalling until Resume all. The
+        // tick stands in for the loop the app runs every few seconds.
+        let manager = fixture.manager();
+        manager.tick(true);
+        wait_for(&manager, id, State::Completed).await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
