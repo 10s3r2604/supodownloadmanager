@@ -426,6 +426,8 @@ const en = {
   magnetHandlerOn: "SDM opens magnet links.",
   magnetHandlerOff: "Another program opens magnet links.",
   magnetHandlerButton: "Open them with SDM",
+  openLogFolder: "Open log folder",
+  openLogFolderHint: "What the app did, for when something goes wrong.",
   unknown: "Unknown",
 };
 
@@ -857,6 +859,8 @@ const vi: Record<TextKey, string> = {
   magnetHandlerOn: "SDM đang mở link magnet.",
   magnetHandlerOff: "Một chương trình khác đang mở link magnet.",
   magnetHandlerButton: "Mở bằng SDM",
+  openLogFolder: "Mở thư mục nhật ký",
+  openLogFolderHint: "Ghi lại ứng dụng đã làm gì, để xem khi có lỗi.",
   unknown: "Không rõ",
 };
 

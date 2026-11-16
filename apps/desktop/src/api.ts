@@ -376,6 +376,7 @@ export interface Api {
   updateExtension(id: string): Promise<InstallInfo>;
   completeBrowserSetup(): Promise<Settings>;
   openExtensionFolder(engine: Engine): Promise<void>;
+  openLogFolder(): Promise<void>;
   appInfo(): Promise<AppInfo>;
   retryBrowserConnection(): Promise<void>;
   onAddPrompt(handler: (prompt: AddPrompt) => void): Promise<UnlistenFn>;
@@ -473,6 +474,7 @@ const tauriApi: Api = {
   updateExtension: (id) => invoke("update_extension", { id }),
   completeBrowserSetup: () => invoke("complete_browser_setup"),
   openExtensionFolder: (engine) => invoke("open_extension_folder", { engine }),
+  openLogFolder: () => invoke("open_log_folder"),
   appInfo: () => invoke("app_info"),
   retryBrowserConnection: () => invoke("retry_browser_connection"),
   onAddPrompt: (handler) => listen<AddPrompt>("sdm:add-prompt", (e) => handler(e.payload)),

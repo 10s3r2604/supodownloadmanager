@@ -580,6 +580,16 @@ pub fn open_extension_folder(
         .map_err(text_error)
 }
 
+/// Opens the folder with the application log.
+#[tauri::command]
+pub fn open_log_folder(app: AppHandle) -> Result<()> {
+    let folder = crate::logging::directory().map_err(text_error)?;
+    std::fs::create_dir_all(&folder).map_err(text_error)?;
+    app.opener()
+        .open_path(folder.to_string_lossy(), None::<&str>)
+        .map_err(text_error)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {

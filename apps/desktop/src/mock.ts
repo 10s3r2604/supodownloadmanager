@@ -490,6 +490,7 @@ export const mockApi: Api = {
     return { ...await mockApi.installExtension(id), updating: true };
   },
   async openExtensionFolder() {},
+  async openLogFolder() {},
   async appInfo() {
     return { version: "0.7.6", bridgePort: 17360, bridgeError: null, connectionError: null };
   },
