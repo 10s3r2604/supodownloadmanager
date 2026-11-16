@@ -141,10 +141,11 @@ export default function App() {
         const torrents = paths.filter((path) => /\.torrent$/i.test(path)).map((path) => ({ path }));
         setPrompts((queue) => [...queue, ...torrents]);
       }),
-      // A copied magnet link goes straight to the torrent dialog: it needs
-      // peers to read, so a toast would hide the wait behind one more click.
+      // A copied magnet link opens the Torrent dialog instead of waiting
+      // behind a toast. It joins the same queue as browser handovers, so an
+      // open dialog is never thrown away under the user's hands.
       api.onClipboardLink((url) =>
-        isMagnet(url) ? setDialog({ kind: "torrent", source: { link: url } }) : toast("clipboard", t("clipboardFound"), url),
+        isMagnet(url) ? setPrompts((queue) => [...queue, { link: url }]) : toast("clipboard", t("clipboardFound"), url),
       ),
       api.onPowerCountdown(setCountdown),
       api.powerCountdown().then((value) => {
