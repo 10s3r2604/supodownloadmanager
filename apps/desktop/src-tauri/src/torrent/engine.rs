@@ -18,8 +18,8 @@ use librqbit::dht::DhtPersistenceConfig;
 use librqbit::limits::LimitsConfig;
 use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ConnectionOptions, DhtSessionConfig,
-    ListenerMode, ListenerOptions, ManagedTorrent, Session, SessionOptions, SessionPersistenceConfig,
-    TorrentStats, TorrentStatsState,
+    ListenerMode, ListenerOptions, ManagedTorrent, Session, SessionOptions,
+    SessionPersistenceConfig, TorrentStats, TorrentStatsState,
 };
 use sdm_core::{Downloader, Outcome, Phase, Progress, SegmentProgress};
 use tokio::sync::Notify;
@@ -574,7 +574,10 @@ fn ipv6_available() -> bool {
         return false;
     };
     socket
-        .connect((Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888), 53))
+        .connect((
+            Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888),
+            53,
+        ))
         .is_ok()
 }
 
