@@ -171,7 +171,8 @@ impl TorrentEngine {
         *self.session.write().unwrap_or_else(PoisonError::into_inner) = Some(session.clone());
 
         // Torrents restored from the last run wait until their download
-        // asks for them.
+        // asks for them. Finished ones leave the session right away, so
+        // their files are open for other programs after a restart.
         let restored: Vec<Handle> =
             session.with_torrents(|torrents| torrents.map(|(_, t)| t.clone()).collect());
         for handle in restored {
@@ -180,7 +181,16 @@ impl TorrentEngine {
             tokio::spawn(async move {
                 let _ = handle.wait_until_initialized().await;
                 let hash = handle.info_hash().as_string();
-                if !lock(&engine.claimed).contains(&hash) && !handle.is_paused() {
+                if lock(&engine.claimed).contains(&hash) {
+                    return;
+                }
+                let stats = handle.stats();
+                if stats.finished {
+                    // Not sharing: let other programs use the files again.
+                    if engine.config().seed_ratio == 0 {
+                        release_files(&session, &handle).await;
+                    }
+                } else if !handle.is_paused() {
                     let _ = session.pause(&handle).await;
                 }
             });
@@ -415,7 +425,7 @@ impl TorrentEngine {
     async fn finished(&self, session: &Arc<Session>, handle: &Handle, size: u64) {
         let ratio = self.config().seed_ratio;
         if ratio == 0 {
-            let _ = session.pause(handle).await;
+            release_files(session, handle).await;
             return;
         }
         let target = (ratio != SEED_FOREVER).then(|| size.saturating_mul(ratio.into()) / 100);
@@ -445,11 +455,11 @@ impl TorrentEngine {
         })
     }
 
-    /// Stops sharing a finished torrent.
+    /// Stops sharing a finished torrent and drops its open files.
     pub async fn stop_seeding(&self, info_hash: &str) {
         let entry = lock(&self.seeding).remove(info_hash);
         if let (Some(entry), Some(session)) = (entry, self.current()) {
-            let _ = session.pause(&entry.handle).await;
+            release_files(&session, &entry.handle).await;
         }
     }
 
@@ -588,10 +598,18 @@ async fn watch_seeding(engine: std::sync::Weak<TorrentEngine>) {
             .collect();
         for (hash, handle) in done {
             lock(&engine.seeding).remove(&hash);
-            if !handle.is_paused() {
-                let _ = session.pause(&handle).await;
-            }
+            release_files(&session, &handle).await;
         }
+    }
+}
+
+/// Removes a finished torrent from the session without touching its data, so
+/// its files stop being held open. librqbit only closes the files it opened
+/// when the torrent leaves the session; a paused torrent keeps them, which
+/// stops an installer in the same folder from reading them.
+async fn release_files(session: &Arc<Session>, handle: &Handle) {
+    if let Err(error) = session.delete(handle.info_hash().into(), false).await {
+        tracing::debug!(%error, "could not release a finished torrent");
     }
 }
 
@@ -912,6 +930,13 @@ mod tests {
             "{outcome:?}"
         );
         assert_eq!(std::fs::read(target.join("sub/b.bin")).unwrap(), b);
+        // A finished torrent leaves the session, so its files are not held
+        // open any more and a program next to them can read them.
+        assert_eq!(
+            magnet.current().unwrap().with_torrents(|t| t.count()),
+            0,
+            "a finished torrent still holds its files open"
+        );
         magnet.shutdown().await;
 
         // A slow download is paused, SDM restarts, and it continues.
@@ -950,9 +975,21 @@ mod tests {
         assert_eq!(std::fs::read(target.join("a.bin")).unwrap(), a);
         assert_eq!(std::fs::read(target.join("sub/b.bin")).unwrap(), b);
 
-        // Removing a torrent with its data deletes the files.
-        leecher.forget(&info.info_hash, true).await;
-        assert!(!target.join("a.bin").exists());
+        // A download that shares for a while keeps its torrent in the
+        // session; a finished one already left it.
+        assert_eq!(
+            seeder.current().unwrap().with_torrents(|t| t.count()),
+            1,
+            "a Torrent that is still sharing left the session"
+        );
+        assert_eq!(
+            leecher.current().unwrap().with_torrents(|t| t.count()),
+            0,
+            "a finished Torrent is still in the session"
+        );
+        // Removing a finished download only drops SDM's copy of its
+        // .torrent data, since it is no longer in the session.
+        leecher.forget(&info.info_hash, false).await;
         assert!(!leecher.torrent_file(&info.info_hash).exists());
         leecher.shutdown().await;
         seeder.shutdown().await;
