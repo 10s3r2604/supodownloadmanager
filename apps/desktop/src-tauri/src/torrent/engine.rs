@@ -18,8 +18,8 @@ use librqbit::dht::DhtPersistenceConfig;
 use librqbit::limits::LimitsConfig;
 use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ConnectionOptions, DhtSessionConfig,
-    ListenerOptions, ManagedTorrent, Session, SessionOptions, SessionPersistenceConfig,
-    TorrentStats, TorrentStatsState,
+    ListenerMode, ListenerOptions, ManagedTorrent, Session, SessionOptions,
+    SessionPersistenceConfig, TorrentStats, TorrentStatsState,
 };
 use sdm_core::{Downloader, Outcome, Phase, Progress, SegmentProgress};
 use tokio::sync::Notify;
@@ -543,6 +543,10 @@ async fn create(dir: &Path, config: &EngineConfig, port: u16) -> anyhow::Result<
             announce_port,
             enable_upnp_port_forwarding: !config.local_only,
             ipv4_only,
+            // TCP alone cannot reach peers behind a hostile NAT: without uTP
+            // the swarm only ever sees incoming connections, which is why
+            // throughput swings with whoever happens to dial in.
+            mode: ListenerMode::TcpAndUtp,
             ..ListenerOptions::default()
         }),
         connect: socks.map(|proxy_url| ConnectionOptions {
@@ -561,9 +565,20 @@ async fn create(dir: &Path, config: &EngineConfig, port: u16) -> anyhow::Result<
     Session::new_with_opts(dir.join("downloads"), options).await
 }
 
-/// Some computers have IPv6 switched off completely.
+/// Some computers have IPv6 switched off, and routers that hand out only a
+/// link-local address accept the bind while every peer connection dies on
+/// the unreachable network. Both cases must fall back to IPv4, otherwise
+/// each peer costs a ten-second timeout and throughput swings wildly.
 fn ipv6_available() -> bool {
-    std::net::UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).is_ok()
+    let Ok(socket) = std::net::UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)) else {
+        return false;
+    };
+    socket
+        .connect((
+            Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888),
+            53,
+        ))
+        .is_ok()
 }
 
 fn bps(limit: Option<u64>) -> Option<NonZeroU32> {
@@ -816,6 +831,19 @@ fn segments(sizes: &[(usize, u64)], have: &[u64]) -> Vec<SegmentProgress> {
         offset += size;
     }
     out
+}
+
+/// The IPv6 probe decides from the routing table, not just from a bind.
+#[cfg(test)]
+mod ipv6_probe {
+    use super::ipv6_available;
+
+    /// Answering at all is the contract; a bindable socket is a must.
+    #[test]
+    fn answers_without_panicking() {
+        let bound = std::net::UdpSocket::bind((std::net::Ipv6Addr::UNSPECIFIED, 0)).is_ok();
+        assert!(!ipv6_available() || bound);
+    }
 }
 
 #[cfg(test)]

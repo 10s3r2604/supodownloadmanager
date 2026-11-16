@@ -11,6 +11,12 @@
   requested download; keep persisted ordering and save-failure rollbacks intact.
 - Check ranged-transfer checkpoints every four seconds and skip unchanged
   snapshots. Mandatory startup, pause, failure and completion saves stay intact.
+- Copied magnet links open the Torrent dialog instead of waiting behind a
+  toast, and the window comes back from the tray to show it. Windows also
+  registers SDM as the magnet handler on every launch, so clicking a magnet
+  link in another program works even when the installer could not write it.
+- Allow BitTorrent's UDP transport alongside TCP. TCP-only swarms had no way
+  to reach peers behind a NAT, so throughput depended on peers dialling in.
 - Attempt to disable real-time scanning on hosted Windows CI runners on a
   best-effort basis, while retaining every test and release gate.
 - Release a finished Torrent's files once it stops sharing, including at
