@@ -28,7 +28,7 @@ limit or ads.
 ## Download and install
 
 Get installers and extension ZIPs from the [latest stable release](https://github.com/10s3r2604/supodownloadmanager/releases/latest).
-**Current stable: SDM 0.7.5**, with browser extension **0.6.6**.
+**Current stable: SDM 0.7.6**, with browser extension **0.6.6**.
 
 | Your system | Choose this package |
 | --- | --- |
@@ -66,7 +66,7 @@ Older extensions continue to work while you complete setup.
    Supo logo + **Download** button once quality and estimated size are ready.
 
 Reopen this flow from **Browsers** at any time. The extension connects automatically
-with SDM 0.7.5; its popup shows connection status, **Try again** and **Open SDM** when
+with SDM 0.7.6; its popup shows connection status, **Try again** and **Open SDM** when
 available. Connection diagnostics stay under Advanced.
 
 Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi and Firefox are supported. Store listings

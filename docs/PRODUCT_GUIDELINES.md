@@ -1,7 +1,7 @@
 # Product guidelines
 
 These choices were approved by the repository owner. Use them when developing
-SDM or updating its GitHub presentation. Current implementation: **SDM 0.7.5**
+SDM or updating its GitHub presentation. Current implementation: **SDM 0.7.6**
 and browser extension **0.6.6**. [Changelog](../CHANGELOG.md) records shipped changes;
 [Roadmap](ROADMAP.md) records work still to do.
 

@@ -1,11 +1,13 @@
-**SDM 0.7.5 · Browser extension 0.6.6**
+**SDM 0.7.6 · Browser extension 0.6.6**
 
 ## Highlights
 
-- Remember extensions that have connected once, separately from whether their browser is currently connected. Show the reported version and offer **Update extension** when the bundled version is newer.
-- Update the app-managed extension and attempt Reload of its existing card through normal Windows browser controls. Guided confirmation remains available when needed; SDM waits for the extension to report its new version.
-- Discover usable quality and a positive estimated size before showing **Supo logo + Download**. Omit unresolved Best/unknown-size choices; selected X feed clips, cancellation and worker restart recovery remain supported.
-- Use single-file resolution/bitrate metadata for estimates and avoid duplicated audio format labels.
+- **Magnet links just work.** A copied magnet link opens the Torrent dialog straight away and brings the window back from the tray, and Windows registers SDM as the magnet handler on every launch, so clicking one in another program opens SDM too.
+- **Steadier Torrent throughput.** SDM now uses BitTorrent's UDP transport alongside TCP, and only claims IPv6 when the routing table can reach it, instead of stalling every IPv6 peer on a connection timeout.
+- **Release a finished Torrent's files.** A finished Torrent used to keep its files open, so an installer unpacking next to its own data (or the game's own setup) could not read them. Files are now released when a transfer completes, when sharing is stopped, and right after a restart.
+- Drag completed files from their file icon in all three completion window styles to a folder or another app. Drags use copy mode and reject unfinished or missing downloads.
+- Look progress windows up by an in-memory index and sync only the requested download, and check ranged-transfer checkpoints every four seconds instead of continuously. The list keeps refreshing smoothly during large transfers.
+- Keep Windows browser setup diagnostics in one script scope and retry address-bar navigation until focus is confirmed.
 
 ## Update and refresh the extension
 
@@ -19,13 +21,13 @@ After updating SDM, open **Browsers → Update extension** to refresh extension 
 
 | Your system | Choose |
 | --- | --- |
-| Windows 10/11 x64 | `Supo.Download.Manager_0.7.5_x64-setup.exe` (recommended), or the MSI |
+| Windows 10/11 x64 | `Supo.Download.Manager_0.7.6_x64-setup.exe` (recommended), or the MSI |
 | macOS Apple Silicon / Intel | `…_aarch64.dmg` / `…_x64.dmg` |
 | Ubuntu / Debian / Mint | `…_amd64.deb` |
 | Fedora / openSUSE | `….x86_64.rpm` |
 | Linux portable | `…_amd64.AppImage` |
-| Chromium extension, manual setup | `sdm-extension-chromium-v0.7.5.zip` |
-| Firefox extension, manual setup | `sdm-extension-firefox-v0.7.5.zip` |
+| Chromium extension, manual setup | `sdm-extension-chromium-v0.7.6.zip` |
+| Firefox extension, manual setup | `sdm-extension-firefox-v0.7.6.zip` |
 | Command line | `sdm-cli-…` for your platform |
 
 Use the regular Chromium extension for full video integration. The `store-chromium` ZIP is for store submission and disables YouTube video controls. Store listings are not published yet.

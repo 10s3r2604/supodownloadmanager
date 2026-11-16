@@ -21,7 +21,7 @@ Không tài khoản, phí thuê bao, giới hạn số máy hay quảng cáo.
 ## Tải và cài đặt
 
 Lấy bộ cài và ZIP tiện ích tại [bản phát hành ổn định mới nhất](https://github.com/10s3r2604/supodownloadmanager/releases/latest).
-**Bản ổn định hiện tại: SDM 0.7.5**, đi kèm tiện ích trình duyệt **0.6.6**.
+**Bản ổn định hiện tại: SDM 0.7.6**, đi kèm tiện ích trình duyệt **0.6.6**.
 
 | Máy của bạn | File cần chọn |
 | --- | --- |
@@ -59,7 +59,7 @@ Tiện ích cũ vẫn hoạt động trong lúc bạn hoàn tất thiết lập.
    nút **logo Supo + Download** khi đã có chất lượng và dung lượng ước tính.
 
 Mở lại phần này bằng nút **Trình duyệt** bất cứ lúc nào. Tiện ích tự kết nối với
-SDM 0.7.5, hiện trạng thái và nút **Thử lại / Mở SDM** khi cần. Không phải nhập
+SDM 0.7.6, hiện trạng thái và nút **Thử lại / Mở SDM** khi cần. Không phải nhập
 port để kết nối; mục chẩn đoán nằm trong phần nâng cao.
 
 Hỗ trợ Chrome, Edge, Cốc Cốc, Brave, Opera, Vivaldi và Firefox. Chưa có listing

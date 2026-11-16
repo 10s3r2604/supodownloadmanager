@@ -1,6 +1,6 @@
 # Roadmap
 
-Current stable: **SDM 0.7.5**, extension **0.6.6**. Checked items are implemented;
+Current stable: **SDM 0.7.6**, extension **0.6.6**. Checked items are implemented;
 unchecked items are planned, without a promised release date. Historical phase
 versions show when each area started. See [Changelog](../CHANGELOG.md) and the
 [product guidelines](PRODUCT_GUIDELINES.md) for current behavior.

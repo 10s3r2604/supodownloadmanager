@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.6
 
 - Drag completed files from their file icon in all three completion window
   styles to a folder or another app. Native file drags use copy mode and reject
@@ -17,6 +17,9 @@
   link in another program works even when the installer could not write it.
 - Allow BitTorrent's UDP transport alongside TCP. TCP-only swarms had no way
   to reach peers behind a NAT, so throughput depended on peers dialling in.
+- Only use IPv6 when the routing table can actually reach it. A host that
+  binds a link-local address but has no route kept every IPv6 peer waiting
+  out a connection timeout, which made throughput swing while it stalled.
 - Attempt to disable real-time scanning on hosted Windows CI runners on a
   best-effort basis, while retaining every test and release gate.
 - Release a finished Torrent's files once it stops sharing, including at
