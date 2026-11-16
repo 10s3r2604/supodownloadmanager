@@ -13,6 +13,10 @@
   snapshots. Mandatory startup, pause, failure and completion saves stay intact.
 - Attempt to disable real-time scanning on hosted Windows CI runners on a
   best-effort basis, while retaining every test and release gate.
+- Release a finished Torrent's files once it stops sharing, including at
+  start-up and when sharing is stopped by hand. librqbit only closed the files
+  it opened when a Torrent left the session, so a finished one kept them open
+  and an installer unpacking next to its own data could not read it.
 
 ## 0.7.5
 
