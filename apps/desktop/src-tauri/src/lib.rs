@@ -287,6 +287,15 @@ fn setup(app: &AppHandle) -> anyhow::Result<()> {
     );
     let background_launch =
         startup::is_autostart(std::env::args().skip(1)) && pending_torrents.is_empty();
+    // The NSIS installer only writes the magnet handler when it can, and a
+    // packaged build has no other chance to: without this, clicking a magnet
+    // link in another program does nothing at all.
+    {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        if let Err(error) = app.deep_link().register_all() {
+            tracing::warn!(%error, "magnet links could not be registered");
+        }
+    }
     app.manage(AppState {
         manager: manager.clone(),
         bridge: bridge.clone(),
@@ -553,6 +562,11 @@ async fn watch_clipboard(app: AppHandle) {
             continue;
         }
         if let Some(link) = clipboard::downloadable_link(&text, &settings.capture_extensions) {
+            // SDM usually sits hidden in the tray, so a copied magnet link
+            // must bring the window back before its dialog can be seen.
+            if torrent::is_magnet(&link) {
+                show_main_window(&app);
+            }
             let _ = app.emit(CLIPBOARD_EVENT, link);
         }
         last = text;

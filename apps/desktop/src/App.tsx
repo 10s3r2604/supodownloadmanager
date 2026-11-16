@@ -141,7 +141,11 @@ export default function App() {
         const torrents = paths.filter((path) => /\.torrent$/i.test(path)).map((path) => ({ path }));
         setPrompts((queue) => [...queue, ...torrents]);
       }),
-      api.onClipboardLink((url) => toast("clipboard", t("clipboardFound"), url)),
+      // A copied magnet link goes straight to the torrent dialog: it needs
+      // peers to read, so a toast would hide the wait behind one more click.
+      api.onClipboardLink((url) =>
+        isMagnet(url) ? setDialog({ kind: "torrent", source: { link: url } }) : toast("clipboard", t("clipboardFound"), url),
+      ),
       api.onPowerCountdown(setCountdown),
       api.powerCountdown().then((value) => {
         if (value) setCountdown(value);

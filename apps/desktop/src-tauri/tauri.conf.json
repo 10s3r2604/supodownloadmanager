@@ -54,6 +54,13 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "magnet"
+        ]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEEwRkE2MTU1N0M5RkIxOEEKUldTS3NaOThWV0g2b05PbzNYdGxoeVlmVVRyOWNEWlFNVk43N2RGZGZUbktqdGJoUXBqZjJuSWYK",
       "endpoints": [
