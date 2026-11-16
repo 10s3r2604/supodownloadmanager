@@ -264,6 +264,13 @@ export function SettingsDialog({ settings, onPreview, onClose, onSaved, onError 
           <small className="hint">{t("startWithWindowsHint")}</small>
           <Check label={t("closeToTray")} checked={draft.closeToTray} onChange={(v) => set("closeToTray", v)} />
           <Check label={t("notifications")} checked={draft.notifications} onChange={(v) => set("notifications", v)} />
+          <div className="field">
+            <button type="button" className="button" onClick={() => void api.openLogFolder().catch((error) => onError(errorText(error)))}>
+              <Icon name="folder" size={16} />
+              {t("openLogFolder")}
+            </button>
+            <small className="hint">{t("openLogFolderHint")}</small>
+          </div>
         </div>
       )}
 

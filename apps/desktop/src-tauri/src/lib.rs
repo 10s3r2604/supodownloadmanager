@@ -8,6 +8,7 @@ mod clipboard;
 mod commands;
 mod extension_clients;
 mod file_drag;
+mod logging;
 mod manager;
 mod media;
 mod native_connection;
@@ -112,7 +113,8 @@ pub fn native_mode() -> Option<i32> {
 }
 
 pub fn run() {
-    init_logging();
+    logging::init();
+    logging::install_panic_hook();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             // Opening a magnet link or .torrent file while SDM runs.
@@ -205,6 +207,7 @@ pub fn run() {
             commands::update_extension,
             commands::complete_browser_setup,
             commands::open_extension_folder,
+            commands::open_log_folder,
             commands::app_info,
             commands::retry_browser_connection,
             updates::get_update_state,
@@ -238,12 +241,6 @@ pub fn run() {
             }
             _ => {}
         });
-}
-
-fn init_logging() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "sdm_core=warn,sdm_desktop=info".into());
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
 fn setup(app: &AppHandle) -> anyhow::Result<()> {
