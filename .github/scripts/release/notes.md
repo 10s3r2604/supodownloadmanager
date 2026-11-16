@@ -2,6 +2,8 @@
 
 ## Highlights
 
+- **Magnet links just work.** A copied magnet link opens the Torrent dialog straight away and brings the window back from the tray, and Windows registers SDM as the magnet handler on every launch, so clicking one in another program opens SDM too.
+- **Steadier Torrent throughput.** SDM now uses BitTorrent's UDP transport alongside TCP, and only claims IPv6 when the routing table can reach it, instead of stalling every IPv6 peer on a connection timeout.
 - **Release a finished Torrent's files.** A finished Torrent used to keep its files open, so an installer unpacking next to its own data (or the game's own setup) could not read them. Files are now released when a transfer completes, when sharing is stopped, and right after a restart.
 - Drag completed files from their file icon in all three completion window styles to a folder or another app. Drags use copy mode and reject unfinished or missing downloads.
 - Look progress windows up by an in-memory index and sync only the requested download, and check ranged-transfer checkpoints every four seconds instead of continuously. The list keeps refreshing smoothly during large transfers.
