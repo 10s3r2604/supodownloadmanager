@@ -302,11 +302,8 @@ impl Manager {
             store::load_json_validated::<Vec<Record>>(&store, |records| validate_records(records))?;
         let mut recovery_notice = loaded.recovery_notice("the download list");
         let mut records = loaded.value.unwrap_or_default();
-        // Only what was actually transferring stops; a record that was
-        // waiting for a free slot stays in the queue, so the queue keeps
-        // going after a restart instead of stalling until Resume all.
         for record in &mut records {
-            if record.state == State::Downloading {
+            if matches!(record.state, State::Queued | State::Downloading) {
                 record.state = State::Paused;
             }
         }
