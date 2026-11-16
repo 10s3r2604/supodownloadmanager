@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.6
 
 - Drag completed files from their file icon in all three completion window
   styles to a folder or another app. Native file drags use copy mode and reject

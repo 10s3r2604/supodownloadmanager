@@ -7,7 +7,7 @@ Firefox.
 The current packages require Chromium-based browsers version **116 or newer**,
 or Firefox **140 or newer**, as declared in their manifests.
 
-The current stable release is **SDM 0.7.5**, with extension **0.6.6**. It connects
+The current stable release is **SDM 0.7.6**, with extension **0.6.6**. It connects
 automatically and retains compatibility with SDM 0.6.1 or newer. On first-run
 setup, select the detected browsers and choose **Set up selected**. Windows
 attempts to load the unpacked extension using the selected browser's normal
@@ -104,7 +104,7 @@ on its card, then reload open video tabs. An app update alone does not reload an
 already installed unpacked extension. If using a new folder, remove the old SDM
 extension first so only one is active.
 
-To install from a release ZIP, choose `sdm-extension-chromium-v0.7.5.zip`, extract
+To install from a release ZIP, choose `sdm-extension-chromium-v0.7.6.zip`, extract
 it into a permanent folder, then **Load unpacked** from the folder containing
 `manifest.json`. Keep that folder in place. The `store-chromium` build is for
 store submission and disables YouTube video controls; use the regular Chromium
@@ -120,7 +120,7 @@ build for the app's full video integration.
 Firefox removes temporary add-ons when it restarts. Permanent store installation
 is planned; no addons.mozilla.org listing is published yet.
 
-For ZIP installation, extract `sdm-extension-firefox-v0.7.5.zip` and select its
+For ZIP installation, extract `sdm-extension-firefox-v0.7.6.zip` and select its
 `manifest.json`. Keep SDM running while connecting a newly loaded extension.
 
 ## Troubleshooting
@@ -218,7 +218,7 @@ video SDM trong menu chuột phải để xem lỗi và thử lại.
 
 <img src="images/extension-popup-vi.png" alt="Tiện ích SDM với trạng thái kết nối và phần nâng cao đóng mặc định" width="320">
 
-Nếu cài từ ZIP public: với Chrome/Edge dùng `sdm-extension-chromium-v0.7.5.zip`,
+Nếu cài từ ZIP public: với Chrome/Edge dùng `sdm-extension-chromium-v0.7.6.zip`,
 giải nén vào thư mục cố định, bật **Developer mode**, bấm **Load unpacked** rồi
 chọn thư mục chứa `manifest.json`. Không dùng bản `store-chromium` nếu cần đầy
 đủ nút video. Với Firefox, dùng ZIP `firefox`, vào `about:debugging`, bấm
