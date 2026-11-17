@@ -8,8 +8,6 @@
   const SELECTOR = 'a[href^="magnet:" i]';
   const RECHECK_MS = 30_000;
 
-  // Clicks must be decided right away, so the answer is asked beforehand:
-  // when the page has magnet links and when the pointer reaches one.
   let enabled = false;
   let checkedAt = 0;
   let checking = null;
@@ -34,24 +32,51 @@
 
   if (document.querySelector(SELECTOR)) refresh();
 
-  document.addEventListener(
-    "pointerover",
-    (event) => {
-      if (magnetOf(event.target)) refresh();
-    },
-    { capture: true, passive: true },
-  );
+  // Watch for dynamically loaded magnet links (SPA, AJAX, modal dialogs)
+  if (typeof MutationObserver === "function") {
+    const observer = new MutationObserver(() => {
+      if (!enabled && document.querySelector(SELECTOR)) refresh();
+    });
+    observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+  }
+
+  // Pre-check on hover, touch/pointer press, or keyboard focus
+  const onTrigger = (event) => {
+    if (magnetOf(event.target)) refresh();
+  };
+  document.addEventListener("pointerover", onTrigger, { capture: true, passive: true });
+  document.addEventListener("pointerdown", onTrigger, { capture: true, passive: true });
+  document.addEventListener("focusin", onTrigger, { capture: true, passive: true });
 
   document.addEventListener(
     "click",
     (event) => {
-      if (!enabled || event.defaultPrevented || event.button !== 0) return;
+      if (event.defaultPrevented || event.button !== 0) return;
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       const link = magnetOf(event.target);
       if (!link) return;
-      event.preventDefault();
-      event.stopPropagation();
-      chrome.runtime.sendMessage({ type: "magnet", url: link.href }).catch(() => null);
+
+      if (enabled) {
+        event.preventDefault();
+        event.stopPropagation();
+        chrome.runtime.sendMessage({ type: "magnet", url: link.href }).catch(() => null);
+        return;
+      }
+
+      // If status hasn't been checked yet (e.g. quick click without hover), attempt handover
+      // and fall back to browser default only if SDM is unavailable.
+      if (checkedAt === 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        chrome.runtime
+          .sendMessage({ type: "magnet", url: link.href })
+          .then((res) => {
+            if (!res?.ok) location.href = link.href;
+          })
+          .catch(() => {
+            location.href = link.href;
+          });
+      }
     },
     true,
   );

@@ -568,7 +568,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     );
     return true;
   }
-  if (message?.type === "magnet" && /^magnet:\?/i.test(message.url || "")) {
+  if (message?.type === "magnet" && /^magnet:/i.test(message.url || "")) {
     handOver({ url: message.url, referrer: sender.tab?.url }).then((ok) => reply({ ok }));
     return true;
   }
