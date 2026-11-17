@@ -101,7 +101,7 @@ public static class SdmBrowserWindow {
                         return @{root=$root; pid=$process.Id}
                     }
                     if ($edit.Current.ControlType -eq [Windows.Automation.ControlType]::Edit -and
-                        $edit.Current.Name -in @('Address and search bar', 'Thanh địa chỉ và tìm kiếm')) {
+                        $edit.Current.Name -in @('Address and search bar', [regex]::Unescape("Thanh \u0111\u1ecba ch\u1ec9 v\u00e0 t\u00ecm ki\u1ebfm"))) {
                         $nativeAddress = $edit
                     }
                 }
@@ -147,7 +147,7 @@ public static class SdmBrowserWindow {
     if ($request.updating) {
         # Reload an existing card only. Never load a second SDM copy to update.
         if ($request.engine -eq 'chromium') {
-            $developer = Find-Control $management @('Developer mode', 'Turn on Developer mode', 'Turn off Developer mode', 'Chế độ dành cho nhà phát triển', 'Bật chế độ dành cho nhà phát triển', 'Tắt chế độ dành cho nhà phát triển') ([Windows.Automation.TogglePattern]::Pattern)
+            $developer = Find-Control $management @('Developer mode', 'Turn on Developer mode', 'Turn off Developer mode', [regex]::Unescape("Ch\u1ebf \u0111\u1ed9 d\u00e0nh cho nh\u00e0 ph\u00e1t tri\u1ec3n"), [regex]::Unescape("B\u1eadt ch\u1ebf \u0111\u1ed9 d\u00e0nh cho nh\u00e0 ph\u00e1t tri\u1ec3n"), [regex]::Unescape("T\u1eaft ch\u1ebf \u0111\u1ed9 d\u00e0nh cho nh\u00e0 ph\u00e1t tri\u1ec3n")) ([Windows.Automation.TogglePattern]::Pattern)
             if ($null -ne $developer) {
                 $toggle = $developer.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
                 if ($toggle.Current.ToggleState -eq [Windows.Automation.ToggleState]::Off) { $toggle.Toggle() }
@@ -161,7 +161,7 @@ public static class SdmBrowserWindow {
             foreach ($brand in $brands) {
                 $card = $brand
                 for ($level = 0; $level -lt 4 -and $null -ne $card -and $card -ne $management; $level++) {
-                    $control = Find-Control $card @('Reload', 'Reload extension', 'Tải lại', 'Tải lại tiện ích') ([Windows.Automation.InvokePattern]::Pattern)
+                    $control = Find-Control $card @('Reload', 'Reload extension', [regex]::Unescape("T\u1ea3i l\u1ea1i"), [regex]::Unescape("T\u1ea3i l\u1ea1i ti\u1ec7n \u00edch")) ([Windows.Automation.InvokePattern]::Pattern)
                     if ($null -ne $control) { $matches += $control; break }
                     $card = [Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($card)
                 }
@@ -190,11 +190,11 @@ public static class SdmBrowserWindow {
     if ($request.engine -eq 'chromium') {
         $script:stage = 'developer'
         $menu = $null
-        $developerNames = @('Developer mode', 'Turn on Developer mode', 'Turn off Developer mode', 'Chế độ dành cho nhà phát triển', 'Bật chế độ dành cho nhà phát triển', 'Tắt chế độ dành cho nhà phát triển')
+        $developerNames = @('Developer mode', 'Turn on Developer mode', 'Turn off Developer mode', [regex]::Unescape("Ch\u1ebf \u0111\u1ed9 d\u00e0nh cho nh\u00e0 ph\u00e1t tri\u1ec3n"), [regex]::Unescape("B\u1eadt ch\u1ebf \u0111\u1ed9 d\u00e0nh cho nh\u00e0 ph\u00e1t tri\u1ec3n"), [regex]::Unescape("T\u1eaft ch\u1ebf \u0111\u1ed9 d\u00e0nh cho nh\u00e0 ph\u00e1t tri\u1ec3n"))
         $developer = Find-Control $management $developerNames ([Windows.Automation.TogglePattern]::Pattern)
         if ($null -eq $developer) {
             # Edge's narrow extensions page puts this switch in its sidebar.
-            $menu = Find-Control $management @('Extensions menu', 'Menu tiện ích mở rộng') ([Windows.Automation.InvokePattern]::Pattern)
+            $menu = Find-Control $management @('Extensions menu', [regex]::Unescape("Menu ti\u1ec7n \u00edch m\u1edf r\u1ed9ng")) ([Windows.Automation.InvokePattern]::Pattern)
             if ($null -ne $menu) { $menu.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke() }
             $developer = Wait-For { Find-Control $management $developerNames ([Windows.Automation.TogglePattern]::Pattern) }
         }
@@ -208,7 +208,7 @@ public static class SdmBrowserWindow {
         if ($enabled -ne $true) { throw 'Developer mode was not enabled.' }
         # Return from Edge's sidebar to the list containing Load unpacked.
         if ($null -ne $menu) {
-            $listNames = @('My extensions', 'Tiện ích mở rộng của tôi', 'Tiện ích của tôi')
+            $listNames = @('My extensions', [regex]::Unescape("Ti\u1ec7n \u00edch m\u1edf r\u1ed9ng c\u1ee7a t\u00f4i"), [regex]::Unescape("Ti\u1ec7n \u00edch c\u1ee7a t\u00f4i"))
             $list = Find-Control $management $listNames ([Windows.Automation.InvokePattern]::Pattern)
             if ($null -ne $list) { $list.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke() }
             else {
@@ -217,11 +217,11 @@ public static class SdmBrowserWindow {
             }
         }
         $script:stage = 'load'
-        $load = Wait-For { Find-Control $management @('Load unpacked', 'Tải tiện ích đã giải nén', 'Tải phần mở rộng đã giải nén') ([Windows.Automation.InvokePattern]::Pattern) }
+        $load = Wait-For { Find-Control $management @('Load unpacked', [regex]::Unescape("T\u1ea3i ti\u1ec7n \u00edch \u0111\u00e3 gi\u1ea3i n\u00e9n"), [regex]::Unescape("T\u1ea3i ph\u1ea7n m\u1edf r\u1ed9ng \u0111\u00e3 gi\u1ea3i n\u00e9n")) ([Windows.Automation.InvokePattern]::Pattern) }
         $path = $request.directory
     } else {
         $script:stage = 'load'
-        $load = Wait-For { Find-Control $management @('Load Temporary Add-on…', 'Load Temporary Add-on...', 'Tải tiện ích tạm thời…') ([Windows.Automation.InvokePattern]::Pattern) }
+        $load = Wait-For { Find-Control $management @([regex]::Unescape("Load Temporary Add-on\u2026"), 'Load Temporary Add-on...', [regex]::Unescape("T\u1ea3i ti\u1ec7n \u00edch t\u1ea1m th\u1eddi\u2026")) ([Windows.Automation.InvokePattern]::Pattern) }
         $path = Join-Path $request.directory 'manifest.json'
     }
     if ($null -eq $load) { throw 'Loading requires confirmation.' }
