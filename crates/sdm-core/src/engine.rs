@@ -60,7 +60,7 @@ impl Default for ClientConfig {
         Self {
             user_agent: format!("SupoDownloadManager/{}", env!("CARGO_PKG_VERSION")),
             connect_timeout: Duration::from_secs(15),
-            read_timeout: Duration::from_secs(30),
+            read_timeout: Duration::from_secs(60),
             proxy: ProxyConfig::System,
             speed_limit: None,
         }

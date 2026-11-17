@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.6
+## Unreleased
 
 - Write the application log to a file in the application data folder, with
   the previous one kept, and add **Settings → General → Open log folder**.
@@ -9,6 +9,16 @@
 - Keep downloads that were still waiting for a free slot in the queue
   across a restart. Only the ones that were actually transferring come
   back paused, so a queue no longer stalls until **Resume all**.
+- Escape non-ASCII strings in Windows browser installation script with
+  Unicode escape sequences, preventing PowerShell 5.1 codepage parsing
+  errors during automatic browser setup.
+- Increase HTTP engine default read timeout from 30s to 60s for slow and
+  throttled download mirrors.
+- Catch dynamic magnet links across single-page applications via DOM
+  mutation observing and fallback gracefully without race conditions.
+
+## 0.7.6
+
 - Drag completed files from their file icon in all three completion window
   styles to a folder or another app. Native file drags use copy mode and reject
   unfinished or missing downloads; English and Vietnamese hints stay compact.
